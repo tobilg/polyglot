@@ -3,6 +3,31 @@ import pytest
 import polyglot_sql
 
 
+def test_hana_uses_shared_expression_subclasses_and_accessors():
+    expression = polyglot_sql.parse_one(
+        "SELECT LOCATE(value, 'a', 1, 2), JSON_VALUE(payload, '$.n') FROM records",
+        dialect="hana",
+    )
+    locate = expression.find(polyglot_sql.Function)
+    assert isinstance(locate, polyglot_sql.Function)
+    assert locate.name == "LOCATE"
+    assert len(locate.expressions) == 4
+    assert isinstance(locate.expressions[0], polyglot_sql.Column)
+    assert locate.expressions[0].name == "value"
+    json_value = expression.find(polyglot_sql.JSONValue)
+    assert isinstance(json_value, polyglot_sql.JSONValue)
+    assert json_value.name == "JSON_VALUE"
+    assert json_value.this.name == "payload"
+
+
+def test_quoted_functions_use_shared_class_across_dialects():
+    for dialect in ("hana", "postgresql"):
+        expression = polyglot_sql.parse_one('SELECT "f"(x) FROM t', dialect=dialect)
+        function = expression.find(polyglot_sql.Function)
+        assert isinstance(function, polyglot_sql.Function)
+        assert function.name == "f"
+
+
 def test_parse_one_returns_expression_object():
     expr = polyglot_sql.parse_one("SELECT a FROM t WHERE b = 1", dialect="postgres")
 

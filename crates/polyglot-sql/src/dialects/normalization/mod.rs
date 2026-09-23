@@ -8,6 +8,7 @@ use super::*;
 
 mod aggregates;
 mod collections;
+mod hana;
 mod json;
 mod operators;
 mod postgres_interval;
@@ -83,9 +84,22 @@ pub(super) fn normalize(
         Scalar(scalar::Action),
     }
 
+    let expr = if source == DialectType::HANA && target != DialectType::HANA {
+        hana::lower_dummy(expr, target)?
+    } else {
+        expr
+    };
     let expr = statements::normalize_root(expr, &context);
 
     transform_recursive(expr, &|e| {
+        // Source-bound nodes share the ordinary AST categories, but their lowering
+        // must retain the semantics recorded by the parser through serialization.
+        if e.source_dialect().is_some()
+            || matches!(&e, Expression::Function(f) if !f.qualified_name.is_empty())
+        {
+            return Ok(e);
+        }
+
         if matches!(source, DialectType::DataFusion) && matches!(target, DialectType::DuckDB) {
             if let Expression::Function(ref function) = e {
                 if function.name.eq_ignore_ascii_case("NOW") && function.args.is_empty() {

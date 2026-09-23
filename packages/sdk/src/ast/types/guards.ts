@@ -296,7 +296,13 @@ export const isDropView = isType('drop_view');
 /** Check if expression is a DML query (SELECT, INSERT, UPDATE, DELETE) */
 export function isQuery(expr: Expression): boolean {
   const t = getExprType(expr);
-  return t === 'select' || t === 'insert' || t === 'update' || t === 'delete';
+  return (
+    t === 'select' ||
+    t === 'insert' ||
+    t === 'update' ||
+    t === 'delete' ||
+    t === 'upsert'
+  );
 }
 
 /** Check if expression is a set operation (UNION, INTERSECT, EXCEPT) */

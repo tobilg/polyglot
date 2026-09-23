@@ -1727,6 +1727,10 @@ impl SnowflakeDialect {
             .collect::<Result<Vec<_>>>()?;
 
         let f = Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name: f.name,
             args: transformed_args,
             distinct: f.distinct,
@@ -1790,6 +1794,10 @@ impl SnowflakeDialect {
 
             // NOW -> CURRENT_TIMESTAMP (preserving parens style)
             "NOW" => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIMESTAMP".to_string(),
                 args: f.args,
                 distinct: false,
@@ -1803,6 +1811,10 @@ impl SnowflakeDialect {
 
             // GETDATE -> CURRENT_TIMESTAMP (preserving parens style)
             "GETDATE" => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIMESTAMP".to_string(),
                 args: f.args,
                 distinct: false,
@@ -1819,6 +1831,10 @@ impl SnowflakeDialect {
             // but explicit CURRENT_TIMESTAMP calls should have parens
             "CURRENT_TIMESTAMP" if f.args.is_empty() => {
                 Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "CURRENT_TIMESTAMP".to_string(),
                     args: Vec::new(),
                     distinct: false,
@@ -2463,6 +2479,8 @@ impl SnowflakeDialect {
                 let flags = args.next();
                 Ok(Expression::RegexpLike(Box::new(
                     crate::expressions::RegexpFunc {
+                        options: None,
+
                         this: left,
                         pattern,
                         flags,
@@ -2761,6 +2779,10 @@ impl SnowflakeDialect {
 
             // SYSTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
             "SYSTIMESTAMP" => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIMESTAMP".to_string(),
                 args: f.args,
                 distinct: false,
@@ -2774,6 +2796,10 @@ impl SnowflakeDialect {
 
             // LOCALTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
             "LOCALTIMESTAMP" => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIMESTAMP".to_string(),
                 args: f.args,
                 distinct: false,
@@ -3847,6 +3873,8 @@ impl SnowflakeDialect {
                 args.push(Expression::number(1));
                 Ok(Expression::AggregateFunction(Box::new(
                     crate::expressions::AggregateFunction {
+                        source_dialect: None,
+
                         name: "APPROX_TOP_K".to_string(),
                         args,
                         distinct: f.distinct,

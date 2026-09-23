@@ -17,6 +17,7 @@ EXPECTED_DIALECTS = {
     "exasol",
     "fabric",
     "generic",
+    "hana",
     "hive",
     "materialize",
     "mysql",

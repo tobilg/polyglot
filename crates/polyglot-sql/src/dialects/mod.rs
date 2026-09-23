@@ -51,6 +51,8 @@ mod dune;
 mod exasol;
 #[cfg(feature = "dialect-fabric")]
 mod fabric;
+#[cfg(feature = "dialect-hana")]
+mod hana;
 #[cfg(feature = "dialect-hive")]
 mod hive;
 #[cfg(feature = "dialect-materialize")]
@@ -120,6 +122,8 @@ pub use dune::DuneDialect;
 pub use exasol::ExasolDialect;
 #[cfg(feature = "dialect-fabric")]
 pub use fabric::FabricDialect;
+#[cfg(feature = "dialect-hana")]
+pub use hana::HanaDialect;
 #[cfg(feature = "dialect-hive")]
 pub use hive::HiveDialect;
 #[cfg(feature = "dialect-materialize")]
@@ -204,6 +208,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 /// Dialect names are case-insensitive when parsed from strings via [`FromStr`].
 /// Some dialects accept aliases (e.g., "mssql" and "sqlserver" both resolve to [`TSQL`](DialectType::TSQL)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum DialectType {
     /// Standard SQL with no dialect-specific behavior (default).
@@ -274,6 +279,8 @@ pub enum DialectType {
     Exasol,
     /// Apache DataFusion -- Arrow-based query engine with modern SQL extensions.
     DataFusion,
+    /// SAP HANA Cloud and SAP HANA Platform SQL.
+    HANA,
 }
 
 impl DialectType {
@@ -330,6 +337,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Dremio => write!(f, "dremio"),
             DialectType::Exasol => write!(f, "exasol"),
             DialectType::DataFusion => write!(f, "datafusion"),
+            DialectType::HANA => write!(f, "hana"),
         }
     }
 }
@@ -373,6 +381,7 @@ impl std::str::FromStr for DialectType {
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
+            "hana" | "saphana" | "sap_hana" => Ok(DialectType::HANA),
             _ => Err(crate::error::Error::parse(
                 format!("Unknown dialect: {}", s),
                 0,
@@ -688,6 +697,7 @@ where
     // semantics even though all physical children are visible to traversal APIs.
     fn uses_generated_dispatch(expression: &Expression) -> bool {
         match expression {
+            Expression::CreateTable(_) => true,
             Expression::Select(select) => {
                 select.joins.is_empty()
                     && select.with.is_none()
@@ -747,6 +757,25 @@ where
             | Expression::Like(_)
             | Expression::ILike(_)
             | Expression::Function(_)
+            | Expression::AggregateFunction(_)
+            | Expression::JSONValue(_)
+            | Expression::JSONTable(_)
+            | Expression::JSONColumnDef(_)
+            | Expression::JsonQuery(_)
+            | Expression::RegexpLike(_)
+            | Expression::RegexpReplace(_)
+            | Expression::RegexpExtract(_)
+            | Expression::RegexpInstr(_)
+            | Expression::RegexpCount(_)
+            | Expression::Cube(_)
+            | Expression::Rollup(_)
+            | Expression::GroupingSets(_)
+            | Expression::Hint(_)
+            | Expression::PartitionByProperty(_)
+            | Expression::StorageProperty(_)
+            | Expression::Hierarchy(_)
+            | Expression::ViewParameter(_)
+            | Expression::Call(_)
             | Expression::Lead(_)
             | Expression::Lag(_)
             | Expression::Array(_)
@@ -1048,6 +1077,10 @@ where
     // First recursively transform children, then apply the transform function
     let expr = match expr {
         Expression::Select(mut select) => {
+            select.query_hints = std::mem::take(&mut select.query_hints)
+                .into_iter()
+                .map(|hint| transform_recursive(hint, transform_fn))
+                .collect::<Result<Vec<_>>>()?;
             select.expressions = select
                 .expressions
                 .into_iter()
@@ -1998,6 +2031,18 @@ where
             Expression::UnixToTime(e)
         }
 
+        Expression::Upsert(mut upsert) => {
+            upsert.table = transform_table_ref_recursive(upsert.table, transform_fn)?;
+            upsert.source = transform_recursive(upsert.source, transform_fn)?;
+            if let Some(partition) = upsert.partition.take() {
+                upsert.partition = Some(transform_recursive(partition, transform_fn)?);
+            }
+            if let Some(condition) = upsert.condition.take() {
+                upsert.condition = Some(transform_recursive(condition, transform_fn)?);
+            }
+            Expression::Upsert(upsert)
+        }
+
         // CreateTable: recurse into column defaults, on_update expressions, and data types
         Expression::CreateTable(mut ct) => {
             for col in &mut ct.columns {
@@ -2387,6 +2432,7 @@ cached_dialect!(CACHED_DRILL, DrillDialect, "dialect-drill");
 cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
+cached_dialect!(CACHED_HANA, HanaDialect, "dialect-hana");
 
 fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -2469,6 +2515,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::Exasol => from_cache!(CACHED_EXASOL, ExasolDialect),
         #[cfg(feature = "dialect-datafusion")]
         DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
+        #[cfg(feature = "dialect-hana")]
+        DialectType::HANA => from_cache!(CACHED_HANA, HanaDialect),
         _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
@@ -3182,7 +3230,17 @@ impl Dialect {
         // Apply preprocessing transforms based on dialect
         let preprocessed = self.preprocess(expr)?;
         // Then apply recursive transformation
-        transform_recursive(preprocessed, &self.transformer)
+        transform_recursive(preprocessed, &|node| {
+            // Calls with retained source semantics are lowered by the generator;
+            // ordinary AST visitors and optimizer passes still see their shared node kind.
+            if node.source_dialect().is_some()
+                || matches!(&node, Expression::Function(f) if !f.qualified_name.is_empty())
+            {
+                Ok(node)
+            } else {
+                (self.transformer)(node)
+            }
+        })
     }
 
     /// Apply dialect-specific preprocessing transforms
@@ -3465,6 +3523,15 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
+                // Reject unsupported source semantics before normalization can
+                // erase them. This AST-only pass shares conversion decisions with
+                // the generator and never renders throwaway SQL.
+                Self::reject_hana_source_semantics(
+                    &expr,
+                    self.dialect_type,
+                    target_dialect.generator_config.dialect.unwrap_or_default(),
+                )?;
+
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.
@@ -3608,6 +3675,10 @@ impl Dialect {
                                                 ));
                                                 return Ok(Expression::Function(Box::new(
                                                     crate::expressions::Function {
+                                                        on_error: None,
+                                                        qualified_name: Vec::new(),
+                                                        source_dialect: None,
+
                                                         name: f.name.clone(),
                                                         args: new_args,
                                                         distinct: f.distinct,
@@ -3979,6 +4050,8 @@ impl Dialect {
                             };
                             Ok(Expression::AggregateFunction(Box::new(
                                 crate::expressions::AggregateFunction {
+                                    source_dialect: None,
+
                                     name: "COUNT_BIG".to_string(),
                                     args,
                                     distinct: c.distinct,
@@ -4279,6 +4352,42 @@ impl Dialect {
             && select.fetch.is_none()
             && select.for_xml.is_empty()
             && select.for_json.is_empty()
+    }
+
+    fn reject_hana_source_semantics(
+        expression: &Expression,
+        source: DialectType,
+        target: DialectType,
+    ) -> Result<()> {
+        if source != DialectType::HANA || target == DialectType::HANA {
+            return Ok(());
+        }
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            if node.source_dialect() == Some(DialectType::HANA) {
+                Generator::validate_hana_source_node(node, target)?;
+            }
+            // A supported outer call does not establish support for its arguments.
+            // Types in column definitions, casts, routine signatures, etc. are
+            // embedded syntax, not Expression children. Validate each type once,
+            // before normalization can replace its enclosing ARRAY/STRUCT type.
+            // A scalar native CAST already uses a value-aware conversion check
+            // (e.g. a HANA TINYINT literal can fit a target signed integer).
+            let cast_type_validated = matches!(node, Expression::Cast(c)
+                if matches!(c.to, crate::expressions::DataType::Hana { .. }));
+            let mut type_result = Ok(());
+            crate::ast_children::for_each_child_and_type_untracked(
+                node,
+                |child| pending.push(child),
+                |data_type| {
+                    if !cast_type_validated && type_result.is_ok() {
+                        type_result = Generator::validate_hana_source_type(data_type, target);
+                    }
+                },
+            );
+            type_result?;
+        }
+        Ok(())
     }
 
     fn reject_clickhouse_session_semantics(
@@ -10063,6 +10172,157 @@ impl Dialect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(
+        feature = "transpile",
+        feature = "dialect-hana",
+        feature = "dialect-duckdb",
+        feature = "dialect-trino"
+    ))]
+    #[test]
+    fn hana_validation_and_generation_agree_after_ast_serialization() {
+        let hana = Dialect::get(DialectType::HANA);
+        for (sql, duckdb, trino) in [
+            ("SELECT COALESCE(IFNULL(x, 0), 1) FROM t", true, true),
+            ("SELECT LOCATE('abcabc', 'bc', 2)", true, true),
+            ("SELECT LOCATE('abcabc', 'bc', 1, 2)", false, true),
+            ("SELECT SUBSTRING('abc', -1, -2)", true, true),
+            ("SELECT TO_DECIMAL(12.345, 5, 2)", true, true),
+            (
+                "SELECT CAST(12.345 AS DECIMAL(5)), CAST(-12.9 AS INT)",
+                true,
+                true,
+            ),
+            ("SELECT TO_DATE('2024-01-15', 'YYYY-MM-DD')", true, true),
+            (
+                "SELECT TO_TIMESTAMP('2024-01-15', 'YYYY-MM-DD')",
+                false,
+                true,
+            ),
+            (
+                "SELECT TO_VARCHAR(DATE '2024-01-15', 'YYYY-MM-DD')",
+                true,
+                true,
+            ),
+            ("SELECT CURRENT_UTCDATE", true, true),
+            (
+                "SELECT CURRENT_UTCTIMESTAMP(7), CURRENT_UTCTIME",
+                false,
+                true,
+            ),
+            ("CREATE TABLE t (n INT, xs INT ARRAY)", true, true),
+            ("CREATE TABLE t (n SMALLDECIMAL ARRAY)", false, false),
+            ("ALTER TABLE t ADD (n SMALLDECIMAL ARRAY)", false, false),
+            ("ALTER TABLE t ADD (n INT ARRAY)", true, true),
+            ("SELECT COALESCE(ADD_DAYS(d, 1), d) FROM t", false, false),
+            ("SELECT COALESCE(CAST(x AS INT), 0) FROM t", false, false),
+            (
+                "SELECT COALESCE(JSON_VALUE(j, '$.a'), 'x') FROM t",
+                false,
+                false,
+            ),
+            (
+                "SELECT COALESCE(SUBSTR_REGEXPR('a' IN s), 'x') FROM t",
+                false,
+                false,
+            ),
+            (
+                "SELECT COALESCE(STRING_AGG(x, ','), '') FROM t",
+                false,
+                false,
+            ),
+            (
+                "CREATE TABLE t (n INT DEFAULT ADD_DAYS(d, 1))",
+                false,
+                false,
+            ),
+            ("SELECT * FROM t FOR JSON", false, false),
+            ("CREATE COLUMN TABLE t (n INT)", false, false),
+            ("SELECT * FROM t WITH HINT (NO_INLINE)", false, false),
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            let json = serde_json::to_string(&ast).unwrap();
+            let ast: Expression = serde_json::from_str(&json).unwrap();
+            for (target, supported) in [(DialectType::DuckDB, duckdb), (DialectType::Trino, trino)]
+            {
+                assert_eq!(
+                    Dialect::reject_hana_source_semantics(&ast, DialectType::HANA, target).is_ok(),
+                    supported,
+                    "validation: {sql} -> {target}"
+                );
+                assert_eq!(
+                    Dialect::get(target).generate(&ast).is_ok(),
+                    supported,
+                    "generation: {sql} -> {target}"
+                );
+            }
+            assert!(Dialect::reject_hana_source_semantics(
+                &ast,
+                DialectType::HANA,
+                DialectType::HANA
+            )
+            .is_ok());
+        }
+    }
+
+    #[cfg(all(
+        feature = "transpile",
+        feature = "dialect-hana",
+        feature = "dialect-duckdb"
+    ))]
+    #[test]
+    fn hana_rejects_source_semantics_before_preprocessing_can_erase_them() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let called = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&called);
+        let mut hana = Dialect::get(DialectType::HANA);
+        hana.custom_preprocess = Some(Box::new(move |_| {
+            seen.store(true, Ordering::Relaxed);
+            Ok(Expression::number(1))
+        }));
+        for level in [
+            UnsupportedLevel::Ignore,
+            UnsupportedLevel::Warn,
+            UnsupportedLevel::Raise,
+            UnsupportedLevel::Immediate,
+        ] {
+            for sql in [
+                "SELECT COALESCE(ADD_DAYS(d, 1), d) FROM t",
+                "SELECT COALESCE(CAST(x AS INT), 0) FROM t",
+                "SELECT COALESCE(JSON_VALUE(j, '$.a'), 'x') FROM t",
+                "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
+                "ALTER TABLE t ADD (x SMALLDECIMAL ARRAY)",
+                "SELECT CAST(xs AS SMALLDECIMAL ARRAY) FROM t",
+                "CREATE FUNCTION f(x SMALLDECIMAL ARRAY) RETURNS INT AS 1",
+                "SELECT * FROM t FOR JSON",
+                "SELECT * FROM t WITH HINT (NO_INLINE)",
+            ] {
+                assert!(
+                    hana.transpile_with(
+                        sql,
+                        DialectType::DuckDB,
+                        TranspileOptions::default().with_unsupported_level(level)
+                    )
+                    .is_err(),
+                    "{sql}"
+                );
+                assert!(
+                    !called.load(Ordering::Relaxed),
+                    "preprocessing must not erase unsupported input: {sql}"
+                );
+            }
+        }
+        let mut target = Dialect::get(DialectType::DuckDB);
+        Arc::make_mut(&mut target.generator_config).dialect = Some(DialectType::Generic);
+        assert!(hana
+            .transpile("SELECT LOCATE('abc', 'b')", &target)
+            .is_err());
+        assert!(!called.load(Ordering::Relaxed));
+        assert!(hana
+            .transpile("SELECT COALESCE(x, 0) FROM t", DialectType::DuckDB)
+            .is_ok());
+        assert!(called.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn built_in_dialect_instances_share_tokenizer_config() {

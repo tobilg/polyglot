@@ -1,0 +1,136 @@
+{
+  "dialect": "hana",
+  "category": "functions",
+  "identity": [
+    {
+      "sql": "SELECT ADD_DAYS(d, 7) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT ADD_MONTHS(d, 3) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT ADD_SECONDS(ts, 30) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT ADD_YEARS(d, 1) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT DAYS_BETWEEN(d1, d2) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT MONTHS_BETWEEN(d1, d2) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT SECONDS_BETWEEN(d1, d2) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT YEARS_BETWEEN(d1, d2) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(x) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD') FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT TO_INTEGER(s) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT TO_DECIMAL(s) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT IFNULL(a, b) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT SUBSTR(s, 1, 3) FROM t",
+      "description": "Native SUBSTR alias"
+    },
+    {
+      "sql": "SELECT LCASE(s) FROM t",
+      "description": "LCASE canonicalized to LOWER by parser"
+    },
+    {
+      "sql": "SELECT UCASE(s) FROM t",
+      "description": "UCASE canonicalized to UPPER by parser"
+    },
+    {
+      "sql": "SELECT LOCATE('abc', s) FROM t",
+      "description": "LOCATE canonicalized to STRPOS with arg swap by parser"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIMESTAMP FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCDATE FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIME FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT TRUNC(x, 2) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT BITAND(a, b) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT BITOR(a, b) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT BITNOT(a) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT BINTOSTR(HEXTOBIN('414243')) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT IFNULL(a, b) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT CASE WHEN cond THEN a ELSE b END FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT add_days(d, 7) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT Add_Months(d, 3) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    },
+    {
+      "sql": "SELECT lcase(s) FROM t",
+      "description": "Mixed-case lcase canonicalized to LOWER by parser"
+    },
+    {
+      "sql": "SELECT CAST(x AS INTEGER) FROM t",
+      "description": "Explicit type conversion",
+      "expected": "SELECT CAST(x AS INT) FROM t"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE LOWER(name) LIKE '%john%'",
+      "description": "Native HANA calls preserve their name and arguments"
+    }
+  ],
+  "transpilation": []
+}

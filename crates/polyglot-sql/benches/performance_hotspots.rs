@@ -4,18 +4,12 @@ use polyglot_sql::parser::{Parser, ParserConfig};
 use polyglot_sql::ComplexityGuardOptions;
 use std::time::Duration;
 
-const SHORT_ASCII: &str =
-    "SELECT a, b, SUM(c) AS total FROM events WHERE created_at >= '2025-01-01' GROUP BY a, b";
+mod common;
 
-const UNICODE: &str =
-    "SELECT \"Kundennummer\", 'Gr\u{00fc}\u{00df}e aus Z\u{00fc}rich' AS \"Mitteilung\" FROM \"Bestellungen\" WHERE \"Stadt\" = 'M\u{00fc}nchen'";
-
-const COMMENT_AND_STRING_HEAVY: &str = r#"
--- leading comment
-SELECT 'alpha''beta' AS value, "quoted name", E'line\nvalue'
-FROM events /* source comment */
-WHERE payload = '{"key":"value"}' -- trailing comment
-"#;
+use common::{
+    large_strings, large_token_list, many_columns, many_numbers, nested_functions,
+    COMMENT_AND_STRING_HEAVY, SHORT_ASCII, UNICODE,
+};
 
 const TPCH_STYLE: &str = r#"
 WITH regional_sales AS (
@@ -35,49 +29,6 @@ JOIN regions r ON r.id = ranked.region_id
 WHERE ranked.position <= 10
 ORDER BY ranked.revenue DESC
 "#;
-
-fn large_token_list() -> String {
-    let values = (0..20_000)
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("SELECT * FROM events WHERE event_id IN ({values})")
-}
-
-fn many_columns() -> String {
-    format!(
-        "SELECT {} FROM t",
-        (0..1_000)
-            .map(|index| format!("c{index}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn nested_functions() -> String {
-    format!(
-        "SELECT {}x{} FROM t",
-        "COALESCE(".repeat(20),
-        ", NULL)".repeat(20)
-    )
-}
-
-fn large_strings() -> String {
-    format!(
-        "SELECT {} FROM t",
-        vec![format!("'{}'", "x".repeat(100)); 500].join(", ")
-    )
-}
-
-fn many_numbers() -> String {
-    format!(
-        "SELECT {} FROM t",
-        (0..10_000)
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
 
 fn disabled_guards() -> ComplexityGuardOptions {
     ComplexityGuardOptions {
@@ -269,11 +220,49 @@ fn bench_validation_and_analysis(c: &mut Criterion) {
     let _ = c;
 }
 
+fn bench_hana_nested_queries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("nested_query_dialects");
+    for depth in [10, 20, 40, 80] {
+        let mut sql = "SELECT 1".to_owned();
+        for _ in 0..depth {
+            sql = format!("SELECT ({sql})");
+        }
+        for kind in [DialectType::PostgreSQL, DialectType::HANA] {
+            let dialect = Dialect::get(kind);
+            group.bench_with_input(BenchmarkId::new(kind.to_string(), depth), &sql, |b, sql| {
+                b.iter(|| dialect.parse(black_box(sql)).unwrap());
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_hana_source_validation(c: &mut Criterion) {
+    #[cfg(feature = "transpile")]
+    {
+        let options = polyglot_sql::TranspileOptions::strict();
+        let mut group = c.benchmark_group("hana_source_validation");
+        for (name, sql) in common::transpilation_queries() {
+            group.bench_with_input(BenchmarkId::from_parameter(name), &sql, |b, sql| {
+                b.iter(|| {
+                    polyglot_sql::transpile_with_by_name(black_box(sql), "hana", "duckdb", &options)
+                        .unwrap()
+                });
+            });
+        }
+        group.finish();
+    }
+    #[cfg(not(feature = "transpile"))]
+    let _ = c;
+}
+
 criterion_group!(
     benches,
     bench_dialect_construction,
     bench_fresh_vs_reused_dialect,
     bench_tokenize_and_parse,
-    bench_validation_and_analysis
+    bench_validation_and_analysis,
+    bench_hana_nested_queries,
+    bench_hana_source_validation
 );
 criterion_main!(benches);

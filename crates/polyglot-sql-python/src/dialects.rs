@@ -16,6 +16,7 @@ const DIALECT_NAMES: &[&str] = &[
     "exasol",
     "fabric",
     "generic",
+    "hana",
     "hive",
     "materialize",
     "mysql",

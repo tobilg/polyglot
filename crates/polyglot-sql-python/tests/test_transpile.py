@@ -188,3 +188,13 @@ def test_transpile_calls_execute_concurrently_with_stable_results():
         results = list(executor.map(run, range(32)))
 
     assert all(result == results[0] for result in results)
+
+
+def test_hana_native_clauses_and_source_semantics():
+    sql = "SELECT * FROM t FOR JSON ('arraywrap' = 'NO')"
+    assert polyglot_sql.transpile(sql, read="hana", write="hana") == [sql]
+    assert polyglot_sql.transpile(
+        "SELECT LOCATE('abcabc', 'bc')", read="hana", write="duckdb"
+    ) == ["SELECT STRPOS('abcabc', 'bc')"]
+    with pytest.raises(polyglot_sql.TranspileError):
+        polyglot_sql.transpile(sql, read="hana", write="duckdb")

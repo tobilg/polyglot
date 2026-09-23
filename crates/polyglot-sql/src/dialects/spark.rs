@@ -659,6 +659,10 @@ impl SparkDialect {
                     })
                     .collect();
                 Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "STRUCT".to_string(),
                     args: named_args,
                     distinct: false,

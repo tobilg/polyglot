@@ -18,7 +18,7 @@ import {
   isExpressionValue,
   makeExpr,
 } from '../helpers';
-import { isExpressionType } from '../types/guards';
+import { isExpressionType, isFunction } from '../types/guards';
 import {
   addSelectColumns,
   addWhere,
@@ -1456,5 +1456,35 @@ describe('Integration Tests', () => {
     // Should be semantically equivalent
     expect(regenerated.toUpperCase()).toContain('SELECT');
     expect(regenerated.toUpperCase()).toContain('FROM');
+  });
+});
+
+describe('HANA AST traversal', () => {
+  it('uses shared node guards and retains source semantics after JSON serialization', () => {
+    const sql =
+      "SELECT LOCATE(value, 'a', 1, 2), JSON_VALUE(payload, '$.n' DEFAULT 0 ON EMPTY) FROM records";
+    const ast = parseFirstWithDialect(sql, Dialect.HANA);
+    expect(findAll(ast, isFunction)).toHaveLength(1);
+    const call = findAll(ast, isFunction)[0];
+    if (!isFunction(call)) throw new Error('Expected shared Function node');
+    expect(call.function.source_dialect).toBe('hana');
+    expect(
+      findAll(ast, (node) => isExpressionType(node, 'j_s_o_n_value')),
+    ).toHaveLength(1);
+    expect(getColumns(ast).map(columnReference)).toEqual(['value', 'payload']);
+    const copied: Expression = JSON.parse(JSON.stringify(clone(ast)));
+    expect(generate([copied], Dialect.HANA)).toEqual(
+      generate([ast], Dialect.HANA),
+    );
+    const renamed = renameColumns(copied, {
+      value: 'needle_source',
+      payload: 'document',
+    });
+    expect(getColumns(renamed).map(columnReference)).toEqual([
+      'needle_source',
+      'document',
+    ]);
+    expect(getColumns(ast).map(columnReference)).toEqual(['value', 'payload']);
+    expect(generate([copied], Dialect.DuckDB).success).toBe(false);
   });
 });

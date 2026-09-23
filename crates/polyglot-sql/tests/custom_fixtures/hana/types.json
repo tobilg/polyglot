@@ -1,0 +1,39 @@
+{
+  "dialect": "hana",
+  "category": "types",
+  "identity": [
+    {
+      "sql": "SELECT CAST(x AS SMALLDECIMAL) FROM t",
+      "description": "CAST to SMALLDECIMAL (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS SECONDDATE) FROM t",
+      "description": "CAST to SECONDDATE (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS ALPHANUM) FROM t",
+      "description": "CAST to ALPHANUM (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS NVARCHAR(255)) FROM t",
+      "description": "CAST to NVARCHAR(255) (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS CLOB) FROM t",
+      "description": "CAST to CLOB (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS NCLOB) FROM t",
+      "description": "CAST to NCLOB (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS BINARY) FROM t",
+      "description": "CAST to BINARY (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS FLOAT) FROM t",
+      "description": "Native HANA calls preserve their name and arguments"
+    }
+  ],
+  "transpilation": []
+}

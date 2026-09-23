@@ -310,6 +310,8 @@ pub fn default_selection(is_agg: bool) -> Expression {
         // MAX(1) AS _
         Expression::Alias(Box::new(Alias {
             this: Expression::AggregateFunction(Box::new(AggregateFunction {
+                source_dialect: None,
+
                 name: "MAX".to_string(),
                 args: vec![Expression::Literal(Box::new(Literal::Number(
                     "1".to_string(),

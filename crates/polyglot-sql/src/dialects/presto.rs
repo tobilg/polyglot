@@ -180,6 +180,9 @@ impl DialectImpl for PrestoDialect {
                     other => other,
                 };
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this: *e.this,
                     path,
                     returning: None,
@@ -802,6 +805,9 @@ impl PrestoDialect {
                     _ => path,
                 };
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path: json_path,
                     returning: None,
@@ -1021,6 +1027,8 @@ impl PrestoDialect {
             // VAR -> VAR_POP in Presto
             "VAR" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "VAR_POP".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -1035,6 +1043,8 @@ impl PrestoDialect {
             // VARIANCE -> VAR_SAMP in Presto (for sample variance)
             "VARIANCE" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "VAR_SAMP".to_string(),
                     args: f.args,
                     distinct: f.distinct,

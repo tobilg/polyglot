@@ -28,7 +28,7 @@ fn transpile_succeeds(sql: &str, from: DialectType, to: DialectType) -> bool {
 mod strict_unsupported_regressions {
     use super::*;
 
-    fn transpile_with_level(
+    pub(super) fn transpile_with_level(
         sql: &str,
         read: DialectType,
         write: DialectType,
@@ -484,7 +484,6 @@ mod strict_unsupported_regressions {
             "SELECT count(t.id) FROM t",
             "SELECT sum(t.amount) FROM t",
             "SELECT t.* FROM t",
-            "SELECT count(x) FILTER (WHERE EXISTS (SELECT t.* FROM t)) FROM u",
         ];
 
         for write in [DialectType::Fabric, DialectType::TSQL] {
@@ -517,6 +516,24 @@ mod strict_unsupported_regressions {
                 transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
                     .expect("strict TSQL/Fabric transpile should allow scalar aggregate arguments");
             }
+        }
+    }
+
+    #[test]
+    fn strict_tsql_targets_reject_filter_subqueries_lowered_into_aggregate_arguments() {
+        // FILTER becomes CASE inside COUNT. SQL Server/Fabric do not allow a
+        // subquery in that argument, even though the FILTER is valid PostgreSQL.
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            let error = transpile_with_level(
+                "SELECT count(x) FILTER (WHERE EXISTS (SELECT t.* FROM t)) FROM u",
+                DialectType::PostgreSQL,
+                target,
+                UnsupportedLevel::Raise,
+            )
+            .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("aggregate arguments containing subqueries"));
         }
     }
 
@@ -4910,5 +4927,828 @@ mod secondary_dialects {
             DialectType::CockroachDB,
             DialectType::Generic
         ));
+    }
+}
+
+#[cfg(feature = "dialect-hana")]
+mod hana_regressions {
+    use super::strict_unsupported_regressions::transpile_with_level;
+    use super::*;
+    use polyglot_sql::expressions::Expression;
+    use polyglot_sql::ExpressionWalk;
+
+    #[test]
+    fn integer_casts_preserve_hana_truncation_and_reject_unverified_domains() {
+        let sql = "SELECT CAST(10.9 AS INTEGER), CAST(-10.9 AS BIGINT), CAST(10.9 AS TINYINT), CAST(-10.9 AS SMALLINT)";
+        assert_eq!(transpile(sql, DialectType::HANA, DialectType::DuckDB),
+            "SELECT CAST(TRUNC(10.9) AS INT), CAST(TRUNC(-10.9) AS BIGINT), CAST(TRUNC(10.9) AS UTINYINT), CAST(TRUNC(-10.9) AS SMALLINT)");
+        for target in [DialectType::PostgreSQL, DialectType::Trino] {
+            let sql = "SELECT CAST(-10.9 AS BIGINT)";
+            let output = transpile(sql, DialectType::HANA, target);
+            assert!(output.contains(if target == DialectType::Trino {
+                "TRUNCATE(-10.9)"
+            } else {
+                "TRUNC(-10.9)"
+            }));
+        }
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "SELECT CAST('10.9' AS INT)",
+            "SELECT CAST(x AS INT) FROM t",
+            "SELECT CAST(256 AS TINYINT)",
+        ] {
+            let ast = hana.parse(sql).unwrap();
+            let json = serde_json::to_string(&ast).unwrap();
+            let decoded: Vec<Expression> = serde_json::from_str(&json).unwrap();
+            assert!(hana.generate(&decoded[0]).is_ok(), "native {sql}");
+            for target in [DialectType::PostgreSQL, DialectType::Trino] {
+                assert!(
+                    Dialect::get(target).generate(&decoded[0]).is_err(),
+                    "{sql} -> {target:?}"
+                );
+                for level in [UnsupportedLevel::Ignore, UnsupportedLevel::Raise] {
+                    assert!(transpile_with_level(sql, DialectType::HANA, target, level).is_err());
+                }
+            }
+        }
+        for sql in [
+            "SELECT CAST(10.9 AS INT)",
+            "SELECT CAST(-10.9 AS BIGINT)",
+            "SELECT CAST('10.9' AS INT)",
+            "SELECT CAST(x AS SMALLINT) FROM t",
+        ] {
+            assert!(
+                transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    DialectType::HANA,
+                    UnsupportedLevel::Raise
+                )
+                .is_err(),
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            transpile(
+                "SELECT CAST(42 AS INT)",
+                DialectType::PostgreSQL,
+                DialectType::HANA
+            ),
+            "SELECT CAST(42 AS INT) FROM SYS.DUMMY"
+        );
+        for sql in [
+            "SELECT CAST(-32768 AS SMALLINT)",
+            "SELECT CAST(2147483647 AS INTEGER)",
+            "SELECT CAST(-9223372036854775808 AS BIGINT)",
+        ] {
+            assert!(
+                transpile_with_level(
+                    sql,
+                    DialectType::HANA,
+                    DialectType::DuckDB,
+                    UnsupportedLevel::Raise
+                )
+                .is_ok(),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn incoming_decimal_casts_require_verified_rounding_and_overflow_semantics() {
+        for source in [DialectType::PostgreSQL, DialectType::DuckDB] {
+            for sql in [
+                "SELECT CAST(12.349 AS DECIMAL(5, 2))",
+                "SELECT CAST(-12.349 AS DECIMAL(5, 2))",
+                "SELECT CAST(999.999 AS DECIMAL(5, 2))",
+                "SELECT CAST('12.349' AS DECIMAL(5, 2))",
+                "SELECT CAST(x AS DECIMAL(5, 2)) FROM t",
+                "SELECT CAST(12.349 AS DECIMAL)",
+                "SELECT TRY_CAST(12.349 AS DECIMAL(5, 2))",
+                "SELECT SAFE_CAST(12.349 AS DECIMAL(5, 2))",
+            ] {
+                let ast = Dialect::get(source).parse(sql).unwrap();
+                let error = Dialect::get(DialectType::HANA)
+                    .generate(&ast[0])
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("Decimal CAST to HANA"),
+                    "{sql}: {error}"
+                );
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    let error =
+                        transpile_with_level(sql, source, DialectType::HANA, level).unwrap_err();
+                    assert!(
+                        error.to_string().contains("Decimal CAST to HANA"),
+                        "{sql}: {error}"
+                    );
+                }
+            }
+        }
+        for sql in [
+            "SELECT CAST(12.349 AS DECIMAL(5, 2)) FROM t",
+            "SELECT CAST(-12.349 AS DECIMAL(5, 2)) FROM t",
+            "SELECT CAST(x AS DECIMAL) FROM t",
+        ] {
+            assert_eq!(transpile(sql, DialectType::HANA, DialectType::HANA), sql);
+        }
+        assert_eq!(
+            transpile(
+                "CREATE TABLE t (x DECIMAL(5, 2))",
+                DialectType::PostgreSQL,
+                DialectType::HANA
+            ),
+            "CREATE TABLE t (x DECIMAL(5, 2))"
+        );
+    }
+
+    #[test]
+    fn synthetic_dummy_is_not_captured_by_ctes() {
+        for (sql, expected) in [
+            (
+                "WITH DUMMY AS (SELECT x FROM t) SELECT 42",
+                "WITH DUMMY AS (SELECT x FROM t) SELECT 42 FROM SYS.DUMMY",
+            ),
+            (
+                r#"WITH "DUMMY" AS (SELECT x FROM t) SELECT 42"#,
+                r#"WITH "DUMMY" AS (SELECT x FROM t) SELECT 42 FROM SYS.DUMMY"#,
+            ),
+            (
+                "WITH DUMMY AS (SELECT 7 AS x) SELECT (SELECT 42) FROM DUMMY",
+                "WITH DUMMY AS (SELECT 7 AS x FROM SYS.DUMMY) SELECT (SELECT 42 FROM SYS.DUMMY) FROM DUMMY",
+            ),
+            (
+                "WITH DUMMY AS (SELECT x FROM t) SELECT x FROM DUMMY",
+                "WITH DUMMY AS (SELECT x FROM t) SELECT x FROM DUMMY",
+            ),
+        ] {
+            assert_eq!(transpile(sql, DialectType::PostgreSQL, DialectType::HANA), expected);
+            let ast = Dialect::get(DialectType::PostgreSQL).parse(sql).unwrap();
+            assert_eq!(Dialect::get(DialectType::HANA).generate(&ast[0]).unwrap(), expected);
+            // Explicit relations, including the injected system relation, survive native generation.
+            assert_eq!(transpile(expected, DialectType::HANA, DialectType::HANA), expected);
+        }
+    }
+
+    #[test]
+    fn incoming_string_aggregation_requires_verified_null_semantics() {
+        for sql in [
+            "SELECT STRING_AGG(x, ',' ORDER BY id) FROM t",
+            "SELECT STRING_AGG(NULL, ',') FROM t",
+            "SELECT STRING_AGG(x, ',') FROM t WHERE 1 = 0",
+            "SELECT STRING_AGG(x, ',') OVER (PARTITION BY grp) FROM t",
+            "SELECT STRING_AGG(x, ',') FILTER (WHERE keep), COUNT(*) FROM t",
+        ] {
+            for source in [DialectType::PostgreSQL, DialectType::DuckDB] {
+                let error =
+                    transpile_with_level(sql, source, DialectType::HANA, UnsupportedLevel::Raise)
+                        .unwrap_err();
+                assert!(error.to_string().contains("STRING_AGG"), "{sql}: {error}");
+            }
+        }
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile("SELECT STRING_AGG(x, ',') FROM t", DialectType::HANA)
+            .is_ok());
+    }
+
+    #[test]
+    fn dummy_relations_preserve_rows_columns_aliases_and_cte_scope() {
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile("SELECT SYS.DUMMY.DUMMY FROM SYS.DUMMY", DialectType::DuckDB,)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit table alias"));
+        for target in [
+            DialectType::DuckDB,
+            DialectType::PostgreSQL,
+            DialectType::Trino,
+        ] {
+            for sql in [
+                "SELECT 1 FROM SYS.DUMMY",
+                "SELECT * FROM DUMMY",
+                "SELECT d.DUMMY FROM SYS.DUMMY AS d",
+                "SELECT COUNT(*) FROM DUMMY WHERE 1 = 0",
+            ] {
+                let output = transpile(sql, DialectType::HANA, target);
+                assert!(output.contains("SELECT 'X' AS DUMMY"), "{output}");
+                assert!(!output.contains("FROM SYS.DUMMY"), "{output}");
+            }
+        }
+        for sql in [
+            "SELECT * FROM app.DUMMY",
+            "SELECT * FROM \"dummy\"",
+            "WITH DUMMY AS (SELECT 7 AS n) SELECT n FROM DUMMY",
+        ] {
+            let output = transpile(sql, DialectType::HANA, DialectType::DuckDB);
+            assert!(!output.contains("SELECT 'X'"), "{output}");
+        }
+        // The alias is not visible in its own non-recursive definition.
+        for sql in [
+            "WITH DUMMY AS (SELECT * FROM SYS.DUMMY) SELECT * FROM DUMMY",
+            "WITH DUMMY AS (SELECT * FROM DUMMY) SELECT * FROM DUMMY",
+            "WITH first_cte AS (SELECT * FROM DUMMY), DUMMY AS (SELECT 7 AS n), last_cte AS (SELECT n FROM DUMMY) SELECT * FROM first_cte",
+        ] {
+            let output = transpile(sql, DialectType::HANA, DialectType::DuckDB);
+            assert_eq!(output.matches("SELECT 'X'").count(), 1, "{output}");
+        }
+        // A nested WITH does not shadow a sibling or its enclosing query.
+        let output = transpile(
+            "SELECT (WITH DUMMY AS (SELECT 7 AS n) SELECT n FROM DUMMY) FROM DUMMY",
+            DialectType::HANA,
+            DialectType::DuckDB,
+        );
+        assert_eq!(output.matches("SELECT 'X'").count(), 1, "{output}");
+    }
+
+    #[test]
+    fn outer_statement_validation_still_rejects_nested_raw_fallbacks() {
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "UNSUPPORTED STATEMENT",
+            "SELECT (UNSUPPORTED STATEMENT)",
+            "CREATE TABLE t AS (UNSUPPORTED STATEMENT)",
+        ] {
+            assert!(hana.parse(sql).is_err(), "{sql}");
+        }
+        let mut sql = "SELECT 1".to_owned();
+        for _ in 0..80 {
+            sql = format!("SELECT ({sql})");
+        }
+        assert!(hana.parse(&sql).is_ok());
+        assert!(hana.parse("SELECT 1; UNSUPPORTED STATEMENT").is_err());
+    }
+
+    #[test]
+    fn shared_function_nodes_participate_in_generic_analysis() {
+        use polyglot_sql::optimizer::{normalize_identifiers, TypeAnnotator};
+        let hana = Dialect::get(DialectType::HANA);
+        let ast = hana
+            .parse("SELECT COALESCE(mixed, 1), mixed FROM tab")
+            .unwrap()
+            .remove(0);
+        assert!(ast.dfs().any(|e| matches!(e, Expression::Function(_))));
+        let normalized = normalize_identifiers(ast, Some(DialectType::HANA));
+        assert_eq!(
+            hana.generate(&normalized).unwrap(),
+            "SELECT COALESCE(MIXED, 1), MIXED FROM TAB"
+        );
+        let ast = hana
+            .parse("SELECT COALESCE(1, 2) FROM DUMMY")
+            .unwrap()
+            .remove(0);
+        let call = ast
+            .dfs()
+            .find(|e| matches!(e, Expression::Function(_)))
+            .unwrap();
+        assert_eq!(call.source_dialect(), Some(DialectType::HANA));
+        assert!(matches!(
+            TypeAnnotator::new(None, Some(DialectType::HANA)).annotate(call),
+            Some(polyglot_sql::expressions::DataType::Int { .. })
+        ));
+        for dialect in [DialectType::HANA, DialectType::PostgreSQL] {
+            let ast = Dialect::get(dialect)
+                .parse(r#"SELECT "f"(x) FROM t"#)
+                .unwrap()
+                .remove(0);
+            let call = ast
+                .dfs()
+                .find(|e| matches!(e, Expression::Function(_)))
+                .unwrap();
+            assert_eq!(
+                call.source_dialect(),
+                None,
+                "quoted UDFs are not native built-ins"
+            );
+        }
+    }
+
+    #[test]
+    fn source_metadata_survives_optimizers_and_standalone_generation() {
+        use polyglot_sql::optimizer::{canonicalize, normalize_identifiers};
+        let hana = Dialect::get(DialectType::HANA);
+        let trino = Dialect::get(DialectType::Trino);
+        let ast = hana
+            .parse("SELECT LOCATE('abcabc', 'bc', 1, 2) FROM DUMMY")
+            .unwrap()
+            .remove(0);
+        let ast = canonicalize(
+            normalize_identifiers(ast, Some(DialectType::HANA)),
+            Some(DialectType::HANA),
+        );
+        let call = ast
+            .dfs()
+            .find(|e| matches!(e, Expression::Function(_)))
+            .unwrap();
+        let json = serde_json::to_string(call).unwrap();
+        assert!(json.contains("\"source_dialect\":\"hana\""));
+        assert!(!json.contains("hana_function"));
+        let call: Expression = serde_json::from_str(&json).unwrap();
+        assert_eq!(trino.generate(&call).unwrap(), "STRPOS('abcabc', 'bc', 2)");
+        assert_eq!(
+            hana.generate(&call).unwrap(),
+            "LOCATE('abcabc', 'bc', 1, 2)"
+        );
+        for sql in [
+            "SELECT SUBSTR_REGEXPR('a' IN value OCCURRENCE 2) FROM t",
+            "SELECT JSON_VALUE(payload, '$.n' DEFAULT 0 ON EMPTY) FROM t",
+            "SELECT STRING_AGG(value, ',' ORDER BY id) FROM t",
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            let json = serde_json::to_string(&ast).unwrap();
+            let decoded: Expression = serde_json::from_str(&json).unwrap();
+            assert_eq!(hana.generate(&decoded).unwrap(), sql);
+            assert!(trino.generate(&decoded).is_err(), "{sql}");
+            assert!(!decoded.dfs().any(|e| e.variant_name().starts_with("hana_")));
+        }
+    }
+
+    #[test]
+    fn create_table_traversal_is_independent_of_source_metadata() {
+        use polyglot_sql::ast_transforms::rename_columns;
+        let hana = Dialect::get(DialectType::HANA);
+        let ast = hana
+            .parse("CREATE TABLE t (value INT CHECK (value > 0))")
+            .unwrap()
+            .remove(0);
+        let mut outputs = Vec::new();
+        for source in [None, Some(DialectType::HANA)] {
+            let mut ast = ast.clone();
+            if let Expression::CreateTable(table) = &mut ast {
+                table.source_dialect = source;
+            }
+            let renamed =
+                rename_columns(ast, &[("value".to_owned(), "new_value".to_owned())].into());
+            outputs.push(hana.generate(&renamed).unwrap());
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        assert!(outputs[0].contains("CHECK (new_value > 0)"));
+    }
+
+    #[test]
+    fn native_syntax_uses_shared_expression_categories() {
+        let hana = Dialect::get(DialectType::HANA);
+        for (sql, expected) in [
+            ("SELECT JSON_VALUE(j, '$.a') FROM t", "j_s_o_n_value"),
+            ("SELECT JSON_QUERY(j, '$.a') FROM t", "json_query"),
+            (
+                "SELECT * FROM JSON_TABLE(j, '$' COLUMNS (v INT PATH '$.v'))",
+                "j_s_o_n_table",
+            ),
+            (
+                "SELECT * FROM t WHERE value LIKE_REGEXPR 'a'",
+                "regexp_like",
+            ),
+            (
+                "SELECT SUBSTR_REGEXPR('a' IN value) FROM t",
+                "regexp_extract",
+            ),
+            (
+                "SELECT a FROM t GROUP BY ROLLUP STRUCTURED RESULT (a)",
+                "rollup",
+            ),
+            ("SELECT * FROM t WITH HINT (NO_INLINE)", "hint"),
+            (
+                "CREATE TABLE t (id INT) PARTITION BY HASH (id) PARTITIONS 4",
+                "partition_by_property",
+            ),
+            ("CALL demo.proc(1)", "call"),
+            ("UPSERT t VALUES (1) WITH PRIMARY KEY", "upsert"),
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            assert!(
+                ast.dfs().any(|e| e.variant_name() == expected),
+                "{sql}: expected {expected}"
+            );
+            assert_eq!(hana.generate(&ast).unwrap(), sql);
+        }
+    }
+
+    #[test]
+    fn native_semantics_survive_transpile_and_json() {
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "SELECT LOCATE('abcabc', 'bc', 1, 2) FROM DUMMY",
+            "SELECT TO_DECIMAL(7654321.888888, 10, 3) FROM DUMMY",
+            "SELECT CURRENT_UTCTIMESTAMP(7), CURRENT_UTCDATE, CURRENT_UTCTIME FROM DUMMY",
+            "SELECT ADD_DAYS(d, 7), BITAND(a, b), TO_VARCHAR(d, 'YYYY-MM-DD') FROM t",
+            "SELECT * FROM t FOR JSON",
+            "SELECT * FROM t FOR XML",
+            "SELECT * FROM t FOR JSON ('arraywrap' = 'NO')",
+            "SELECT * FROM t WITH HINT (NO_INLINE)",
+            "ALTER TABLE t ADD (x INT)",
+            "CREATE TABLE t (xs INT ARRAY)",
+            "CREATE COLUMN TABLE t (id INT)",
+            "CREATE ROW TABLE t (id INT)",
+            "CREATE LOCAL TEMPORARY COLUMN TABLE t (id INT)",
+            "SELECT * FROM t FOR UPDATE IGNORE LOCKED",
+            "SELECT * FROM t WHERE CONTAINS(name, 'abc', FUZZY(0.8))",
+            "SELECT * FROM t WHERE name LIKE_REGEXPR '^a' FLAG 'i'",
+            "SELECT SUBSTR_REGEXPR('a' IN s OCCURRENCE 2) FROM t",
+            "UPSERT t VALUES (1, 8) WITH PRIMARY KEY",
+            "UPSERT t VALUES (2, 2) WHERE id = 2",
+            "UPSERT t SELECT id, val FROM source",
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY HASH (id) PARTITIONS 4",
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY HASH (id) NO PRIMARY KEY CHECK PARTITIONS 4",
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY RANGE (id) PRIMARY KEY CHECK (PARTITION OTHERS)",
+            "SELECT * FROM HIERARCHY(SOURCE (SELECT id AS node_id, parent AS parent_id FROM t))",
+            "SELECT * FROM HIERARCHY(SOURCE t START WHERE id = 1 SIBLING ORDER BY id ORPHAN ROOT)",
+            r#"SELECT * FROM "_SYS_BIC"."pkg/view"(PLACEHOLDER."$$P$$" => 'X')"#,
+            "SELECT * FROM t FOR JSON ('arraywrap' = 'NO') RETURNS NVARCHAR(5000)",
+            "SELECT * FROM t FOR XML RETURNS NCLOB",
+            "SELECT * FROM t FOR SHARE LOCK WAIT 3",
+            "SELECT * FROM t FOR SHARE LOCK IGNORE LOCKED",
+            "SELECT * FROM t ORDER BY a WITH COLLATION ENGLISH WITH HINT (NO_INLINE CASCADE)",
+            "CALL demo.proc(1, ?) ASYNC WITH HINT (NO_INLINE)",
+            "CALL demo.library:member(1)",
+            "SELECT JSON_VALUE(j, '$.a' RETURNING INT DEFAULT 0 ON EMPTY ERROR ON ERROR) FROM t",
+            "SELECT JSON_QUERY(j, '$.a' WITH CONDITIONAL ARRAY WRAPPER EMPTY ARRAY ON EMPTY NULL ON ERROR) FROM t",
+            "SELECT * FROM JSON_TABLE(j, '$' COLUMNS (rn FOR ORDINALITY, v NVARCHAR(20) PATH '$.v' DEFAULT 'missing' ON EMPTY ERROR ON ERROR))",
+            "SELECT * FROM JSON_TABLE(j, '$' COLUMNS (NESTED PATH '$.a[*]' COLUMNS (v INT PATH '$.v')) ERROR ON ERROR)",
+            "SELECT CAST(x AS ST_GEOMETRY(4326)), CAST(y AS REAL_VECTOR(3)) FROM t",
+            "CREATE COLUMN TABLE t (id INT) NO AUTO MERGE UNLOAD PRIORITY 5",
+            "CREATE TABLE t (id INT) RECORD COMMIT TIMESTAMP",
+            "CREATE TABLE t (id INT, next_id INT GENERATED ALWAYS AS id + 1)",
+
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION 0 <= VALUES < 100, PARTITION OTHERS)",
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY HASH (id) PARTITIONS 4 SUBPARTITION BY RANGE (id) (PARTITION VALUES < 100, PARTITION OTHERS DYNAMIC THRESHOLD 1000)",
+            "CREATE COLUMN TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION VALUES = 1 PAGE LOADABLE, PARTITION OTHERS DYNAMIC INCREASING INTERVAL 10)",
+            "SELECT CURRENT_CONNECTION, CURRENT_SCHEMA, CURRENT_USER, SESSION_USER, SYSUUID FROM DUMMY",
+            "SELECT NTH_VALUE(x, 2 ORDER BY y), STRING_AGG(s, ',' ORDER BY id) FROM t",
+            "SELECT * FROM t WHERE s NOT LIKE_REGEXPR '^a' FLAG 'i'",
+            "SELECT REPLACE_REGEXPR('a' IN s WITH 'b' OCCURRENCE ALL) FROM t",
+            "SELECT LOCATE_REGEXPR(AFTER 'a' IN s FROM 2 OCCURRENCE 1 GROUP 0) FROM t",
+            "SELECT a, b, SUM(x) FROM t GROUP BY GROUPING SETS BEST -1 LIMIT 2 OFFSET 1 WITH SUBTOTAL WITH BALANCE WITH TOTAL ((a), (b))",
+            "SELECT a, SUM(x) FROM t GROUP BY ROLLUP STRUCTURED RESULT WITH OVERVIEW PREFIX '#groups' (a)",
+            "SELECT a, SUM(x) FROM t GROUP BY CUBE MULTIPLE RESULTSETS (a)",
+            "SELECT * FROM t LIMIT 1 OFFSET 2 TOTAL ROWCOUNT",
+            "SELECT LOCALTOUTC(ts, 'EST', 'sap' NULL ON ERROR) FROM t",
+            "SELECT UTCTOLOCAL(ts, 'INVALID', 'sap' DEFAULT '2025-01-01 00:00:00' ON ERROR) FROM t",
+        ] {
+            let ast = hana.parse(sql).unwrap_or_else(|err| panic!("{sql}: {err}"));
+            assert!(!ast[0].dfs().any(|node| matches!(node, Expression::Raw(_) | Expression::Command(_))), "{sql}");
+            let json = serde_json::to_string(&ast).unwrap();
+            let decoded: Vec<Expression> = serde_json::from_str(&json).unwrap();
+            let output = hana.generate(&decoded[0]).unwrap();
+            assert_eq!(output, sql, "AST round trip: {sql}");
+            assert_eq!(hana.transpile(sql, DialectType::HANA).unwrap(), vec![sql], "transpile: {sql}");
+        }
+    }
+
+    #[test]
+    fn preserves_quoted_and_qualified_names() {
+        let sql = "SELECT \"CURRENT_UTCDATE\", t.CURRENT_UTCTIME, \"ADD_DAYS\"(d, 1) FROM t";
+        assert_eq!(transpile(sql, DialectType::HANA, DialectType::HANA), sql);
+    }
+
+    #[test]
+    fn native_children_participate_in_ast_mutations() {
+        use polyglot_sql::ast_transforms::{rename_columns, rename_tables};
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "SELECT LOCATE(value, 'a'), JSON_VALUE(payload, '$.n' DEFAULT value ON EMPTY) FROM records",
+            "SELECT SUBSTR_REGEXPR('a' IN value), LOCALTOUTC(value, 'UTC') FROM records ORDER BY value",
+            "SELECT value, SUM(n) FROM records GROUP BY ROLLUP BEST 1 (value)",
+            "SELECT * FROM HIERARCHY(SOURCE (SELECT value AS node_id, parent AS parent_id FROM records))",
+            "UPSERT target_table SELECT value FROM source_table",
+            "CREATE TABLE records (value INT, next_value INT GENERATED ALWAYS AS value + 1) PARTITION BY HASH (value) PARTITIONS 4",
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            assert!(ast.dfs().any(|e| matches!(e, Expression::Column(c) if c.name.name == "value")), "{sql}");
+            let renamed = rename_columns(ast.clone(), &[("value".to_owned(), "renamed".to_owned())].into());
+            assert!(!renamed.dfs().any(|e| matches!(e, Expression::Column(c) if c.name.name == "value")), "{sql}");
+            assert!(renamed.dfs().any(|e| matches!(e, Expression::Column(c) if c.name.name == "renamed")), "{sql}");
+            assert!(ast.dfs().any(|e| matches!(e, Expression::Column(c) if c.name.name == "value")), "{sql}");
+        }
+        let ast = hana
+            .parse("UPSERT target_table SELECT value FROM source_table")
+            .unwrap()
+            .remove(0);
+        let renamed = rename_tables(
+            ast,
+            &[
+                ("target_table".to_owned(), "new_target".to_owned()),
+                ("source_table".to_owned(), "new_source".to_owned()),
+            ]
+            .into(),
+        );
+        assert_eq!(
+            hana.generate(&renamed).unwrap(),
+            "UPSERT new_target SELECT value FROM new_source"
+        );
+    }
+
+    #[test]
+    fn quoted_reserved_names_and_qualified_calls_are_not_builtins() {
+        for (sql, trino) in [
+            (
+                r#"SELECT "CURRENT_USER", t.CURRENT_SCHEMA, demo."ADD_DAYS"(d, 1) FROM t"#,
+                r#"SELECT "CURRENT_USER", t."CURRENT_SCHEMA", demo."ADD_DAYS"(d, 1) FROM t"#,
+            ),
+            (r#"SELECT "COUNT"(x) FROM t"#, r#"SELECT "COUNT"(x) FROM t"#),
+        ] {
+            assert_eq!(transpile(sql, DialectType::HANA, DialectType::HANA), sql);
+            assert_eq!(transpile(sql, DialectType::HANA, DialectType::Trino), trino);
+        }
+    }
+
+    #[test]
+    fn incoming_queries_generate_native_syntax_or_report_unsupported() {
+        assert_eq!(
+            transpile("SELECT 1", DialectType::Generic, DialectType::HANA),
+            "SELECT 1 FROM SYS.DUMMY"
+        );
+        for (sql, source) in [
+            ("SELECT SUBSTRING('abcdef', -2, 2)", DialectType::DuckDB),
+            ("SELECT DATE_ADD('day', 1, d) FROM t", DialectType::Trino),
+            ("SELECT x ILIKE 'a%' FROM t", DialectType::PostgreSQL),
+        ] {
+            assert!(
+                Dialect::get(source)
+                    .transpile(sql, DialectType::HANA)
+                    .is_err(),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_casts_retain_conversion_semantics() {
+        assert_eq!(
+            transpile("SELECT UNKNOWN", DialectType::HANA, DialectType::HANA),
+            "SELECT NULL FROM SYS.DUMMY"
+        );
+        assert_eq!(
+            transpile("SELECT UNKNOWN", DialectType::HANA, DialectType::DuckDB),
+            "SELECT NULL"
+        );
+        assert_eq!(
+            transpile(
+                r#"SELECT "UNKNOWN" FROM t"#,
+                DialectType::HANA,
+                DialectType::HANA
+            ),
+            r#"SELECT "UNKNOWN" FROM t"#
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT CAST(-12.349 AS DECIMAL(5, 2))",
+                "SELECT CAST(TRUNC(-12.349, 2) AS DECIMAL(5, 2))",
+            ),
+            (
+                "SELECT CAST(12.99 AS DECIMAL(5))",
+                "SELECT CAST(TRUNC(12.99, 0) AS DECIMAL(5, 0))",
+            ),
+            (
+                "SELECT CAST(-12.349 AS DEC(5, 2))",
+                "SELECT CAST(TRUNC(-12.349, 2) AS DECIMAL(5, 2))",
+            ),
+        ] {
+            assert_eq!(
+                transpile(sql, DialectType::HANA, DialectType::DuckDB),
+                expected
+            );
+        }
+        assert_eq!(
+            transpile(
+                "SELECT CAST(255 AS TINYINT)",
+                DialectType::HANA,
+                DialectType::Trino
+            ),
+            "SELECT CAST(255 AS SMALLINT)"
+        );
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile(
+                "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+                DialectType::DuckDB
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn rejects_unverified_string_domains_and_volatile_bounds() {
+        for sql in [
+            "SELECT SUBSTRING(s, -2, 2) FROM t",
+            "SELECT SUBSTRING('abcdef', RAND(), 2) FROM DUMMY",
+            "SELECT SUBSTRING('a😀b', 2, 1) FROM DUMMY",
+            "SELECT SUBSTRING(x'ABCDEF', 1, 2) FROM DUMMY",
+            "SELECT LOCATE('a😀b', 'b') FROM DUMMY",
+            "SELECT LOCATE(s, 'b') FROM t",
+            "SELECT LOCATE('abc', '', 2) FROM DUMMY",
+            "SELECT LOCATE('abc', '', 1, 2) FROM DUMMY",
+            "SELECT TO_DECIMAL(CAST(s AS NVARCHAR(30)), 10, 2) FROM t",
+        ] {
+            for target in [
+                DialectType::Trino,
+                DialectType::DuckDB,
+                DialectType::PostgreSQL,
+            ] {
+                assert!(
+                    Dialect::get(DialectType::HANA)
+                        .transpile(sql, target)
+                        .is_err(),
+                    "{sql} -> {target}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validates_native_precision_and_function_arity() {
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "SELECT LOCATE('a') FROM DUMMY",
+            "SELECT SUBSTRING('a') FROM DUMMY",
+            "SELECT CURRENT_UTCTIMESTAMP(8) FROM DUMMY",
+            "SELECT CURRENT_UTCTIMESTAMP(x) FROM t",
+            "SELECT CAST(x AS FLOAT(0)) FROM t",
+            "SELECT CAST(x AS FLOAT(54)) FROM t",
+            "SELECT CAST(x AS DECIMAL(10, 11)) FROM t",
+            "SELECT CAST(x AS SMALLDECIMAL(10, 2)) FROM t",
+            "SELECT CAST(x AS NVARCHAR(5001)) FROM t",
+        ] {
+            assert!(hana.parse(sql).is_err(), "{sql}");
+        }
+    }
+
+    #[test]
+    fn source_semantics_generate_safe_target_expressions() {
+        for target in [
+            DialectType::Presto,
+            DialectType::Athena,
+            DialectType::Dune,
+            DialectType::DuckDB,
+        ] {
+            assert!(Dialect::get(DialectType::HANA)
+                .transpile(
+                    "SELECT TO_TIMESTAMP(s, 'YYYY-MM-DD HH24:MI:SS') FROM t",
+                    target
+                )
+                .is_err());
+        }
+        for (sql, target, expected) in [
+            (
+                "SELECT LOCATE('abcabc', 'bc')",
+                DialectType::Trino,
+                "SELECT STRPOS('abcabc', 'bc')",
+            ),
+            (
+                "SELECT LOCATE('length in char', '')",
+                DialectType::Trino,
+                "SELECT STRPOS('length in char', '')",
+            ),
+            (
+                "SELECT TO_TIMESTAMP('2024-01-15 12:30:45', 'YYYY-MM-DD HH24:MI:SS')",
+                DialectType::Trino,
+                "SELECT CAST(DATE_PARSE('2024-01-15 12:30:45', '%Y-%m-%d %H:%i:%s') AS TIMESTAMP(7))",
+            ),
+            (
+                "SELECT SUBSTRING('abcdef', -2, 2)",
+                DialectType::DuckDB,
+                "SELECT SUBSTRING('abcdef', 1, 2)",
+            ),
+            (
+                "SELECT TO_DECIMAL(7654321.888888, 10, 3)",
+                DialectType::DuckDB,
+                "SELECT CAST(TRUNC(7654321.888888, 3) AS DECIMAL(10, 3))",
+            ),
+            (
+                "SELECT TO_DATE('2024-01-15', 'YYYY-MM-DD')",
+                DialectType::Trino,
+                "SELECT CAST(DATE_PARSE('2024-01-15', '%Y-%m-%d') AS DATE)",
+            ),
+            (
+                "SELECT CAST(x AS FLOAT(24)), CAST(y AS FLOAT(53)) FROM t",
+                DialectType::Trino,
+                "SELECT CAST(x AS REAL), CAST(y AS DOUBLE) FROM t",
+            ),
+            (
+                "SELECT CAST(x AS LONGDATE), CAST(y AS TIME) FROM t",
+                DialectType::Trino,
+                "SELECT CAST(x AS TIMESTAMP(7)), CAST(y AS TIME(0)) FROM t",
+            ),
+        ] {
+            assert_eq!(transpile(sql, DialectType::HANA, target), expected);
+            let ast = Dialect::get(DialectType::HANA).parse(sql).unwrap();
+            assert_eq!(Dialect::get(target).generate(&ast[0]).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn incompatible_hana_features_fail_in_every_mode() {
+        for sql in [
+            "SELECT * FROM t FOR JSON",
+            "SELECT * FROM t FOR XML",
+            "SELECT TO_VARCHAR(1234.5, '9,999.00')",
+            "SELECT TO_VARCHAR(d, fmt) FROM t",
+            "SELECT TO_TIMESTAMP(s, 'YYYY-MM-DD HH24:MI:SS.FF7') FROM t",
+            "SELECT CAST(x AS SMALLDECIMAL) FROM t",
+            "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
+            "ALTER TABLE t ADD (x SMALLDECIMAL ARRAY)",
+            "ALTER TABLE t ADD x SMALLDECIMAL ARRAY",
+            "ALTER TABLE t ALTER COLUMN x TYPE SMALLDECIMAL ARRAY",
+            "SELECT CAST(xs AS SMALLDECIMAL ARRAY) FROM t",
+            "CREATE FUNCTION f(x SMALLDECIMAL ARRAY) RETURNS INT AS 1",
+            "SELECT ADD_MONTHS_LAST(d, 1) FROM t",
+            "SELECT * FROM t WITH HINT (NO_INLINE)",
+            "SELECT * FROM t FOR UPDATE IGNORE LOCKED",
+            "SELECT * FROM HIERARCHY(SOURCE t)",
+            "SELECT JSON_VALUE(j, '$.a' ERROR ON ERROR) FROM t",
+            "SELECT SUBSTR_REGEXPR('a' IN s) FROM t",
+            "UPSERT t VALUES (1) WITH PRIMARY KEY",
+            "CREATE COLUMN TABLE t (a INT)",
+            "CALL demo.proc(1)",
+            "SELECT a, SUM(x) FROM t GROUP BY ROLLUP BEST 1 (a)",
+            "SELECT * FROM t LIMIT 1 TOTAL ROWCOUNT",
+            "SELECT LOCALTOUTC(ts, 'EST', 'sap' NULL ON ERROR) FROM t",
+        ] {
+            for target in [
+                DialectType::Generic,
+                DialectType::PostgreSQL,
+                DialectType::MySQL,
+                DialectType::BigQuery,
+                DialectType::Snowflake,
+                DialectType::DuckDB,
+                DialectType::SQLite,
+                DialectType::Hive,
+                DialectType::Spark,
+                DialectType::Trino,
+                DialectType::Presto,
+                DialectType::Redshift,
+                DialectType::TSQL,
+                DialectType::Oracle,
+                DialectType::ClickHouse,
+                DialectType::Databricks,
+                DialectType::Athena,
+                DialectType::Teradata,
+                DialectType::Doris,
+                DialectType::StarRocks,
+                DialectType::Materialize,
+                DialectType::RisingWave,
+                DialectType::SingleStore,
+                DialectType::CockroachDB,
+                DialectType::TiDB,
+                DialectType::Druid,
+                DialectType::Solr,
+                DialectType::Tableau,
+                DialectType::Dune,
+                DialectType::Fabric,
+                DialectType::Drill,
+                DialectType::Dremio,
+                DialectType::Exasol,
+                DialectType::DataFusion,
+            ] {
+                let ast = Dialect::get(DialectType::HANA).parse(sql).unwrap();
+                assert!(
+                    Dialect::get(target).generate(&ast[0]).is_err(),
+                    "direct: {sql} -> {target}"
+                );
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    assert!(
+                        Dialect::get(DialectType::HANA)
+                            .transpile_with(
+                                sql,
+                                target,
+                                TranspileOptions::default().with_unsupported_level(level)
+                            )
+                            .is_err(),
+                        "{sql} -> {target}: {level:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hana_storage_checks_do_not_apply_to_other_sources() {
+        let sql = "CREATE GLOBAL TEMPORARY TABLE t (a INT)";
+        let output = Dialect::get(DialectType::Teradata)
+            .transpile(sql, DialectType::Teradata)
+            .unwrap();
+        assert!(output[0].contains("GLOBAL TEMPORARY TABLE"));
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile(sql, DialectType::Teradata)
+            .is_err());
+    }
+
+    #[test]
+    fn unrelated_custom_types_are_unchanged() {
+        for name in ["SMALLDECIMAL", "ALPHANUM", "SECONDDATE"] {
+            let sql = format!("SELECT CAST(x AS {name}) FROM t");
+            assert_eq!(
+                transpile(&sql, DialectType::PostgreSQL, DialectType::PostgreSQL),
+                sql
+            );
+        }
     }
 }

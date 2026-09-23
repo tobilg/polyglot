@@ -100,6 +100,17 @@ export function wasmCjsPlugin(): Plugin {
           '\n',
         );
 
+        // wasm-bindgen may emit a startup call as well. Its export is only
+        // available after instantiation, just like the deferred bindings above.
+        if (code.includes('\n__wbindgen_start();\n')) {
+          code = code.replace('\n__wbindgen_start();\n', '\n');
+          code = code.replace(
+            '    __wbg_set_wasm(__vite__wasmModule);',
+            '    __wbg_set_wasm(__vite__wasmModule);\n' +
+              '    __vite__wasmModule.__wbindgen_start();',
+          );
+        }
+
         // ── Transform 5: Replace init() and isInitialized() ─────────
         code = code.replace(
           /async function init\(\)\s*\{[\s\S]*?return Promise\.resolve\(\);\s*\}/,

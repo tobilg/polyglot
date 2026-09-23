@@ -2050,7 +2050,7 @@ fn test_dialect_list_and_count() {
     let list: Vec<String> = serde_json::from_str(&json).expect("invalid dialect list json");
     let count = polyglot_dialect_count();
     assert_eq!(list.len() as i32, count);
-    assert_eq!(count, 34);
+    assert_eq!(count, 35);
     let unique: BTreeSet<&str> = list.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), list.len());
     assert!(list.iter().any(|d| d == "generic"));
@@ -2175,4 +2175,25 @@ fn test_public_api_matches_capability_contract() {
         actual.keys().copied().collect::<BTreeSet<_>>(),
         declared_available
     );
+}
+
+#[test]
+fn test_hana_round_trip_and_unsupported_conversion() {
+    let sql = c("SELECT * FROM t FOR JSON ('arraywrap' = 'NO')");
+    let hana = c("hana");
+    let duckdb = c("duckdb");
+    let (status, output, error) = consume_result(polyglot_transpile(
+        sql.as_ptr(),
+        hana.as_ptr(),
+        hana.as_ptr(),
+    ));
+    assert_eq!(status, 0, "{error:?}");
+    assert!(output.unwrap().contains("FOR JSON"));
+    let (status, _, error) = consume_result(polyglot_transpile(
+        sql.as_ptr(),
+        hana.as_ptr(),
+        duckdb.as_ptr(),
+    ));
+    assert_ne!(status, 0);
+    assert!(error.unwrap().contains("HANA"));
 }
