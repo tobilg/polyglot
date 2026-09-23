@@ -529,6 +529,10 @@ impl DialectImpl for DuckDBDialect {
             // ===== Time functions =====
             // CurrentTime -> CURRENT_TIME (no parens in DuckDB)
             Expression::CurrentTime(_) => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIME".to_string(),
                 args: vec![],
                 distinct: false,
@@ -824,6 +828,9 @@ impl DialectImpl for DuckDBDialect {
                     other => other,
                 };
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this: *e.this,
                     path,
                     returning: None,
@@ -1075,6 +1082,8 @@ impl DialectImpl for DuckDBDialect {
                         let filter = p.filter.clone();
                         Ok(Expression::AggregateFunction(Box::new(
                             crate::expressions::AggregateFunction {
+                                source_dialect: None,
+
                                 name: "QUANTILE_CONT".to_string(),
                                 args: vec![column, percentile],
                                 distinct: false,
@@ -1096,6 +1105,8 @@ impl DialectImpl for DuckDBDialect {
                         let filter = p.filter.clone();
                         Ok(Expression::AggregateFunction(Box::new(
                             crate::expressions::AggregateFunction {
+                                source_dialect: None,
+
                                 name: "QUANTILE_DISC".to_string(),
                                 args: vec![column, percentile],
                                 distinct: false,
@@ -1121,6 +1132,8 @@ impl DialectImpl for DuckDBDialect {
                         match (column, quantile) {
                             (Some(col), Some(q)) => Ok(Expression::AggregateFunction(Box::new(
                                 crate::expressions::AggregateFunction {
+                                    source_dialect: None,
+
                                     name: new_name.to_string(),
                                     args: vec![col, q],
                                     distinct: false,
@@ -2100,6 +2113,9 @@ impl DuckDBDialect {
                 let path = args.pop().unwrap();
                 let this = args.pop().unwrap();
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path,
                     returning: None,
@@ -2118,6 +2134,9 @@ impl DuckDBDialect {
                 let path = args.pop().unwrap();
                 let this = args.pop().unwrap();
                 Ok(Expression::JsonExtractScalar(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path,
                     returning: None,
@@ -2339,6 +2358,9 @@ impl DuckDBDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path,
                     returning: None,
@@ -2357,6 +2379,9 @@ impl DuckDBDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 Ok(Expression::JsonExtractScalar(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path,
                     returning: None,
@@ -4335,6 +4360,9 @@ impl DuckDBDialect {
                         };
                         let json_path = format!("$.{}", s);
                         Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                            options: None,
+                            source_dialect: None,
+
                             this,
                             path: Expression::Literal(Box::new(Literal::String(json_path))),
                             returning: None,
@@ -4366,6 +4394,9 @@ impl DuckDBDialect {
                     _ => {
                         // Unknown key type - use JSON arrow
                         Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                            options: None,
+                            source_dialect: None,
+
                             this,
                             path: Expression::JSONPath(Box::new(JSONPath {
                                 expressions: vec![
@@ -4414,6 +4445,9 @@ impl DuckDBDialect {
                     _ => path,
                 };
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path: json_path,
                     returning: None,

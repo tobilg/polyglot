@@ -47,7 +47,7 @@ all-dialects = [
     "dialect-singlestore", "dialect-cockroachdb", "dialect-tidb",
     "dialect-druid", "dialect-solr", "dialect-tableau",
     "dialect-dune", "dialect-fabric", "dialect-drill",
-    "dialect-dremio", "dialect-exasol", "dialect-datafusion",
+    "dialect-dremio", "dialect-exasol", "dialect-datafusion", "dialect-hana",
     "dialect-vertica",
 ]
 dialect-postgresql = []
@@ -83,6 +83,7 @@ dialect-drill = []
 dialect-dremio = []
 dialect-exasol = []
 dialect-datafusion = []
+dialect-hana = []
 dialect-vertica = []
 function-catalog-clickhouse = [
     "semantic",

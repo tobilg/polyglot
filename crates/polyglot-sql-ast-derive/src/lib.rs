@@ -19,32 +19,9 @@ pub fn derive_ast_node(input: TokenStream) -> TokenStream {
 
 fn expand_ast_node(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
-    let immutable = match &input.data {
-        Data::Struct(data) => visit_fields(&data.fields, false),
-        Data::Enum(data) => {
-            let arms = data.variants.iter().map(|variant| {
-                let variant_name = &variant.ident;
-                let (pattern, body) =
-                    visit_variant_fields(name, variant_name, &variant.fields, false);
-                quote!(#pattern => { #body })
-            });
-            quote!(match self { #(#arms),* })
-        }
-        Data::Union(_) => quote!(),
-    };
-    let mutable = match &input.data {
-        Data::Struct(data) => visit_fields(&data.fields, true),
-        Data::Enum(data) => {
-            let arms = data.variants.iter().map(|variant| {
-                let variant_name = &variant.ident;
-                let (pattern, body) =
-                    visit_variant_fields(name, variant_name, &variant.fields, true);
-                quote!(#pattern => { #body })
-            });
-            quote!(match self { #(#arms),* })
-        }
-        Data::Union(_) => quote!(),
-    };
+    let immutable = node_visitor(input, false, true);
+    let untracked = node_visitor(input, false, false);
+    let mutable = node_visitor(input, true, false);
     let serialized_variant_names = if name == "Expression" {
         if let Data::Enum(data) = &input.data {
             let names = data.variants.iter().map(|variant| {
@@ -81,6 +58,14 @@ fn expand_ast_node(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #immutable
             }
 
+            fn visit_syntax_untracked<'ast, F, T>(&'ast self, visitor: &mut F, type_visitor: &mut T)
+            where
+                F: FnMut(&'ast crate::expressions::Expression),
+                T: FnMut(&'ast crate::expressions::DataType),
+            {
+                #untracked
+            }
+
             fn visit_expressions_mut<F>(
                 &mut self,
                 visitor: &mut F,
@@ -96,6 +81,22 @@ fn expand_ast_node(input: &DeriveInput) -> proc_macro2::TokenStream {
     }
 }
 
+fn node_visitor(input: &DeriveInput, mutable: bool, paths: bool) -> proc_macro2::TokenStream {
+    let name = &input.ident;
+    match &input.data {
+        Data::Struct(data) => visit_fields(&data.fields, mutable, paths),
+        Data::Enum(data) => {
+            let arms = data.variants.iter().map(|variant| {
+                let (pattern, body) =
+                    visit_variant_fields(name, &variant.ident, &variant.fields, mutable, paths);
+                quote!(#pattern => { #body })
+            });
+            quote!(match self { #(#arms),* })
+        }
+        Data::Union(_) => quote!(),
+    }
+}
+
 /// Match serde's `rename_all = "snake_case"` behavior for Rust enum variants.
 fn serde_snake_case(name: &str) -> String {
     let mut snake_case = String::with_capacity(name.len());
@@ -108,7 +109,7 @@ fn serde_snake_case(name: &str) -> String {
     snake_case
 }
 
-fn visit_fields(fields: &Fields, mutable: bool) -> proc_macro2::TokenStream {
+fn visit_fields(fields: &Fields, mutable: bool, paths: bool) -> proc_macro2::TokenStream {
     match fields {
         Fields::Named(fields) => {
             let visits = fields.named.iter().filter_map(|field| {
@@ -122,11 +123,15 @@ fn visit_fields(fields: &Fields, mutable: bool) -> proc_macro2::TokenStream {
                 Some(if mutable {
                     mutable_visit(&field.ty, access)
                 } else {
-                    let visit = immutable_visit(&field.ty, immutable_access);
-                    quote! {
-                        path.push(crate::ast_children::ChildPathSegment::Field(#field_name));
-                        #visit
-                        path.pop();
+                    let visit = immutable_visit(&field.ty, immutable_access, paths);
+                    if paths {
+                        quote! {
+                            path.push(crate::ast_children::ChildPathSegment::Field(#field_name));
+                            #visit
+                            path.pop();
+                        }
+                    } else {
+                        visit
                     }
                 })
             });
@@ -147,11 +152,15 @@ fn visit_fields(fields: &Fields, mutable: bool) -> proc_macro2::TokenStream {
                     Some(if mutable {
                         mutable_visit(&field.ty, access)
                     } else {
-                        let visit = immutable_visit(&field.ty, immutable_access);
-                        quote! {
-                            path.push(crate::ast_children::ChildPathSegment::Index(#index));
-                            #visit
-                            path.pop();
+                        let visit = immutable_visit(&field.ty, immutable_access, paths);
+                        if paths {
+                            quote! {
+                                path.push(crate::ast_children::ChildPathSegment::Index(#index));
+                                #visit
+                                path.pop();
+                            }
+                        } else {
+                            visit
                         }
                     })
                 });
@@ -166,6 +175,7 @@ fn visit_variant_fields(
     variant_name: &syn::Ident,
     fields: &Fields,
     mutable: bool,
+    paths: bool,
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     match fields {
         Fields::Named(fields) => {
@@ -190,11 +200,15 @@ fn visit_variant_fields(
                 Some(if mutable {
                     mutable_visit(&field.ty, quote!(#ident))
                 } else {
-                    let visit = immutable_visit(&field.ty, quote!(#ident));
-                    quote! {
-                        path.push(crate::ast_children::ChildPathSegment::Field(#field_name));
-                        #visit
-                        path.pop();
+                    let visit = immutable_visit(&field.ty, quote!(#ident), paths);
+                    if paths {
+                        quote! {
+                            path.push(crate::ast_children::ChildPathSegment::Field(#field_name));
+                            #visit
+                            path.pop();
+                        }
+                    } else {
+                        visit
                     }
                 })
             });
@@ -220,8 +234,8 @@ fn visit_variant_fields(
                     Some(if mutable {
                         mutable_visit(&field.ty, quote!(#binding))
                     } else {
-                        let visit = immutable_visit(&field.ty, quote!(#binding));
-                        if single_expression_payload {
+                        let visit = immutable_visit(&field.ty, quote!(#binding), paths);
+                        if single_expression_payload || !paths {
                             visit
                         } else {
                             quote! {
@@ -241,19 +255,30 @@ fn visit_variant_fields(
     }
 }
 
-fn immutable_visit(ty: &Type, access: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+fn immutable_visit(
+    ty: &Type,
+    access: proc_macro2::TokenStream,
+    paths: bool,
+) -> proc_macro2::TokenStream {
     if is_expression(ty) {
-        return quote!(visitor(path, #access););
+        return if paths {
+            quote!(visitor(path, #access);)
+        } else {
+            quote!(visitor(#access);)
+        };
     }
     if let Some(inner) = container_inner(ty, "Option") {
-        let visit = immutable_visit(inner, quote!(value));
+        let visit = immutable_visit(inner, quote!(value), paths);
         return quote!(if let Some(value) = (#access).as_ref() { #visit });
     }
     if let Some(inner) = container_inner(ty, "Box") {
-        return immutable_visit(inner, quote!((#access).as_ref()));
+        return immutable_visit(inner, quote!((#access).as_ref()), paths);
     }
     if let Some(inner) = container_inner(ty, "Vec") {
-        let visit = immutable_visit(inner, quote!(value));
+        let visit = immutable_visit(inner, quote!(value), paths);
+        if !paths {
+            return quote!(for value in (#access).iter() { #visit });
+        }
         return quote! {
             for (index, value) in (#access).iter().enumerate() {
                 path.push(crate::ast_children::ChildPathSegment::Index(index));
@@ -265,11 +290,15 @@ fn immutable_visit(ty: &Type, access: proc_macro2::TokenStream) -> proc_macro2::
     if let Type::Tuple(tuple) = ty {
         let visits = tuple.elems.iter().enumerate().map(|(index, element)| {
             let tuple_index = syn::Index::from(index);
-            let visit = immutable_visit(element, quote!(&(#access).#tuple_index));
-            quote! {
-                path.push(crate::ast_children::ChildPathSegment::Index(#index));
-                #visit
-                path.pop();
+            let visit = immutable_visit(element, quote!(&(#access).#tuple_index), paths);
+            if paths {
+                quote! {
+                    path.push(crate::ast_children::ChildPathSegment::Index(#index));
+                    #visit
+                    path.pop();
+                }
+            } else {
+                visit
             }
         });
         return quote!(#(#visits)*);
@@ -277,7 +306,20 @@ fn immutable_visit(ty: &Type, access: proc_macro2::TokenStream) -> proc_macro2::
     if is_scalar(ty) {
         return quote!();
     }
-    quote!(crate::ast_children::AstNode::visit_expressions(#access, path, visitor);)
+    if paths {
+        quote!(crate::ast_children::AstNode::visit_expressions(#access, path, visitor);)
+    } else {
+        let visit_type = if matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "DataType"))
+        {
+            quote!(type_visitor(#access);)
+        } else {
+            quote!()
+        };
+        quote! {
+            #visit_type
+            crate::ast_children::AstNode::visit_syntax_untracked(#access, visitor, type_visitor);
+        }
+    }
 }
 
 fn mutable_visit(ty: &Type, access: proc_macro2::TokenStream) -> proc_macro2::TokenStream {

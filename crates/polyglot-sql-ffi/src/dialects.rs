@@ -3,7 +3,7 @@ use polyglot_sql::dialects::DialectType;
 use std::os::raw::c_char;
 use std::ptr;
 
-const DIALECTS: [DialectType; 35] = [
+const DIALECTS: &[DialectType] = &[
     DialectType::Generic,
     DialectType::PostgreSQL,
     DialectType::MySQL,
@@ -38,6 +38,7 @@ const DIALECTS: [DialectType; 35] = [
     DialectType::Dremio,
     DialectType::Exasol,
     DialectType::DataFusion,
+    DialectType::HANA,
     DialectType::Vertica,
 ];
 

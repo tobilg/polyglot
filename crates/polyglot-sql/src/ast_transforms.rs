@@ -473,6 +473,9 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                     names.push(name);
                 }
             }
+            Expression::Upsert(upsert) => {
+                push_table_ref_name(&upsert.table, &cte_aliases, &mut names);
+            }
             Expression::Insert(insert) => {
                 push_table_ref_name(&insert.table, &cte_aliases, &mut names);
             }
@@ -532,12 +535,7 @@ pub fn get_identifiers(expr: &Expression) -> Vec<&Expression> {
 
 /// Collect all function call nodes in the expression tree.
 pub fn get_functions(expr: &Expression) -> Vec<&Expression> {
-    expr.find_all(|e| {
-        matches!(
-            e,
-            Expression::Function(_) | Expression::AggregateFunction(_)
-        )
-    })
+    expr.find_all(crate::traversal::is_function)
 }
 
 /// Collect all literal value nodes in the expression tree.

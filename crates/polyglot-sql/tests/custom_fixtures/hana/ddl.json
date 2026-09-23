@@ -1,0 +1,66 @@
+{
+  "dialect": "hana",
+  "category": "ddl",
+  "identity": [
+    {
+      "sql": "CREATE TABLE t (id INTEGER, name NVARCHAR(100), salary SMALLDECIMAL, created SECONDDATE)",
+      "description": "CREATE TABLE with HANA types",
+      "expected": "CREATE TABLE t (id INT, name NVARCHAR(100), salary SMALLDECIMAL, created SECONDDATE)"
+    },
+    {
+      "sql": "CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL)",
+      "description": "CREATE TABLE with constraints",
+      "expected": "CREATE TABLE t (id INT NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL)"
+    },
+    {
+      "sql": "CREATE TABLE t (a NVARCHAR(255), b SMALLDECIMAL)",
+      "description": "Types with precision and length args"
+    },
+    {
+      "sql": "CREATE TABLE t (a ALPHANUM(20), b CLOB)",
+      "description": "ALPHANUM and CLOB types"
+    },
+    {
+      "sql": "CREATE TABLE t (id BIGINT, name TEXT, val DECIMAL(15, 2), ts TIMESTAMP)",
+      "description": "Various HANA column types"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTEGER, b NVARCHAR(50) NOT NULL, c DECIMAL(10, 2))",
+      "description": "Mixed constraints and types",
+      "expected": "CREATE TABLE t (a INT, b NVARCHAR(50) NOT NULL, c DECIMAL(10, 2))"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTEGER)",
+      "description": "CREATE TABLE",
+      "expected": "CREATE TABLE t (a INT)"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "description": "DROP TABLE"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "description": "DROP TABLE",
+      "expected": "DROP TABLE t"
+    },
+    {
+      "sql": "ALTER TABLE t ADD (x INTEGER)",
+      "description": "ALTER TABLE ADD COLUMN",
+      "expected": "ALTER TABLE t ADD (x INT)"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTEGER, b INTEGER, PRIMARY KEY (a))",
+      "description": "CREATE TABLE with table-level PRIMARY KEY",
+      "expected": "CREATE TABLE t (a INT, b INT, PRIMARY KEY (a))"
+    },
+    {
+      "sql": "CREATE VIEW v AS SELECT a, b FROM t WHERE x > 1",
+      "description": "CREATE VIEW"
+    },
+    {
+      "sql": "CREATE TABLE t AS SELECT a, b FROM s",
+      "description": "CREATE TABLE AS SELECT"
+    }
+  ],
+  "transpilation": []
+}

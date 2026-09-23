@@ -3761,6 +3761,10 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
         Expression::ILike(ilike) => {
             // Create LOWER(left) LIKE LOWER(right)
             let lower_left = Expression::Function(Box::new(crate::expressions::Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "LOWER".to_string(),
                 args: vec![ilike.left],
                 distinct: false,
@@ -3773,6 +3777,10 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
             }));
 
             let lower_right = Expression::Function(Box::new(crate::expressions::Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "LOWER".to_string(),
                 args: vec![ilike.right],
                 distinct: false,

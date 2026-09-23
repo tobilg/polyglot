@@ -179,6 +179,13 @@ pub enum Expression {
 
     // Functions
     Function(Box<Function>),
+
+    Upsert(Box<Upsert>),
+    StorageProperty(Box<StorageProperty>),
+    Hierarchy(Box<Hierarchy>),
+    ViewParameter(Box<ViewParameter>),
+    Call(Box<Call>),
+
     AggregateFunction(Box<AggregateFunction>),
     WindowFunction(Box<WindowFunction>),
 
@@ -1117,6 +1124,42 @@ pub enum Expression {
 }
 
 impl Expression {
+    /// Source semantics that still require dialect-aware lowering. This metadata
+    /// survives JSON serialization and never changes generic traversal behavior.
+    pub fn source_dialect(&self) -> Option<crate::dialects::DialectType> {
+        use crate::dialects::DialectType;
+        match self {
+            Self::Function(f) => f.source_dialect,
+            Self::AggregateFunction(f) => f.source_dialect,
+            Self::Select(s) => s.source_dialect,
+            Self::CreateTable(t) => t.source_dialect,
+            Self::Upsert(u) => u.source_dialect,
+            Self::Call(c) => c.source_dialect,
+            Self::Hierarchy(h) => h.source_dialect,
+            Self::ViewParameter(p) => p.source_dialect,
+            Self::StorageProperty(p) => p.source_dialect,
+            Self::Hint(h) => h.source_dialect,
+            Self::JSONValue(j) => j.source_dialect,
+            Self::JSONTable(j) => j.source_dialect,
+            Self::JSONColumnDef(j) => j.source_dialect,
+            Self::JsonQuery(j) | Self::JsonExtract(j) | Self::JsonExtractScalar(j) => {
+                j.source_dialect
+            }
+            Self::RegexpLike(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpReplace(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpExtract(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpInstr(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpCount(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::Cube(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::Rollup(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::GroupingSets(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::PartitionByProperty(p) => p.specification.as_ref().and_then(|s| s.source_dialect),
+            Self::DataType(DataType::Hana { .. }) => Some(DialectType::HANA),
+            Self::Cast(c) if matches!(c.to, DataType::Hana { .. }) => Some(DialectType::HANA),
+            _ => None,
+        }
+    }
+
     /// Create a `Column` variant, boxing the value automatically.
     #[inline]
     pub fn boxed_column(col: Column) -> Self {
@@ -1147,6 +1190,8 @@ impl Expression {
             | Expression::PipeOperator(_)
 
             // DML
+            | Expression::Upsert(_)
+            | Expression::Call(_)
             | Expression::Insert(_)
             | Expression::Update(_)
             | Expression::Delete(_)
@@ -1920,6 +1965,11 @@ impl Expression {
             Expression::Exists(_) => "exists",
             Expression::MemberOf(_) => "member_of",
             Expression::Function(_) => "function",
+            Expression::Upsert(_) => "upsert",
+            Expression::StorageProperty(_) => "storage_property",
+            Expression::Hierarchy(_) => "hierarchy",
+            Expression::ViewParameter(_) => "view_parameter",
+            Expression::Call(_) => "call",
             Expression::AggregateFunction(_) => "aggregate_function",
             Expression::WindowFunction(_) => "window_function",
             Expression::From(_) => "from",
@@ -2780,6 +2830,11 @@ impl Expression {
     /// Returns the primary child expression (".this" in sqlglot).
     pub fn get_this(&self) -> Option<&Expression> {
         match self {
+            Expression::JSONValue(j) => Some(&j.this),
+            Expression::JSONTable(j) => Some(&j.this),
+            Expression::JSONColumnDef(j) => j.this.as_deref(),
+            Expression::Hierarchy(hierarchy) => Some(&hierarchy.source),
+            Expression::Upsert(upsert) => Some(&upsert.source),
             // Unary ops
             Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => Some(&u.this),
             // UnaryFunc variants
@@ -3073,6 +3128,7 @@ impl Expression {
             Expression::Select(s) => &s.expressions,
             Expression::Function(f) => &f.args,
             Expression::AggregateFunction(f) => &f.args,
+            Expression::Call(f) => &f.arguments,
             Expression::From(f) => &f.expressions,
             Expression::GroupBy(g) => &g.expressions,
             Expression::In(i) => &i.expressions,
@@ -3094,6 +3150,9 @@ impl Expression {
     /// Returns the name of this expression as a string slice.
     pub fn get_name(&self) -> &str {
         match self {
+            Expression::JSONValue(_) => "JSON_VALUE",
+            Expression::JSONTable(_) => "JSON_TABLE",
+            Expression::JsonQuery(_) => "JSON_QUERY",
             Expression::Identifier(id) => &id.name,
             Expression::Column(col) => &col.name.name,
             Expression::Table(t) => &t.name.name,
@@ -3101,6 +3160,7 @@ impl Expression {
             Expression::Star(_) => "*",
             Expression::Function(f) => &f.name,
             Expression::AggregateFunction(f) => &f.name,
+            Expression::Hierarchy(h) => &h.name,
             Expression::Alias(a) => a.this.get_name(),
             Expression::Boolean(b) => {
                 if b.value {
@@ -3698,6 +3758,18 @@ pub struct Select {
     /// T-SQL FOR JSON clause options (PATH, AUTO, ROOT, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub for_json: Vec<Expression>,
+    /// Structured result serialization, including a bare FOR JSON/XML clause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_serialization: Option<ResultSerialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_collation: Option<Identifier>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_hints: Vec<Expression>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub total_rowcount: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
@@ -3758,6 +3830,11 @@ impl Select {
             locks: Vec::new(),
             for_xml: Vec::new(),
             for_json: Vec::new(),
+            result_serialization: None,
+            query_collation: None,
+            query_hints: Vec::new(),
+            total_rowcount: false,
+            source_dialect: None,
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -4891,6 +4968,175 @@ pub struct Exists {
     pub not: bool,
 }
 
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct Upsert {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub table: TableRef,
+    pub partition: Option<Expression>,
+    pub columns: Vec<Identifier>,
+    pub source: Expression,
+    pub condition: Option<Expression>,
+    pub primary_key: bool,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct PartitionSpec {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub method: String,
+    pub columns: Vec<Expression>,
+    pub partitions: Option<Expression>,
+    pub ranges: Vec<PartitionRangeSpec>,
+    pub primary_key_check: Option<bool>,
+    pub properties: Vec<Expression>,
+    pub subpartition: Option<Box<PartitionSpec>>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct PartitionRangeSpec {
+    pub name: Option<Identifier>,
+    pub kind: String,
+    pub values: Vec<Expression>,
+    pub dynamic: bool,
+    pub direction: Option<String>,
+    pub threshold: Option<Expression>,
+    pub interval: Option<(Expression, Option<String>)>,
+    pub properties: Vec<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct StorageProperty {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub name: String,
+    pub values: Vec<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct Hierarchy {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub name: String,
+    pub source: Expression,
+    pub start: Option<Expression>,
+    pub siblings: Vec<Ordered>,
+    pub depth: Option<Expression>,
+    pub multiparent: Option<String>,
+    pub orphan: Option<String>,
+    pub cycle: Option<String>,
+    pub cache: Option<String>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct ViewParameter {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub name: Identifier,
+    pub value: Expression,
+}
+
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
+)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct JsonOptions {
+    pub wrapper: Option<String>,
+    pub on_empty: Option<SqlBehavior>,
+    pub on_error: Option<SqlBehavior>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct SqlBehavior {
+    /// ERROR, NULL, DEFAULT, EMPTY ARRAY, or EMPTY OBJECT.
+    pub kind: String,
+    pub value: Option<Expression>,
+}
+
+/// Procedure invocation, including library member calls and asynchronous execution.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct Call {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
+    pub name: Vec<Identifier>,
+    pub member: Option<Identifier>,
+    pub arguments: Vec<Expression>,
+    pub asynchronous: bool,
+    pub hints: Vec<Expression>,
+}
+
+/// Regex search options shared by predicates, extraction, replacement, and position calls.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct RegexOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Original spelling when a dialect has more than one native alias.
+    pub source_name: String,
+    #[serde(default)]
+    pub negated: bool,
+    pub start: Option<Expression>,
+    pub occurrence: Option<Expression>,
+    pub flags: Option<Expression>,
+    pub position_after: Option<bool>,
+}
+
+/// Grouping-set selection and result-delivery options.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct GroupingOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    pub best: Option<Expression>,
+    pub limit: Option<Expression>,
+    pub offset: Option<Expression>,
+    pub subtotal: bool,
+    pub balance: bool,
+    pub total: bool,
+    pub structured: bool,
+    pub overview: bool,
+    pub prefix: Option<Expression>,
+    pub multiple_resultsets: bool,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct ResultSerialization {
+    /// JSON or XML, validated by the HANA parser.
+    pub format: String,
+    pub options: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returning: Option<DataType>,
+}
+
 /// Represent a scalar function call (e.g. `UPPER(name)`, `COALESCE(a, b)`).
 ///
 /// This is the generic function node. Well-known aggregates, window functions,
@@ -4900,6 +5146,17 @@ pub struct Exists {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Function {
+    /// Qualified name components preserve quoting without changing the node kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qualified_name: Vec<Identifier>,
+    /// Optional DEFAULT/NULL/ERROR behavior after the arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<Box<SqlBehavior>>,
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     /// The function name, as originally written (may be schema-qualified).
     pub name: String,
     /// Positional arguments to the function.
@@ -4929,6 +5186,9 @@ pub struct Function {
 impl Default for Function {
     fn default() -> Self {
         Self {
+            source_dialect: None,
+            qualified_name: Vec::new(),
+            on_error: None,
             name: String::new(),
             args: Vec::new(),
             distinct: false,
@@ -4943,8 +5203,24 @@ impl Default for Function {
 }
 
 impl Function {
+    /// Construct a call with individually quoted qualified name components.
+    pub fn qualified(name: Vec<Identifier>, args: Vec<Expression>) -> Self {
+        Self {
+            name: name
+                .iter()
+                .map(|part| part.name.as_str())
+                .collect::<Vec<_>>()
+                .join("."),
+            qualified_name: name,
+            args,
+            ..Default::default()
+        }
+    }
     pub fn new(name: impl Into<String>, args: Vec<Expression>) -> Self {
         Self {
+            source_dialect: None,
+            qualified_name: Vec::new(),
+            on_error: None,
             name: name.into(),
             args,
             distinct: false,
@@ -4969,6 +5245,11 @@ impl Function {
 )]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AggregateFunction {
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     /// The aggregate function name (e.g. "JSON_AGG", "XMLAGG").
     pub name: String,
     /// Positional arguments.
@@ -5313,6 +5594,9 @@ pub struct LateralView {
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Hint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     pub expressions: Vec<HintExpression>,
 }
 
@@ -5321,6 +5605,13 @@ pub struct Hint {
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum HintExpression {
+    /// A structured hint directive with optional execution scope modifiers.
+    Directive {
+        name: Identifier,
+        arguments: Option<Vec<Expression>>,
+        remote: bool,
+        cascade: bool,
+    },
     /// Function-style hint: USE_HASH(table)
     Function { name: String, args: Vec<Expression> },
     /// Simple identifier hint: PARALLEL
@@ -5967,6 +6258,11 @@ pub enum DataType {
         oracle_type: OracleDataType,
     },
 
+    /// A HANA type whose domain or syntax is not represented by a common type.
+    Hana {
+        hana_type: HanaDataType,
+    },
+
     // String
     Char {
         length: Option<u32>,
@@ -6115,6 +6411,14 @@ pub enum DataType {
 
     // Unknown
     Unknown,
+}
+
+/// Source-specific HANA type, retained until a target is selected.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaDataType {
+    pub name: String,
+    pub parameters: Vec<u32>,
 }
 
 impl DataType {
@@ -6519,6 +6823,9 @@ pub struct SplitFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub flags: Option<Expression>,
@@ -6528,6 +6835,9 @@ pub struct RegexpFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpReplaceFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub replacement: Expression,
@@ -6538,6 +6848,9 @@ pub struct RegexpReplaceFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpExtractFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub group: Option<Expression>,
@@ -7260,6 +7573,13 @@ pub struct FunctionEmits {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonExtractFunc {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Expression,
     pub path: Expression,
     pub returning: Option<DataType>,
@@ -7652,6 +7972,11 @@ pub struct CreateTable {
     /// Table modifier: DYNAMIC, ICEBERG, EXTERNAL, HYBRID (Snowflake)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_modifier: Option<String>,
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub as_select: Option<Expression>,
     /// Whether the AS SELECT was wrapped in parentheses
     #[serde(default)]
@@ -7780,6 +8105,7 @@ impl CreateTable {
             temporary: false,
             or_replace: false,
             table_modifier: None,
+            source_dialect: None,
             as_select: None,
             as_select_parenthesized: false,
             on_commit: None,
@@ -11251,6 +11577,9 @@ pub struct Group {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cube {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -11259,6 +11588,9 @@ pub struct Cube {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rollup {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -11267,6 +11599,9 @@ pub struct Rollup {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupingSets {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -11795,6 +12130,9 @@ pub struct PartitionedByProperty {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByProperty {
+    /// Structured partition scheme when the dialect supports methods and ranges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub specification: Option<PartitionSpec>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -12401,6 +12739,8 @@ pub struct Schema {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Lock {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ignore_locked: bool,
     #[serde(default)]
     pub update: Option<Box<Expression>>,
     #[serde(default)]
@@ -14126,6 +14466,18 @@ pub struct JSONExists {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONColumnDef {
+    /// Typed column definition; legacy dialects may use the textual kind field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<DataType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     #[serde(default)]
     pub this: Option<Box<Expression>>,
     #[serde(default)]
@@ -14174,6 +14526,13 @@ pub struct JSONStripNulls {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONValue {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Box<Expression>,
     #[serde(default)]
     pub path: Option<Box<Expression>>,
@@ -14205,6 +14564,13 @@ pub struct JSONRemove {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONTable {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Box<Expression>,
     #[serde(default)]
     pub schema: Option<Box<Expression>>,
@@ -14807,6 +15173,9 @@ pub struct RegexpFullMatch {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpInstr {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Box<Expression>,
     pub expression: Box<Expression>,
     #[serde(default)]
@@ -14835,6 +15204,9 @@ pub struct RegexpSplit {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpCount {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Box<Expression>,
     pub expression: Box<Expression>,
     #[serde(default)]

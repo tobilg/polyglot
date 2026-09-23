@@ -46,6 +46,65 @@ fn load_dialect_fixtures(dir: &Path) -> Vec<CustomDialectFixtureFile> {
 /// Dialects with separate test runners (excluded from this auto-discovery).
 const EXCLUDED_DIALECTS: &[&str] = &["clickhouse"];
 
+#[cfg(all(feature = "dialect-hana", feature = "dialect-vertica"))]
+#[test]
+fn hana_and_vertica_preserve_each_others_source_semantics() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions, UnsupportedLevel};
+
+    for (source, target) in [("hana", "vertica"), ("vertica", "hana")] {
+        assert_eq!(
+            transpile_with_by_name(
+                "SELECT id FROM t",
+                source,
+                target,
+                &TranspileOptions::strict(),
+            )
+            .unwrap(),
+            ["SELECT id FROM t"],
+        );
+    }
+    // A qualified UDF must not become Vertica's postfix factorial operator.
+    assert_eq!(
+        transpile_with_by_name(
+            "SELECT demo.FACTORIAL(3) FROM t",
+            "hana",
+            "vertica",
+            &TranspileOptions::strict(),
+        )
+        .unwrap(),
+        ["SELECT demo.FACTORIAL(3) FROM t"],
+    );
+    for level in [
+        UnsupportedLevel::Ignore,
+        UnsupportedLevel::Warn,
+        UnsupportedLevel::Raise,
+        UnsupportedLevel::Immediate,
+    ] {
+        for (sql, source, target) in [
+            ("SELECT * FROM t FOR JSON", "hana", "vertica"),
+            (
+                "ALTER TABLE t ADD (x SMALLDECIMAL ARRAY)",
+                "hana",
+                "vertica",
+            ),
+            ("SELECT x::!INT FROM t", "vertica", "hana"),
+            ("SELECT LISTAGG(x) FROM t", "vertica", "hana"),
+            ("SELECT CAST(12.349 AS DECIMAL(5, 2))", "vertica", "hana"),
+        ] {
+            assert!(
+                transpile_with_by_name(
+                    sql,
+                    source,
+                    target,
+                    &TranspileOptions::default().with_unsupported_level(level),
+                )
+                .is_err(),
+                "{source} -> {target}: {sql} ({level:?})",
+            );
+        }
+    }
+}
+
 #[test]
 fn vertica_semantic_errors_are_independent_of_diagnostic_level() {
     use polyglot_sql::{transpile_with_by_name, TranspileOptions, UnsupportedLevel};

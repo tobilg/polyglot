@@ -1031,6 +1031,7 @@ This limit covers recursive parsing, not arbitrary programmatic AST construction
 | ClickHouse | `Dialect.ClickHouse` |
 | CockroachDB | `Dialect.CockroachDB` |
 | DataFusion | `Dialect.DataFusion` |
+| SAP HANA | `Dialect.HANA` |
 | Databricks | `Dialect.Databricks` |
 | Doris | `Dialect.Doris` |
 | Dremio | `Dialect.Dremio` |

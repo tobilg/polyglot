@@ -374,6 +374,8 @@ pub(super) fn rewrite(
                                 };
                                 Ok(Expression::RegexpLike(Box::new(
                                     crate::expressions::RegexpFunc {
+                                        options: None,
+
                                         this,
                                         pattern,
                                         flags,
@@ -396,6 +398,8 @@ pub(super) fn rewrite(
                                 };
                                 Ok(Expression::RegexpLike(Box::new(
                                     crate::expressions::RegexpFunc {
+                                        options: None,
+
                                         this,
                                         pattern,
                                         flags,
@@ -1397,6 +1401,9 @@ pub(super) fn rewrite(
                                     if is_text {
                                         Ok(Expression::JsonExtractScalar(Box::new(
                                             crate::expressions::JsonExtractFunc {
+                                                options: None,
+                                                source_dialect: None,
+
                                                 this: json_expr,
                                                 path: Expression::string(&json_path),
                                                 returning: None,
@@ -1411,6 +1418,9 @@ pub(super) fn rewrite(
                                     } else {
                                         Ok(Expression::JsonExtract(Box::new(
                                             crate::expressions::JsonExtractFunc {
+                                                options: None,
+                                                source_dialect: None,
+
                                                 this: json_expr,
                                                 path: Expression::string(&json_path),
                                                 returning: None,
@@ -1556,6 +1566,8 @@ pub(super) fn rewrite(
                                     // Convert to RegexpLike which generates as RLIKE/~/REGEXP_LIKE per dialect
                                     Ok(Expression::RegexpLike(Box::new(
                                         crate::expressions::RegexpFunc {
+                                            options: None,
+
                                             this: str_expr,
                                             pattern,
                                             flags: None,
@@ -2429,6 +2441,9 @@ pub(super) fn rewrite(
                                     let path = args.remove(0);
                                     Ok(Expression::JsonExtract(Box::new(
                                         crate::expressions::JsonExtractFunc {
+                                            options: None,
+                                            source_dialect: None,
+
                                             this: json_expr,
                                             path,
                                             returning: None,
@@ -2572,6 +2587,10 @@ pub(super) fn rewrite(
                         // ARRAY_SUM(lambda, array) from Doris -> ClickHouse arraySum
                         "ARRAY_SUM" if matches!(target, DialectType::ClickHouse) => {
                             Ok(Expression::Function(Box::new(Function {
+                                on_error: None,
+                                qualified_name: Vec::new(),
+                                source_dialect: None,
+
                                 name: "arraySum".to_string(),
                                 args: f.args,
                                 distinct: f.distinct,
@@ -3475,6 +3494,8 @@ pub(super) fn rewrite(
                                 {
                                     operators::snowflake_regexp_like_to_clickhouse(
                                         crate::expressions::RegexpFunc {
+                                            options: None,
+
                                             this: str_expr,
                                             pattern,
                                             flags,
@@ -3505,6 +3526,8 @@ pub(super) fn rewrite(
                                 }
                                 _ => Ok(Expression::RegexpLike(Box::new(
                                     crate::expressions::RegexpFunc {
+                                        options: None,
+
                                         this: str_expr,
                                         pattern,
                                         flags,
@@ -6980,6 +7003,9 @@ pub(super) fn rewrite(
                             let this = args.remove(0);
                             Ok(Expression::JsonExtract(Box::new(
                                 crate::expressions::JsonExtractFunc {
+                                    options: None,
+                                    source_dialect: None,
+
                                     this,
                                     path,
                                     returning: None,
@@ -9611,6 +9637,10 @@ pub(super) fn rewrite(
                                 DialectType::PostgreSQL => {
                                     // PostgreSQL: CURRENT_SCHEMA (no parens)
                                     Ok(Expression::Function(Box::new(Function {
+                                        on_error: None,
+                                        qualified_name: Vec::new(),
+                                        source_dialect: None,
+
                                         name: "CURRENT_SCHEMA".to_string(),
                                         args: vec![],
                                         distinct: false,
@@ -11003,6 +11033,8 @@ pub(super) fn rewrite(
                             }
                             Ok(Expression::AggregateFunction(Box::new(
                                 crate::expressions::AggregateFunction {
+                                    source_dialect: None,
+
                                     name: "JSON_AGG".to_string(),
                                     args: vec![*ja.this],
                                     distinct: false,
@@ -11774,6 +11806,8 @@ pub(super) fn rewrite(
                             Ok(Expression::Paren(Box::new(Paren {
                                 this: Expression::RegexpLike(Box::new(
                                     crate::expressions::RegexpFunc {
+                                        options: None,
+
                                         this: arg,
                                         pattern: Expression::Literal(Box::new(Literal::String(
                                             "^[[:ascii:]]*$".to_string(),
@@ -14626,6 +14660,8 @@ pub(super) fn normalize_bigquery_function(
             let pattern = args.remove(0);
             Ok(Expression::RegexpLike(Box::new(
                 crate::expressions::RegexpFunc {
+                    options: None,
+
                     this: str_expr,
                     pattern,
                     flags: None,
@@ -16479,6 +16515,9 @@ pub(super) fn normalize_bigquery_function(
                     let path = args.remove(0);
                     Ok(Expression::JsonExtract(Box::new(
                         crate::expressions::JsonExtractFunc {
+                            options: None,
+                            source_dialect: None,
+
                             this: json_expr,
                             path,
                             returning: None,
@@ -16516,6 +16555,9 @@ pub(super) fn normalize_bigquery_function(
                     let path = args.remove(0);
                     let arrow =
                         Expression::JsonExtract(Box::new(crate::expressions::JsonExtractFunc {
+                            options: None,
+                            source_dialect: None,
+
                             this: json_expr,
                             path,
                             returning: None,
@@ -16676,6 +16718,10 @@ pub(super) fn normalize_bigquery_function(
                         }
                     } else {
                         Ok(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: f.name,
                             args,
                             distinct: f.distinct,
@@ -16699,6 +16745,10 @@ pub(super) fn normalize_bigquery_function(
                     // For other targets (Hive/Spark/BigQuery): pass through as-is
                     // BigQuery's default group behavior matches Hive/Spark for 2-arg case
                     Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: f.name,
                         args,
                         distinct: f.distinct,
@@ -17081,6 +17131,10 @@ pub(super) fn normalize_bigquery_function(
 
         // All others: pass through
         _ => Ok(Expression::Function(Box::new(Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name: f.name,
             args,
             distinct: f.distinct,

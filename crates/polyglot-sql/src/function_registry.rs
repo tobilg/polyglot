@@ -2243,6 +2243,11 @@ pub(crate) fn is_aggregate_function_name_for_dialect(
 ) -> bool {
     let upper = name.to_uppercase();
     is_aggregate_function_name(name)
+        || (dialect == Some(DialectType::HANA)
+            && matches!(
+                upper.as_str(),
+                "AUTO_CORR" | "CROSS_CORR" | "CORR_SPEARMAN" | "DFT" | "NTH_VALUE" | "VAR"
+            ))
         || (matches!(dialect, Some(DialectType::DuckDB))
             && DUCKDB_AGGREGATE_FUNCTION_NAME_SET.contains(upper.as_str()))
 }
@@ -3060,4 +3065,328 @@ mod tests {
             "phase-6 helper must call teradata translate family parser"
         );
     }
+}
+
+/// HANA calls with source-specific semantics or argument grammar.
+pub(crate) fn hana_uses_source_node(name: &str) -> bool {
+    (is_hana_builtin(name)
+        || matches!(
+            name,
+            "HIERARCHY" | "HIERARCHY_SPANTREE" | "CONTAINS" | "FUZZY"
+        ))
+        && !matches!(
+            name,
+            "COUNT"
+                | "SUM"
+                | "MIN"
+                | "MAX"
+                | "AVG"
+                | "CAST"
+                | "EXTRACT"
+                | "TRIM"
+                | "ROW_NUMBER"
+                | "RANK"
+                | "DENSE_RANK"
+                | "LEAD"
+                | "LAG"
+                | "NTILE"
+                | "CUME_DIST"
+                | "PERCENT_RANK"
+        )
+}
+
+/// Built-ins inventoried from HANA Platform 2.0 SPS 08 and Cloud QRC 2/2026.
+/// Recognition is separate from target support: a known name is never evidence
+/// that a target implements the same operation.
+pub(crate) fn is_hana_builtin(name: &str) -> bool {
+    const NAMES: &[&str] = &[
+        "ABAP_ALPHANUM",
+        "ABAP_DF16RAW_TO_SMALLDECIMAL",
+        "ABAP_DF34RAW_TO_DECIMAL",
+        "ABAP_LOWER",
+        "ABAP_NUMC",
+        "ABAP_UPPER",
+        "ABS",
+        "ACOS",
+        "ADD_DAYS",
+        "ADD_MONTHS",
+        "ADD_MONTHS_LAST",
+        "ADD_NANO100",
+        "ADD_SECONDS",
+        "ADD_WORKDAYS",
+        "ADD_YEARS",
+        "AI",
+        "AI_TEXT_COMPLETION",
+        "ALLOW_PRECISION_LOSS",
+        "ASCII",
+        "ASIN",
+        "ATAN",
+        "ATAN2",
+        "AUTO_CORR",
+        "AVG",
+        "BINNING",
+        "BINTOHEX",
+        "BINTONHEX",
+        "BINTOSTR",
+        "BITAND",
+        "BITCOUNT",
+        "BITNOT",
+        "BITOR",
+        "BITSET",
+        "BITUNSET",
+        "BITXOR",
+        "CARDINALITY",
+        "CAST",
+        "CEIL",
+        "CHAR",
+        "COALESCE",
+        "CONCAT",
+        "CONCAT_NAZ",
+        "CONVERT_CURRENCY",
+        "CONVERT_UNIT",
+        "CORR",
+        "CORR_SPEARMAN",
+        "COS",
+        "COSH",
+        "COSINE_SIMILARITY",
+        "COT",
+        "COUNT",
+        "CROSS_CORR",
+        "CUBIC_SPLINE_APPROX",
+        "CUME_DIST",
+        "CURRENT_CONNECTION",
+        "CURRENT_DATABASE",
+        "CURRENT_DATE",
+        "CURRENT_IDENTITY_VALUE",
+        "CURRENT_MVCC_SNAPSHOT_TIMESTAMP",
+        "CURRENT_OBJECT_SCHEMA",
+        "CURRENT_ROLEGROUP",
+        "CURRENT_SCHEMA",
+        "CURRENT_SITE_ID",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_TRANSACTION_ISOLATION_LEVEL",
+        "CURRENT_UPDATE_STATEMENT_SEQUENCE",
+        "CURRENT_UPDATE_TRANSACTION",
+        "CURRENT_USER",
+        "CURRENT_USERGROUP",
+        "CURRENT_USER_ID",
+        "CURRENT_UTCDATE",
+        "CURRENT_UTCTIME",
+        "CURRENT_UTCTIMESTAMP",
+        "DAYNAME",
+        "DAYOFMONTH",
+        "DAYOFYEAR",
+        "DAYS_BETWEEN",
+        "DENSE_RANK",
+        "DFT",
+        "ESCAPE_DOUBLE_QUOTES",
+        "ESCAPE_SINGLE_QUOTES",
+        "EXP",
+        "EXPRESSION_MACRO",
+        "EXTRACT",
+        "FIRST_VALUE",
+        "FLOOR",
+        "GENERATE_PASSWORD",
+        "GET_DELTA_LAKE_TABLE_CHANGES",
+        "GET_DELTA_LAKE_TABLE_VERSION",
+        "GREATEST",
+        "GROUPING",
+        "GROUPING_ID",
+        "GROUP_SCORE",
+        "HAMMING_DISTANCE",
+        "HASH_MD5",
+        "HASH_SHA256",
+        "HEXTOBIN",
+        "HEXTONUM",
+        "HOUR",
+        "IFNULL",
+        "INDEXING_ERROR_CODE",
+        "INDEXING_ERROR_MESSAGE",
+        "INDEXING_STATUS",
+        "INITCAP",
+        "ISOWEEK",
+        "IS_SQL_INJECTION_SAFE",
+        "JSON",
+        "JSON_QUERY",
+        "JSON_TABLE",
+        "JSON_VALUE",
+        "L2DISTANCE",
+        "L2NORM",
+        "L2NORMALIZE",
+        "LAG",
+        "LANGUAGE",
+        "LAST_DAY",
+        "LAST_VALUE",
+        "LCASE",
+        "LEAD",
+        "LEAST",
+        "LEFT",
+        "LENGTH",
+        "LINEAR_APPROX",
+        "LN",
+        "LOCALTOUTC",
+        "LOCATE",
+        "LOCATE_REGEXPR",
+        "LOG",
+        "LOWER",
+        "LPAD",
+        "LTRIM",
+        "MAP",
+        "MAX",
+        "MEDIAN",
+        "MEMBER_AT",
+        "MIMETYPE",
+        "MIN",
+        "MINUTE",
+        "MOD",
+        "MONTH",
+        "MONTHNAME",
+        "MONTHS_BETWEEN",
+        "NANO100_BETWEEN",
+        "NCHAR",
+        "NDIV0",
+        "NEWUID",
+        "NEXT_DAY",
+        "NORMALIZE",
+        "NOW",
+        "NTH_VALUE",
+        "NTILE",
+        "NULLIF",
+        "NUMTOHEX",
+        "OCCURRENCES_REGEXPR",
+        "PARSE_CERTIFICATES",
+        "PARSE_JSON",
+        "PARTITION_ALLOCATION",
+        "PARTITION_HASH",
+        "PERCENTILE_CONT",
+        "PERCENTILE_DISC",
+        "PERCENT_RANK",
+        "PLAINTEXT",
+        "POWER",
+        "QUARTER",
+        "RAND",
+        "RANDOM_PARTITION",
+        "RAND_SECURE",
+        "RANK",
+        "RECORD_COMMIT_TIMESTAMP",
+        "RECORD_ID",
+        "REPLACE",
+        "REPLACE_REGEXPR",
+        "RESULT_CACHE_ID",
+        "RESULT_CACHE_REFRESH_TIME",
+        "RIGHT",
+        "ROUND",
+        "ROW_NUMBER",
+        "RPAD",
+        "RTRIM",
+        "SCORE",
+        "SECOND",
+        "SECONDS_BETWEEN",
+        "SERIES_DISAGGREGATE",
+        "SERIES_ELEMENT_TO_PERIOD",
+        "SERIES_FILTER",
+        "SERIES_GENERATE",
+        "SERIES_PERIOD_TO_ELEMENT",
+        "SERIES_ROUND",
+        "SESSION_CONTEXT",
+        "SESSION_USER",
+        "SIGN",
+        "SIN",
+        "SINH",
+        "SOUNDEX",
+        "SQL",
+        "SQRT",
+        "STATEMENT_EXECUTION_HOST",
+        "STATEMENT_EXECUTION_PORT",
+        "STDDEV",
+        "STDDEV_POP",
+        "STDDEV_SAMP",
+        "STRING_AGG",
+        "STRTOBIN",
+        "SUBARRAY",
+        "SUBSTR",
+        "SUBSTRING",
+        "SUBSTRING_REGEXPR",
+        "SUBSTR_AFTER",
+        "SUBSTR_BEFORE",
+        "SUBSTR_REGEXPR",
+        "SUBVECTOR",
+        "SUM",
+        "SYSUUID",
+        "TAN",
+        "TANH",
+        "TO_ALPHANUM",
+        "TO_ARRAY",
+        "TO_BIGINT",
+        "TO_BINARY",
+        "TO_BLOB",
+        "TO_BOOLEAN",
+        "TO_CLOB",
+        "TO_DATE",
+        "TO_DATS",
+        "TO_DECIMAL",
+        "TO_DOUBLE",
+        "TO_FIXEDCHAR",
+        "TO_HALF_VECTOR",
+        "TO_INT",
+        "TO_INTEGER",
+        "TO_NCLOB",
+        "TO_NVARCHAR",
+        "TO_REAL",
+        "TO_REAL_VECTOR",
+        "TO_SECONDDATE",
+        "TO_SMALLDECIMAL",
+        "TO_SMALLINT",
+        "TO_TIME",
+        "TO_TIMESTAMP",
+        "TO_TINYINT",
+        "TO_VARBINARY",
+        "TO_VARCHAR",
+        "TRIM",
+        "TRIM_ARRAY",
+        "UCASE",
+        "UMINUS",
+        "UNICODE",
+        "UPPER",
+        "UTCTOLOCAL",
+        "VALIDATE_USERGROUP_CONNECT_RESTRICTION",
+        "VALIDATE_USERGROUP_CONNECT_RESTRICTION_DETAILS",
+        "VAR",
+        "VAR_POP",
+        "VAR_SAMP",
+        "VECTOR_EMBEDDING",
+        "WEEK",
+        "WEEKDAY",
+        "WEIGHTED_AVG",
+        "WIDTH_BUCKET",
+        "WORKDAYS_BETWEEN",
+        "XMLEXTRACT",
+        "XMLEXTRACTVALUE",
+        "XMLTABLE",
+        "YEAR",
+        "YEARS_BETWEEN",
+    ];
+    NAMES.binary_search(&name).is_ok()
+        || matches!(
+            name,
+            "SERIES_GENERATE_INTEGER"
+                | "SERIES_GENERATE_DECIMAL"
+                | "SERIES_GENERATE_DATE"
+                | "SERIES_GENERATE_TIME"
+                | "SERIES_GENERATE_TIMESTAMP"
+                | "SUBSTR_REGEXPR"
+                | "SERIES_DISAGGREGATE_BIGINT"
+                | "SERIES_DISAGGREGATE_DATE"
+                | "SERIES_DISAGGREGATE_DECIMAL"
+                | "SERIES_DISAGGREGATE_INTEGER"
+                | "SERIES_DISAGGREGATE_SECONDDATE"
+                | "SERIES_DISAGGREGATE_SMALLDECIMAL"
+                | "SERIES_DISAGGREGATE_SMALLINT"
+                | "SERIES_DISAGGREGATE_TIME"
+                | "SERIES_DISAGGREGATE_TIMESTAMP"
+                | "SERIES_DISAGGREGATE_TINYINT"
+                | "ST_GEOMFROMTEXT"
+                | "ST_GEOMFROMWKB"
+        )
 }

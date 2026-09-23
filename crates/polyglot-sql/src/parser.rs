@@ -28,6 +28,7 @@ use crate::guard::{
     ComplexityGuardOptions, TokenGuardStats,
 };
 use crate::tokens::{ParserToken, Span, Token, TokenType, Tokenizer, TokenizerConfig};
+use crate::traversal::ExpressionWalk;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
@@ -37,6 +38,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 #[derive(Default)]
 struct ParserRecursion {
     depth: AtomicUsize,
+    statements: AtomicUsize,
     failure: OnceLock<(usize, usize, Span)>,
 }
 
@@ -1101,8 +1103,26 @@ impl Parser {
             return Err(self.end_of_input_error());
         }
         let start_pos = self.current;
-        match self.with_parser_depth(|parser| parser.parse_statement_inner()) {
-            Ok(expr) => Ok(expr),
+        let hana = self.config.dialect == Some(crate::dialects::DialectType::HANA);
+        let outer_hana_statement =
+            hana && self.recursion.statements.fetch_add(1, Ordering::Relaxed) == 0;
+        let result = self.with_parser_depth(|parser| parser.parse_statement_inner());
+        if hana {
+            self.recursion.statements.fetch_sub(1, Ordering::Relaxed);
+        }
+        match result {
+            Ok(expr) => {
+                // Nested statements are checked by their outer statement. Walking
+                // every completed subtree makes a chain of subqueries quadratic.
+                if outer_hana_statement
+                    && expr
+                        .dfs()
+                        .any(|node| matches!(node, Expression::Raw(_) | Expression::Command(_)))
+                {
+                    return Err(self.parse_error("HANA syntax requires structured parsing; raw statement fallback is not supported"));
+                }
+                Ok(expr)
+            }
             Err(err) if self.should_fallback_clickhouse_statement_error(start_pos, &err) => {
                 self.current = start_pos;
                 self.fallback_to_command(start_pos)
@@ -1232,6 +1252,11 @@ impl Parser {
         }
 
         let statement_start = self.current;
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && self.check_identifier("UPSERT")
+        {
+            return self.parse_hana_upsert();
+        }
 
         match self.peek().token_type {
             // Handle hint comment /*+ ... */ before a statement - convert to regular comment
@@ -2742,10 +2767,14 @@ impl Parser {
             let mut expressions = Vec::new();
             if self.match_token(TokenType::Rollup) {
                 expressions.push(Expression::Rollup(Box::new(Rollup {
+                    options: None,
+
                     expressions: Vec::new(),
                 })));
             } else if self.match_token(TokenType::Cube) {
                 expressions.push(Expression::Cube(Box::new(Cube {
+                    options: None,
+
                     expressions: Vec::new(),
                 })));
             }
@@ -3036,6 +3065,10 @@ impl Parser {
             (limit, offset)
         };
 
+        let hana_total_rowcount = self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && limit.is_some()
+            && self.match_text_seq(&["TOTAL", "ROWCOUNT"]);
+
         // Parse FETCH FIRST/NEXT clause
         let fetch = if self.match_token(TokenType::Fetch) {
             Some(self.parse_fetch()?)
@@ -3048,6 +3081,8 @@ impl Parser {
 
         // Parse FOR UPDATE/SHARE locks or FOR XML/JSON (T-SQL)
         let (locks, for_xml, for_json) = self.parse_locks_and_for_xml()?;
+        let (result_serialization, query_collation, query_hints) =
+            self.parse_hana_select_options()?;
 
         let option = if matches!(
             self.config.dialect,
@@ -3124,9 +3159,21 @@ impl Parser {
             hint,
             connect,
             into,
-            locks,
             for_xml,
             for_json,
+            source_dialect: self.config.dialect.filter(|d| {
+                *d == crate::dialects::DialectType::HANA
+                    && (hana_total_rowcount
+                        || result_serialization.is_some()
+                        || query_collation.is_some()
+                        || !query_hints.is_empty()
+                        || locks.iter().any(|lock| lock.ignore_locked))
+            }),
+            result_serialization,
+            query_collation,
+            query_hints,
+            total_rowcount: hana_total_rowcount,
+            locks,
             leading_comments,
             post_select_comments,
             kind,
@@ -4310,6 +4357,13 @@ impl Parser {
 
         // Build SELECT expression
         let select = Select {
+            source_dialect: None,
+            total_rowcount: false,
+
+            query_collation: None,
+            query_hints: Vec::new(),
+            result_serialization: None,
+
             vertica: None,
             expressions,
             from: Some(from),
@@ -4342,6 +4396,7 @@ impl Parser {
             locks: Vec::new(),
             for_xml: Vec::new(),
             for_json: Vec::new(),
+
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -4627,6 +4682,10 @@ impl Parser {
                     }))
                 } else {
                     Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: first_name,
                         args,
                         distinct: false,
@@ -5300,6 +5359,19 @@ impl Parser {
                             version: None,
                             span: None,
                         })
+                    } else if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                        && self.match_token(TokenType::LParen)
+                    {
+                        let arguments = if self.check(TokenType::RParen) {
+                            Vec::new()
+                        } else {
+                            self.parse_function_arguments()?
+                        };
+                        self.expect(TokenType::RParen)?;
+                        Expression::Function(Box::new(Function::qualified(
+                            vec![first_ident, second_ident, third_ident],
+                            arguments,
+                        )))
                     } else if self.match_token(TokenType::LParen) {
                         // catalog.schema.function() - table-valued function
                         let args = if self.check(TokenType::RParen) {
@@ -5310,6 +5382,10 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         let trailing_comments = self.previous_trailing_comments().to_vec();
                         Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: format!("{}.{}.{}", first_name, second_name, third_name),
                             args,
                             distinct: false,
@@ -5356,6 +5432,19 @@ impl Parser {
                             span: None,
                         })
                     }
+                } else if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                    && self.match_token(TokenType::LParen)
+                {
+                    let arguments = if self.check(TokenType::RParen) {
+                        Vec::new()
+                    } else {
+                        self.parse_function_arguments()?
+                    };
+                    self.expect(TokenType::RParen)?;
+                    Expression::Function(Box::new(Function::qualified(
+                        vec![first_ident, second_ident],
+                        arguments,
+                    )))
                 } else if self.match_token(TokenType::LParen) {
                     // schema.function() - table-valued function
                     let args = if self.check(TokenType::RParen) {
@@ -5366,6 +5455,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: format!("{}.{}", first_name, second_name),
                         args,
                         distinct: false,
@@ -5414,7 +5507,11 @@ impl Parser {
                 }
             } else if self.match_token(TokenType::LParen) {
                 // Handle JSON_TABLE specially - it has COLUMNS clause syntax
-                if first_name.eq_ignore_ascii_case("JSON_TABLE") {
+                if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                    && first_name.eq_ignore_ascii_case("JSON_TABLE")
+                {
+                    self.parse_hana_json("JSON_TABLE")?
+                } else if first_name.eq_ignore_ascii_case("JSON_TABLE") {
                     // Parse the JSON expression (use parse_bitwise to avoid consuming FORMAT)
                     let this = self
                         .parse_bitwise()?
@@ -5480,12 +5577,22 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
 
                     Expression::JSONTable(Box::new(JSONTable {
+                        options: None,
+                        source_dialect: None,
+
                         this: Box::new(this_with_format),
                         schema: schema.map(Box::new),
                         path,
                         error_handling,
                         empty_handling,
                     }))
+                } else if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                    && matches!(
+                        first_name.to_ascii_uppercase().as_str(),
+                        "HIERARCHY" | "HIERARCHY_SPANTREE"
+                    )
+                {
+                    self.parse_hana_hierarchy(&first_name.to_ascii_uppercase())?
                 } else if first_name.eq_ignore_ascii_case("XMLTABLE") {
                     // Handle XMLTABLE specially - it has COLUMNS clause syntax
                     // XMLTABLE([XMLNAMESPACES(...),] '/xpath' PASSING xml_doc COLUMNS ...)
@@ -5519,6 +5626,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: first_name.to_string(),
                         args: vec![query],
                         distinct: false,
@@ -5529,6 +5640,10 @@ impl Parser {
                         span: None,
                         inferred_type: None,
                     }))
+                } else if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                    && crate::function_registry::is_hana_builtin(&first_name.to_ascii_uppercase())
+                {
+                    self.parse_typed_function(&first_name, &first_name.to_ascii_uppercase(), false)?
                 } else {
                     // Simple table function like UNNEST(), GAP_FILL(), etc.
                     let args = if self.check(TokenType::RParen) {
@@ -5588,6 +5703,10 @@ impl Parser {
                             first_name.clone()
                         };
                         let func = Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: func_name,
                             args,
                             distinct: false,
@@ -7535,6 +7654,10 @@ impl Parser {
             let trailing_comments = self.previous_trailing_comments().to_vec();
             // Create a Function expression to represent IDENTIFIER(arg)
             let identifier_func = Expression::Function(Box::new(crate::expressions::Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "IDENTIFIER".to_string(),
                 args: vec![arg],
                 distinct: false,
@@ -8405,10 +8528,14 @@ impl Parser {
                 self.skip(); // consume WITH
                 if self.match_token(TokenType::Cube) {
                     expressions.push(Expression::Cube(Box::new(Cube {
+                        options: None,
+
                         expressions: Vec::new(),
                     })));
                 } else if self.match_token(TokenType::Rollup) {
                     expressions.push(Expression::Rollup(Box::new(Rollup {
+                        options: None,
+
                         expressions: Vec::new(),
                     })));
                 }
@@ -8429,7 +8556,13 @@ impl Parser {
 
         loop {
             // Check for GROUPING SETS, CUBE, ROLLUP
-            let expr = if self.check_identifier("GROUPING")
+            let expr = if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                && (self.check(TokenType::Cube)
+                    || self.check(TokenType::Rollup)
+                    || (self.check_identifier("GROUPING") && self.check_next_identifier("SETS")))
+            {
+                self.parse_hana_grouping()?
+            } else if self.check_identifier("GROUPING")
                 && self
                     .peek_nth(1)
                     .map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
@@ -8437,12 +8570,17 @@ impl Parser {
                     self.skip();
                     self.skip();
                     true
-                } {
+                }
+            {
                 // GROUPING SETS (...)
                 self.expect(TokenType::LParen)?;
                 let args = self.parse_grouping_sets_args()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "GROUPING SETS".to_string(),
                     args,
                     distinct: false,
@@ -8459,6 +8597,10 @@ impl Parser {
                 let args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "CUBE".to_string(),
                     args,
                     distinct: false,
@@ -8475,6 +8617,10 @@ impl Parser {
                 let args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "ROLLUP".to_string(),
                     args,
                     distinct: false,
@@ -8532,11 +8678,15 @@ impl Parser {
             if self.match_token(TokenType::Cube) {
                 // WITH CUBE - add Cube with empty expressions
                 expressions.push(Expression::Cube(Box::new(Cube {
+                    options: None,
+
                     expressions: Vec::new(),
                 })));
             } else if self.match_token(TokenType::Rollup) {
                 // WITH ROLLUP - add Rollup with empty expressions
                 expressions.push(Expression::Rollup(Box::new(Rollup {
+                    options: None,
+
                     expressions: Vec::new(),
                 })));
             }
@@ -8570,7 +8720,13 @@ impl Parser {
 
         loop {
             // Check for nested GROUPING SETS, CUBE, ROLLUP
-            let expr = if self.check_identifier("GROUPING")
+            let expr = if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                && (self.check(TokenType::Cube)
+                    || self.check(TokenType::Rollup)
+                    || (self.check_identifier("GROUPING") && self.check_next_identifier("SETS")))
+            {
+                self.parse_hana_grouping()?
+            } else if self.check_identifier("GROUPING")
                 && self
                     .peek_nth(1)
                     .map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
@@ -8578,12 +8734,17 @@ impl Parser {
                     self.skip();
                     self.skip();
                     true
-                } {
+                }
+            {
                 // Nested GROUPING SETS (...)
                 self.expect(TokenType::LParen)?;
                 let inner_args = self.parse_grouping_sets_args()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "GROUPING SETS".to_string(),
                     args: inner_args,
                     distinct: false,
@@ -8600,6 +8761,10 @@ impl Parser {
                 let inner_args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "CUBE".to_string(),
                     args: inner_args,
                     distinct: false,
@@ -8616,6 +8781,10 @@ impl Parser {
                 let inner_args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "ROLLUP".to_string(),
                     args: inner_args,
                     distinct: false,
@@ -9143,6 +9312,12 @@ impl Parser {
         let mut for_json = Vec::new();
 
         loop {
+            if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                && self.check(TokenType::For)
+                && (self.check_next_identifier("JSON") || self.check_next_identifier("XML"))
+            {
+                break;
+            }
             let (update, key) = if self.match_keywords(&[TokenType::For, TokenType::Update]) {
                 // FOR UPDATE
                 (
@@ -9167,6 +9342,11 @@ impl Parser {
                 // FOR SHARE
                 self.skip(); // consume FOR
                 self.skip(); // consume SHARE
+                if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                    && !self.match_keyword("LOCK")
+                {
+                    return Err(self.parse_error("HANA requires FOR SHARE LOCK"));
+                }
                 (None, None)
             } else if self.check_identifier("LOCK") && self.check_next(TokenType::In) {
                 // LOCK IN SHARE MODE (MySQL) -> converted to FOR SHARE
@@ -9247,7 +9427,10 @@ impl Parser {
                 None
             };
 
+            let ignore_locked = self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                && self.match_text_seq(&["IGNORE", "LOCKED"]);
             locks.push(Lock {
+                ignore_locked,
                 update,
                 expressions,
                 wait,
@@ -9256,6 +9439,929 @@ impl Parser {
         }
 
         Ok((locks, for_xml, for_json))
+    }
+
+    fn parse_hana_json(&mut self, name: &str) -> Result<Expression> {
+        let input = self.parse_bitwise_or()?;
+        self.expect(TokenType::Comma)?;
+        let path = self.parse_bitwise_or()?;
+        let columns = if name == "JSON_TABLE" {
+            self.parse_hana_json_columns()?
+        } else {
+            Vec::new()
+        };
+        let (returning, options) =
+            self.parse_hana_json_options(name == "JSON_QUERY", name != "JSON_TABLE")?;
+        self.expect(TokenType::RParen)?;
+        Ok(match name {
+            "JSON_TABLE" => Expression::JSONTable(Box::new(JSONTable {
+                source_dialect: self.config.dialect,
+                this: Box::new(input),
+                path: Some(Box::new(path)),
+                schema: Some(Box::new(Expression::JSONSchema(Box::new(JSONSchema {
+                    expressions: columns,
+                })))),
+                error_handling: None,
+                empty_handling: None,
+                options: Some(options),
+            })),
+            "JSON_QUERY" => Expression::JsonQuery(Box::new(JsonExtractFunc {
+                source_dialect: self.config.dialect,
+                this: input,
+                path,
+                returning,
+                options: Some(options),
+                arrow_syntax: false,
+                hash_arrow_syntax: false,
+                wrapper_option: None,
+                quotes_option: None,
+                on_scalar_string: false,
+                on_error: None,
+            })),
+            _ => Expression::JSONValue(Box::new(JSONValue {
+                source_dialect: self.config.dialect,
+                this: Box::new(input),
+                path: Some(Box::new(path)),
+                returning: returning.map(|t| Box::new(Expression::DataType(t))),
+                on_condition: None,
+                options: Some(options),
+            })),
+        })
+    }
+
+    fn parse_hana_json_columns(&mut self) -> Result<Vec<Expression>> {
+        self.with_parser_depth(|parser| parser.parse_hana_json_columns_inner())
+    }
+
+    fn parse_hana_json_columns_inner(&mut self) -> Result<Vec<Expression>> {
+        if !self.match_keyword("COLUMNS") {
+            return Err(self.parse_error("Expected COLUMNS in JSON_TABLE"));
+        }
+        self.expect(TokenType::LParen)?;
+        let mut result = Vec::new();
+        loop {
+            let nested = self.match_keyword("NESTED");
+            let name = if nested {
+                None
+            } else {
+                Some(self.expect_identifier_or_keyword_with_quoted()?)
+            };
+            let ordinality = !nested && self.match_text_seq(&["FOR", "ORDINALITY"]);
+            let data_type = if !nested && !ordinality {
+                Some(self.parse_data_type()?)
+            } else {
+                None
+            };
+            let format_json = !nested && self.match_text_seq(&["FORMAT", "JSON"]);
+            let encoding = if format_json && self.match_keyword("ENCODING") {
+                if !self.match_texts(&["UTF8", "UTF16", "UTF32"]) {
+                    return Err(self.parse_error("Expected UTF8, UTF16, or UTF32"));
+                }
+                Some(self.previous_text().to_ascii_uppercase())
+            } else {
+                None
+            };
+            let path = if !ordinality {
+                if !self.match_keyword("PATH") {
+                    return Err(self.parse_error("Expected PATH in JSON_TABLE column"));
+                }
+                Some(self.parse_bitwise_or()?)
+            } else {
+                None
+            };
+            let columns = if nested {
+                self.parse_hana_json_columns()?
+            } else {
+                Vec::new()
+            };
+            let options = if !nested && !ordinality {
+                self.parse_hana_json_options(format_json, false)?.1
+            } else {
+                JsonOptions::default()
+            };
+            result.push(Expression::JSONColumnDef(Box::new(JSONColumnDef {
+                source_dialect: self.config.dialect,
+                this: name.map(|n| Box::new(Expression::Identifier(n))),
+                kind: None,
+                data_type,
+                path: path.map(Box::new),
+                ordinality: ordinality
+                    .then(|| Box::new(Expression::Boolean(BooleanLiteral { value: true }))),
+                format_json,
+                encoding,
+                nested_schema: nested.then(|| {
+                    Box::new(Expression::JSONSchema(Box::new(JSONSchema {
+                        expressions: columns,
+                    })))
+                }),
+                options: Some(options),
+            })));
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        Ok(result)
+    }
+
+    fn parse_hana_json_options(
+        &mut self,
+        query: bool,
+        returning_allowed: bool,
+    ) -> Result<(Option<DataType>, JsonOptions)> {
+        let returning = if returning_allowed && self.match_token(TokenType::Returning) {
+            Some(self.parse_data_type()?)
+        } else {
+            None
+        };
+        let wrapper = if query
+            && (self.check(TokenType::With) || self.peek_text().eq_ignore_ascii_case("WITHOUT"))
+        {
+            let mut value = self.advance_text()?.to_ascii_uppercase();
+            if value == "WITH" && self.match_texts(&["CONDITIONAL", "UNCONDITIONAL"]) {
+                value.push(' ');
+                value.push_str(&self.previous_text().to_ascii_uppercase());
+            }
+            if self.match_keyword("ARRAY") {
+                value.push_str(" ARRAY");
+            }
+            if !self.match_keyword("WRAPPER") {
+                return Err(self.parse_error("Expected WRAPPER"));
+            }
+            Some(value)
+        } else {
+            None
+        };
+        let mut options = JsonOptions {
+            wrapper,
+            ..Default::default()
+        };
+        while self.peek_text().eq_ignore_ascii_case("ERROR")
+            || self.check(TokenType::Null)
+            || self.check(TokenType::Default)
+            || (query && self.peek_text().eq_ignore_ascii_case("EMPTY"))
+        {
+            let kind = self.advance_text()?.to_ascii_uppercase();
+            let (kind, value) = if kind == "DEFAULT" {
+                if query {
+                    return Err(self.parse_error("JSON_QUERY has no DEFAULT behavior"));
+                }
+                (kind, Some(self.parse_bitwise_or()?))
+            } else if kind == "EMPTY" {
+                if !self.match_texts(&["ARRAY", "OBJECT"]) {
+                    return Err(self.parse_error("Expected ARRAY or OBJECT"));
+                }
+                (
+                    format!("EMPTY {}", self.previous_text().to_ascii_uppercase()),
+                    None,
+                )
+            } else {
+                (kind, None)
+            };
+            self.expect(TokenType::On)?;
+            let empty = self.match_keyword("EMPTY");
+            if !empty && !self.match_keyword("ERROR") {
+                return Err(self.parse_error("Expected EMPTY or ERROR after ON"));
+            }
+            let field = if empty {
+                &mut options.on_empty
+            } else {
+                &mut options.on_error
+            };
+            if field.is_some() {
+                return Err(self.parse_error("Duplicate JSON behavior clause"));
+            }
+            *field = Some(SqlBehavior { kind, value });
+        }
+        Ok((returning, options))
+    }
+
+    fn parse_hana_hierarchy(&mut self, name: &str) -> Result<Expression> {
+        if !self.match_keyword("SOURCE") {
+            return Err(self.parse_error("Expected SOURCE in HANA hierarchy"));
+        }
+        let source = if self.match_token(TokenType::LParen) {
+            let source = self.parse_statement()?;
+            self.expect(TokenType::RParen)?;
+            Expression::Paren(Box::new(Paren {
+                this: source,
+                trailing_comments: Vec::new(),
+            }))
+        } else {
+            Expression::Table(Box::new(self.parse_table_ref()?))
+        };
+        let start = if self.match_keyword("START") {
+            self.expect(TokenType::Where)?;
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        let siblings = if self.match_keyword("SIBLING") {
+            self.expect(TokenType::Order)?;
+            self.expect(TokenType::By)?;
+            self.parse_order_by_list()?
+        } else {
+            Vec::new()
+        };
+        let depth = if self.match_keyword("DEPTH") {
+            Some(self.parse_primary()?)
+        } else {
+            None
+        };
+        let multiparent = if self.match_keyword("MULTIPARENT") {
+            if self.match_keyword("ERROR") {
+                Some("ERROR".to_owned())
+            } else if self.match_text_seq(&["LEAVES", "ONLY"]) {
+                Some("LEAVES ONLY".to_owned())
+            } else {
+                Some(String::new())
+            }
+        } else {
+            None
+        };
+        let orphan = if self.match_keyword("ORPHAN") {
+            if !self.match_texts(&["IGNORE", "ERROR", "ADOPT", "ROOT"]) {
+                return Err(self.parse_error("Expected HANA ORPHAN handling"));
+            }
+            Some(self.previous_text().to_ascii_uppercase())
+        } else {
+            None
+        };
+        let cycle = if self.match_keyword("CYCLE") {
+            if !self.match_texts(&["BREAKUP", "ERROR"]) {
+                return Err(self.parse_error("Expected HANA CYCLE handling"));
+            }
+            Some(self.previous_text().to_ascii_uppercase())
+        } else {
+            None
+        };
+        let cache = if self.match_keyword("CACHE") {
+            Some(
+                if self.match_keyword("FORCE") {
+                    "CACHE FORCE"
+                } else {
+                    "CACHE"
+                }
+                .to_owned(),
+            )
+        } else if self.match_text_seq(&["NO", "CACHE"]) {
+            Some("NO CACHE".to_owned())
+        } else {
+            None
+        };
+        if depth.is_some() && orphan.is_some() {
+            return Err(self.parse_error("HANA DEPTH and ORPHAN cannot be combined"));
+        }
+        if name == "HIERARCHY_SPANTREE"
+            && (multiparent.is_some() || orphan.is_some() || cycle.is_some())
+        {
+            return Err(
+                self.parse_error("HIERARCHY_SPANTREE has no MULTIPARENT, ORPHAN, or CYCLE clauses")
+            );
+        }
+        self.expect(TokenType::RParen)?;
+        Ok(Expression::Hierarchy(Box::new(Hierarchy {
+            source_dialect: self.config.dialect,
+            name: name.to_owned(),
+            source,
+            start,
+            siblings,
+            depth,
+            multiparent,
+            orphan,
+            cycle,
+            cache,
+        })))
+    }
+
+    fn parse_hana_upsert(&mut self) -> Result<Expression> {
+        self.skip(); // UPSERT
+        let table = self.parse_table_ref()?;
+        let partition = if self.match_token(TokenType::Partition) {
+            self.expect(TokenType::LParen)?;
+            let partition = self.parse_expression()?;
+            self.expect(TokenType::RParen)?;
+            Some(partition)
+        } else {
+            None
+        };
+        let columns = if self.match_token(TokenType::LParen) {
+            let columns = self.parse_identifier_list()?;
+            self.expect(TokenType::RParen)?;
+            columns
+        } else {
+            Vec::new()
+        };
+        let values = self.check(TokenType::Values);
+        let source = if values {
+            self.parse_values()?
+        } else {
+            self.parse_statement()?
+        };
+        let condition = if values && self.match_token(TokenType::Where) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        let primary_key = if values && condition.is_none() && self.match_token(TokenType::With) {
+            if !self.match_text_seq(&["PRIMARY", "KEY"]) && !self.match_token(TokenType::PrimaryKey)
+            {
+                return Err(self.parse_error("Expected PRIMARY KEY after UPSERT WITH"));
+            }
+            true
+        } else {
+            false
+        };
+        Ok(Expression::Upsert(Box::new(Upsert {
+            source_dialect: self.config.dialect,
+            table,
+            partition,
+            columns,
+            source,
+            condition,
+            primary_key,
+        })))
+    }
+
+    fn parse_hana_partition(&mut self) -> Result<Expression> {
+        if !self.match_token(TokenType::PartitionBy) {
+            self.expect(TokenType::Partition)?;
+            self.expect(TokenType::By)?;
+        }
+        Ok(Expression::PartitionByProperty(Box::new(
+            PartitionByProperty {
+                expressions: Vec::new(),
+                specification: Some(self.parse_hana_partition_spec()?),
+            },
+        )))
+    }
+
+    fn parse_hana_partition_spec(&mut self) -> Result<PartitionSpec> {
+        self.with_parser_depth(|parser| parser.parse_hana_partition_spec_inner())
+    }
+
+    fn parse_hana_partition_spec_inner(&mut self) -> Result<PartitionSpec> {
+        let method = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
+        if !matches!(method.as_str(), "HASH" | "ROUNDROBIN" | "RANGE") {
+            return Err(self.parse_error("Expected HASH, ROUNDROBIN, or RANGE partitioning"));
+        }
+        let columns = if method != "ROUNDROBIN" {
+            self.expect(TokenType::LParen)?;
+            let columns = self.parse_expression_list()?;
+            self.expect(TokenType::RParen)?;
+            columns
+        } else {
+            Vec::new()
+        };
+        let primary_key_check =
+            if self.check(TokenType::PrimaryKey) || self.peek_text().eq_ignore_ascii_case("NO") {
+                let enabled = !self.match_keyword("NO");
+                self.expect(TokenType::PrimaryKey)?;
+                self.match_token(TokenType::Key);
+                self.expect(TokenType::Check)?;
+                Some(enabled)
+            } else {
+                None
+            };
+        let mut ranges = Vec::new();
+        let partitions = if method == "RANGE" {
+            self.expect(TokenType::LParen)?;
+            loop {
+                self.expect(TokenType::Partition)?;
+                let name = if self.check(TokenType::QuotedIdentifier)
+                    || (self.is_identifier_token()
+                        && !self.peek_text().eq_ignore_ascii_case("OTHERS"))
+                {
+                    Some(self.expect_identifier_or_keyword_with_quoted()?)
+                } else {
+                    None
+                };
+                let (kind, values) = if self.match_keyword("OTHERS") {
+                    ("OTHERS", Vec::new())
+                } else if self.match_token(TokenType::Values) {
+                    let kind = if self.match_token(TokenType::Lt) {
+                        "LESS"
+                    } else if self.match_token(TokenType::Gte) {
+                        "AT_LEAST"
+                    } else if self.match_token(TokenType::Eq) {
+                        "VALUE"
+                    } else {
+                        return Err(self.parse_error("Expected <, >=, or = after VALUES"));
+                    };
+                    (kind, vec![self.parse_bitwise_or()?])
+                } else {
+                    let lower = self.parse_bitwise_or()?;
+                    self.expect(TokenType::Lte)?;
+                    self.expect(TokenType::Values)?;
+                    self.expect(TokenType::Lt)?;
+                    ("RANGE", vec![lower, self.parse_bitwise_or()?])
+                };
+                let dynamic = self.match_keyword("DYNAMIC");
+                let direction = if dynamic
+                    && self.match_texts(&["INCREASING", "DECREASING", "BIDIRECTIONAL"])
+                {
+                    Some(self.previous_text().to_ascii_uppercase())
+                } else {
+                    None
+                };
+                let threshold = if dynamic && self.match_keyword("THRESHOLD") {
+                    Some(self.parse_primary()?)
+                } else {
+                    None
+                };
+                let interval =
+                    if dynamic && threshold.is_none() && self.match_token(TokenType::Interval) {
+                        let value = self.parse_primary()?;
+                        let unit = if self.match_texts(&["YEAR", "MONTH", "HOUR"]) {
+                            Some(self.previous_text().to_ascii_uppercase())
+                        } else {
+                            None
+                        };
+                        Some((value, unit))
+                    } else {
+                        None
+                    };
+                if dynamic && kind != "OTHERS" {
+                    return Err(self.parse_error("DYNAMIC applies only to OTHERS"));
+                }
+                let mut properties = Vec::new();
+                while let Some(property) = self.parse_hana_storage_property()? {
+                    properties.push(property);
+                }
+                ranges.push(PartitionRangeSpec {
+                    name,
+                    kind: kind.to_owned(),
+                    values,
+                    dynamic,
+                    direction,
+                    threshold,
+                    interval,
+                    properties,
+                });
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenType::RParen)?;
+            None
+        } else {
+            if !self.match_keyword("PARTITIONS") {
+                return Err(self.parse_error("Expected PARTITIONS"));
+            }
+            Some(self.parse_primary()?)
+        };
+        let mut properties = Vec::new();
+        while let Some(property) = self.parse_hana_storage_property()? {
+            properties.push(property);
+        }
+        let subpartition = if self.match_keyword("SUBPARTITION") {
+            self.expect(TokenType::By)?;
+            Some(Box::new(self.parse_hana_partition_spec()?))
+        } else {
+            None
+        };
+        Ok(PartitionSpec {
+            source_dialect: self.config.dialect,
+            method,
+            columns,
+            partitions,
+            ranges,
+            primary_key_check,
+            properties,
+            subpartition,
+        })
+    }
+
+    fn parse_hana_storage_property(&mut self) -> Result<Option<Expression>> {
+        let mut words = Vec::new();
+        let mut values = Vec::new();
+        let name = self.peek_text().to_ascii_uppercase();
+        match name.as_str() {
+            "COLUMN" | "PAGE" if self.check_next_identifier("LOADABLE") => {
+                self.skip();
+                self.skip();
+                words.extend([name, "LOADABLE".to_owned()]);
+            }
+            "INSERT" | "LOGGING" => {
+                self.skip();
+                words.push(name);
+                if !self.match_texts(&["ON", "OFF"]) {
+                    return Err(self.parse_error("Expected ON or OFF"));
+                }
+                words.push(self.previous_text().to_ascii_uppercase());
+            }
+            "AUTO" if self.check_next_identifier("MERGE") => {
+                self.skip();
+                self.skip();
+                words.extend(["AUTO".to_owned(), "MERGE".to_owned()]);
+            }
+            "NO" if self.check_next_identifier("AUTO") => {
+                self.skip();
+                self.skip();
+                if !self.match_keyword("MERGE") {
+                    return Err(self.parse_error("Expected MERGE"));
+                }
+                words.extend(["NO".to_owned(), "AUTO".to_owned(), "MERGE".to_owned()]);
+            }
+            "UNLOAD" if self.check_next_identifier("PRIORITY") => {
+                self.skip();
+                self.skip();
+                words.extend(["UNLOAD".to_owned(), "PRIORITY".to_owned()]);
+                values.push(self.parse_primary()?);
+            }
+            "PERSISTENT" if self.check_next_identifier("MEMORY") => {
+                self.skip();
+                self.skip();
+                words.extend(["PERSISTENT".to_owned(), "MEMORY".to_owned()]);
+                if !self.match_texts(&["ON", "OFF"]) {
+                    return Err(self.parse_error("Expected ON or OFF"));
+                }
+                words.push(self.previous_text().to_ascii_uppercase());
+            }
+            "GROUP" => {
+                self.skip();
+                words.push(name);
+                if !self.match_texts(&["NAME", "TYPE", "SUBTYPE"]) {
+                    return Err(self.parse_error("Expected NAME, TYPE, or SUBTYPE"));
+                }
+                words.push(self.previous_text().to_ascii_uppercase());
+                values.push(self.parse_primary()?);
+            }
+            "RECORD"
+                if self.check_next(TokenType::Commit) || self.check_next_identifier("COMMIT") =>
+            {
+                self.skip();
+                self.skip();
+                if !self.match_keyword("TIMESTAMP") {
+                    return Err(self.parse_error("Expected TIMESTAMP"));
+                }
+                words.extend([
+                    "RECORD".to_owned(),
+                    "COMMIT".to_owned(),
+                    "TIMESTAMP".to_owned(),
+                ]);
+            }
+            _ => return Ok(None),
+        }
+        Ok(Some(Expression::StorageProperty(Box::new(
+            StorageProperty {
+                source_dialect: self.config.dialect,
+                name: words.join(" "),
+                values,
+            },
+        ))))
+    }
+
+    fn parse_hana_regex(
+        &mut self,
+        operation: &str,
+        subject: Option<Expression>,
+    ) -> Result<Expression> {
+        let predicate = subject.is_some();
+        let position_after =
+            if operation == "LOCATE_REGEXPR" && self.match_texts(&["START", "AFTER"]) {
+                Some(self.previous_text().eq_ignore_ascii_case("AFTER"))
+            } else {
+                None
+            };
+        let pattern = self.parse_bitwise_or()?;
+        let flag = if self.match_keyword("FLAG") {
+            Some(self.parse_bitwise_or()?)
+        } else {
+            None
+        };
+        let subject = if let Some(subject) = subject {
+            subject
+        } else {
+            self.expect(TokenType::In)?;
+            self.parse_bitwise_or()?
+        };
+        let replacement = if !predicate && self.match_token(TokenType::With) {
+            Some(self.parse_bitwise_or()?)
+        } else {
+            None
+        };
+        let start = if !predicate && self.match_token(TokenType::From) {
+            Some(self.parse_bitwise_or()?)
+        } else {
+            None
+        };
+        let occurrence = if !predicate && self.match_keyword("OCCURRENCE") {
+            if self.match_token(TokenType::All) {
+                Some(Expression::Var(Box::new(Var {
+                    this: "ALL".to_owned(),
+                })))
+            } else {
+                Some(self.parse_bitwise_or()?)
+            }
+        } else {
+            None
+        };
+        let group = if !predicate && self.match_token(TokenType::Group) {
+            Some(self.parse_bitwise_or()?)
+        } else {
+            None
+        };
+        if replacement.is_some() && operation != "REPLACE_REGEXPR"
+            || group.is_some()
+                && !matches!(
+                    operation,
+                    "SUBSTRING_REGEXPR" | "SUBSTR_REGEXPR" | "LOCATE_REGEXPR"
+                )
+            || occurrence.is_some() && operation == "OCCURRENCES_REGEXPR"
+        {
+            return Err(self
+                .parse_error("Clause is not supported by this HANA regular-expression operation"));
+        }
+        if !predicate {
+            self.expect(TokenType::RParen)?;
+        }
+        let mut options = RegexOptions {
+            source_dialect: self.config.dialect,
+            source_name: operation.to_owned(),
+            negated: false,
+            start: None,
+            occurrence: None,
+            flags: None,
+            position_after,
+        };
+        Ok(match operation {
+            "LIKE_REGEXPR" => Expression::RegexpLike(Box::new(RegexpFunc {
+                this: subject,
+                pattern,
+                flags: flag,
+                options: Some(options),
+            })),
+            "LOCATE_REGEXPR" => Expression::RegexpInstr(Box::new(RegexpInstr {
+                this: Box::new(subject),
+                expression: Box::new(pattern),
+                position: start.map(Box::new),
+                occurrence: occurrence.map(Box::new),
+                parameters: flag.map(Box::new),
+                group: group.map(Box::new),
+                option: None,
+                options: Some(options),
+            })),
+            "OCCURRENCES_REGEXPR" => Expression::RegexpCount(Box::new(RegexpCount {
+                this: Box::new(subject),
+                expression: Box::new(pattern),
+                position: start.map(Box::new),
+                parameters: flag.map(Box::new),
+                options: Some(options),
+            })),
+            "REPLACE_REGEXPR" => {
+                options.start = start;
+                options.occurrence = occurrence;
+                Expression::RegexpReplace(Box::new(RegexpReplaceFunc {
+                    this: subject,
+                    pattern,
+                    flags: flag,
+                    replacement: replacement.ok_or_else(|| {
+                        self.parse_error("REPLACE_REGEXPR requires WITH replacement")
+                    })?,
+                    options: Some(options),
+                }))
+            }
+            _ => {
+                options.start = start;
+                options.occurrence = occurrence;
+                options.flags = flag;
+                Expression::RegexpExtract(Box::new(RegexpExtractFunc {
+                    this: subject,
+                    pattern,
+                    group,
+                    options: Some(options),
+                }))
+            }
+        })
+    }
+
+    fn parse_hana_grouping(&mut self) -> Result<Expression> {
+        self.with_parser_depth(|parser| parser.parse_hana_grouping_inner())
+    }
+
+    fn parse_hana_grouping_inner(&mut self) -> Result<Expression> {
+        let kind = if self.match_text_seq(&["GROUPING", "SETS"]) {
+            "GROUPING SETS".to_owned()
+        } else {
+            self.advance_text()?.to_ascii_uppercase()
+        };
+        let best = if self.match_keyword("BEST") {
+            Some(self.parse_hana_grouping_integer(true)?)
+        } else {
+            None
+        };
+        let limit = if self.match_token(TokenType::Limit) {
+            Some(self.parse_hana_grouping_integer(false)?)
+        } else {
+            None
+        };
+        let offset = if limit.is_some() && self.match_token(TokenType::Offset) {
+            Some(self.parse_hana_grouping_integer(false)?)
+        } else {
+            None
+        };
+        let subtotal = self.match_text_seq(&["WITH", "SUBTOTAL"]);
+        let balance = self.match_text_seq(&["WITH", "BALANCE"]);
+        let total = self.match_text_seq(&["WITH", "TOTAL"]);
+        let structured = self.match_text_seq(&["STRUCTURED", "RESULT"]);
+        let overview = structured && self.match_text_seq(&["WITH", "OVERVIEW"]);
+        let prefix = if structured && self.match_keyword("PREFIX") {
+            Some(Expression::string(self.expect(TokenType::String)?.text))
+        } else {
+            None
+        };
+        let multiple_resultsets =
+            prefix.is_none() && self.match_text_seq(&["MULTIPLE", "RESULTSETS"]);
+        self.expect(TokenType::LParen)?;
+        let expressions = self.parse_grouping_sets_args()?;
+        self.expect(TokenType::RParen)?;
+        let has_options = best.is_some()
+            || limit.is_some()
+            || subtotal
+            || balance
+            || total
+            || structured
+            || multiple_resultsets;
+        let options = has_options.then_some(GroupingOptions {
+            source_dialect: self.config.dialect,
+            best,
+            limit,
+            offset,
+            subtotal,
+            balance,
+            total,
+            structured,
+            overview,
+            prefix,
+            multiple_resultsets,
+        });
+        Ok(match kind.as_str() {
+            "ROLLUP" => Expression::Rollup(Box::new(Rollup {
+                expressions,
+                options,
+            })),
+            "CUBE" => Expression::Cube(Box::new(Cube {
+                expressions,
+                options,
+            })),
+            _ => Expression::GroupingSets(Box::new(GroupingSets {
+                expressions,
+                options,
+            })),
+        })
+    }
+
+    fn parse_hana_grouping_integer(&mut self, signed: bool) -> Result<Expression> {
+        let negative = signed && self.match_token(TokenType::Dash);
+        if signed && !negative {
+            self.match_token(TokenType::Plus);
+        }
+        let value = self.expect(TokenType::Number)?.text;
+        if value.parse::<u64>().is_err() {
+            return Err(self.parse_error("Expected an integer grouping-set option"));
+        }
+        Ok(Expression::Literal(Box::new(Literal::Number(
+            if negative { format!("-{value}") } else { value },
+        ))))
+    }
+
+    fn parse_hana_timezone(&mut self, name: &str) -> Result<Expression> {
+        let mut arguments = Vec::new();
+        let mut on_error = None;
+        loop {
+            let behavior = self.peek_text().to_ascii_uppercase();
+            if behavior == "DEFAULT"
+                || (matches!(behavior.as_str(), "NULL" | "ERROR") && self.check_next(TokenType::On))
+            {
+                self.skip();
+                let value = if behavior == "DEFAULT" {
+                    Some(Expression::string(self.expect(TokenType::String)?.text))
+                } else {
+                    None
+                };
+                self.expect(TokenType::On)?;
+                if !self.match_keyword("ERROR") {
+                    return Err(self.parse_error("Expected ON ERROR"));
+                }
+                on_error = Some(SqlBehavior {
+                    kind: behavior,
+                    value,
+                });
+                break;
+            }
+            arguments.push(self.parse_expression()?);
+            if self.match_token(TokenType::Comma) {
+                continue;
+            }
+            if self.check(TokenType::RParen) {
+                break;
+            }
+            if !matches!(
+                self.peek_text().to_ascii_uppercase().as_str(),
+                "DEFAULT" | "NULL" | "ERROR"
+            ) {
+                return Err(self.parse_error("Expected comma or timezone error clause"));
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        if !(1..=4).contains(&arguments.len()) {
+            return Err(self.parse_error("HANA timezone conversion expects one to four arguments"));
+        }
+        let mut function = Function::new(name, arguments);
+        function.source_dialect = self.config.dialect;
+        function.on_error = on_error.map(Box::new);
+        Ok(Expression::Function(Box::new(function)))
+    }
+
+    fn parse_hana_select_options(
+        &mut self,
+    ) -> Result<(
+        Option<ResultSerialization>,
+        Option<Identifier>,
+        Vec<Expression>,
+    )> {
+        if self.config.dialect != Some(crate::dialects::DialectType::HANA) {
+            return Ok((None, None, Vec::new()));
+        }
+        let mut serialization = None;
+        if self.check(TokenType::For)
+            && (self.check_next_identifier("JSON") || self.check_next_identifier("XML"))
+        {
+            self.skip();
+            let format = self.advance_text()?.to_ascii_uppercase();
+            let mut options = Vec::new();
+            if self.match_token(TokenType::LParen) {
+                loop {
+                    let key = self.expect(TokenType::String)?.text;
+                    self.expect(TokenType::Eq)?;
+                    let value = self.expect(TokenType::String)?.text;
+                    options.push((key, value));
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+            }
+            let returning = if self.match_keyword("RETURNS") {
+                Some(self.parse_data_type()?)
+            } else {
+                None
+            };
+            serialization = Some(ResultSerialization {
+                format,
+                options,
+                returning,
+            });
+        }
+        let collation = if self.check(TokenType::With) && self.check_next_identifier("COLLATION") {
+            self.skip();
+            self.skip();
+            Some(self.expect_identifier_or_keyword_with_quoted()?)
+        } else {
+            None
+        };
+        let hints = self.parse_hana_hints()?;
+        Ok((serialization, collation, hints))
+    }
+
+    fn parse_hana_hints(&mut self) -> Result<Vec<Expression>> {
+        let mut hints = Vec::new();
+        if self.check(TokenType::With) && self.check_next_identifier("HINT") {
+            self.skip();
+            self.skip();
+            self.expect(TokenType::LParen)?;
+            loop {
+                let name = self.expect_identifier_or_keyword_with_quoted()?;
+                let arguments = if self.match_token(TokenType::LParen) {
+                    let args = if self.check(TokenType::RParen) {
+                        Vec::new()
+                    } else {
+                        self.parse_function_arguments()?
+                    };
+                    self.expect(TokenType::RParen)?;
+                    Some(args)
+                } else {
+                    None
+                };
+                let remote = self.match_keyword("REMOTE");
+                let cascade = self.match_keyword("CASCADE");
+                hints.push(Expression::Hint(Box::new(Hint {
+                    source_dialect: self.config.dialect,
+                    expressions: vec![HintExpression::Directive {
+                        name,
+                        arguments,
+                        remote,
+                        cascade,
+                    }],
+                })));
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenType::RParen)?;
+        }
+        Ok(hints)
     }
 
     /// Parse FOR XML options (T-SQL)
@@ -10074,7 +11180,10 @@ impl Parser {
             vec![HintExpression::Raw(hint_text)]
         };
 
-        Ok(Hint { expressions })
+        Ok(Hint {
+            source_dialect: None,
+            expressions,
+        })
     }
 
     /// Parse SAMPLE / TABLESAMPLE / USING SAMPLE clause
@@ -11201,6 +12310,10 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             function_target = Some(Box::new(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: func_name,
                 args,
                 distinct: false,
@@ -11887,6 +13000,10 @@ impl Parser {
             let args = self.parse_expression_list()?;
             self.expect(TokenType::RParen)?;
             return Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "REPLACE".to_string(),
                 args,
                 distinct: false,
@@ -12650,8 +13767,28 @@ impl Parser {
         let or_replace = self.match_keywords(&[TokenType::Or, TokenType::Replace]);
         let or_alter = !or_replace && self.match_text_seq(&["OR", "ALTER"]);
 
+        // HANA orders scope, lifetime, and storage before TABLE.
+        let hana_modifier = if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
+            let mut parts = Vec::new();
+            if self.match_texts(&["LOCAL", "GLOBAL"]) {
+                parts.push(self.previous_text().to_ascii_uppercase());
+                self.expect(TokenType::Temporary)?;
+                parts.push("TEMPORARY".to_owned());
+            } else if self.match_token(TokenType::Temporary) {
+                parts.push("TEMPORARY".to_owned());
+            }
+            if self.match_texts(&["COLUMN", "ROW"]) {
+                parts.push(self.previous_text().to_ascii_uppercase());
+            }
+            (!parts.is_empty()).then(|| parts.join(" "))
+        } else {
+            None
+        };
         // Handle TEMPORARY
-        let temporary = self.match_token(TokenType::Temporary);
+        let temporary = hana_modifier
+            .as_ref()
+            .is_some_and(|m| m.contains("TEMPORARY"))
+            || self.match_token(TokenType::Temporary);
 
         // Handle MATERIALIZED
         let materialized = self.match_token(TokenType::Materialized);
@@ -12699,7 +13836,9 @@ impl Parser {
         let secure = self.match_identifier("SECURE");
 
         // Handle table modifiers: DYNAMIC, ICEBERG, EXTERNAL, HYBRID, TRANSIENT (Snowflake), UNLOGGED (PostgreSQL)
-        let mut table_modifier: Option<String> = if self.check_identifier("DYNAMIC") {
+        let mut table_modifier: Option<String> = if hana_modifier.is_some() {
+            hana_modifier
+        } else if self.check_identifier("DYNAMIC") {
             self.skip();
             Some("DYNAMIC".to_string())
         } else if self.check_identifier("ICEBERG") {
@@ -13259,6 +14398,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: None,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -13364,6 +14507,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: Some("EXTERNAL".to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 // BigQuery EXTERNAL tables don't support AS SELECT
                 as_select: None,
                 as_select_parenthesized: false,
@@ -13430,6 +14577,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: None,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -13640,6 +14791,10 @@ impl Parser {
                     temporary,
                     or_replace,
                     table_modifier: table_modifier.map(|s| s.to_string()),
+                    source_dialect: self
+                        .config
+                        .dialect
+                        .filter(|d| *d == crate::dialects::DialectType::HANA),
                     as_select: None,
                     as_select_parenthesized: false,
                     on_commit: None,
@@ -13755,6 +14910,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: Some(query),
                 as_select_parenthesized,
                 on_commit,
@@ -13820,6 +14979,10 @@ impl Parser {
                     temporary,
                     or_replace,
                     table_modifier: table_modifier.map(|s| s.to_string()),
+                    source_dialect: self
+                        .config
+                        .dialect
+                        .filter(|d| *d == crate::dialects::DialectType::HANA),
                     as_select,
                     as_select_parenthesized,
                     on_commit: None,
@@ -13907,6 +15070,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -13954,6 +15121,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: None,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -13999,6 +15170,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: None,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -14060,6 +15235,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -14116,6 +15295,10 @@ impl Parser {
                     temporary,
                     or_replace,
                     table_modifier: table_modifier.map(|s| s.to_string()),
+                    source_dialect: self
+                        .config
+                        .dialect
+                        .filter(|d| *d == crate::dialects::DialectType::HANA),
                     as_select: Some(query),
                     as_select_parenthesized: true,
                     on_commit: None,
@@ -14258,6 +15441,10 @@ impl Parser {
                 temporary,
                 or_replace,
                 table_modifier: table_modifier.map(|s| s.to_string()),
+                source_dialect: self
+                    .config
+                    .dialect
+                    .filter(|d| *d == crate::dialects::DialectType::HANA),
                 as_select: None,
                 as_select_parenthesized: false,
                 on_commit: None,
@@ -14861,6 +16048,18 @@ impl Parser {
             self.parse_clickhouse_table_properties(&mut table_properties)?;
         }
 
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
+            loop {
+                if self.check(TokenType::Partition) || self.check(TokenType::PartitionBy) {
+                    table_properties.push(self.parse_hana_partition()?);
+                } else if let Some(property) = self.parse_hana_storage_property()? {
+                    table_properties.push(property);
+                } else {
+                    break;
+                }
+            }
+        }
+
         // Parse PARTITION BY RANGE/LIST/HASH(columns) for regular CREATE TABLE
         let is_bigquery = matches!(
             self.config.dialect,
@@ -15313,6 +16512,10 @@ impl Parser {
             temporary,
             or_replace,
             table_modifier: table_modifier.map(|s| s.to_string()),
+            source_dialect: self
+                .config
+                .dialect
+                .filter(|d| *d == crate::dialects::DialectType::HANA),
             as_select,
             as_select_parenthesized: false,
             on_commit,
@@ -15465,6 +16668,10 @@ impl Parser {
             temporary,
             or_replace,
             table_modifier: table_modifier.map(|s| s.to_string()),
+            source_dialect: self
+                .config
+                .dialect
+                .filter(|d| *d == crate::dialects::DialectType::HANA),
             as_select: None,
             as_select_parenthesized: false,
             on_commit: None,
@@ -17129,6 +18336,20 @@ impl Parser {
             col_def
                 .constraint_order
                 .push(ConstraintType::ComputedColumn);
+        } else if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
+            let expression = self.parse_expression()?;
+            col_def
+                .constraints
+                .push(ColumnConstraint::ComputedColumn(ComputedColumn {
+                    expression: Box::new(expression),
+                    persisted: false,
+                    not_null: false,
+                    persistence_kind: None,
+                    data_type: None,
+                }));
+            col_def
+                .constraint_order
+                .push(ConstraintType::ComputedColumn);
         } else {
             // Fallback: treat as GENERATED AS IDENTITY without explicit IDENTITY keyword
             col_def
@@ -17736,6 +18957,10 @@ impl Parser {
 
                         // Create a Function expression for BUCKET/TRUNCATE
                         partition_exprs.push(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: func_name,
                             args,
                             distinct: false,
@@ -25366,6 +26591,42 @@ impl Parser {
     /// Parse CALL statement (stored procedure call)
     /// CALL procedure_name(args, ...)
     fn parse_call(&mut self) -> Result<Expression> {
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
+            self.skip();
+            let mut name = vec![self.expect_identifier_or_keyword_with_quoted()?];
+            if self.match_token(TokenType::Dot) {
+                name.push(self.expect_identifier_or_keyword_with_quoted()?);
+            }
+            let member = if self.match_token(TokenType::Colon) {
+                Some(self.expect_identifier_or_keyword_with_quoted()?)
+            } else {
+                None
+            };
+            let arguments = if self.match_token(TokenType::LParen) {
+                let args = if self.check(TokenType::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_function_arguments()?
+                };
+                self.expect(TokenType::RParen)?;
+                args
+            } else {
+                Vec::new()
+            };
+            let asynchronous = self.match_keyword("ASYNC");
+            let hints = self.parse_hana_hints()?;
+            if member.is_some() && (asynchronous || !hints.is_empty()) {
+                return Err(self.parse_error("Library member CALL does not support ASYNC or hints"));
+            }
+            return Ok(Expression::Call(Box::new(Call {
+                source_dialect: self.config.dialect,
+                name,
+                member,
+                arguments,
+                asynchronous,
+                hints,
+            })));
+        }
         let call_token = self.advance()?; // consume CALL
 
         // Collect remaining tokens with their types
@@ -29420,7 +30681,20 @@ impl Parser {
                 global_in = true;
             }
 
-            let expr = if self.match_token(TokenType::Eq) {
+            let expr = if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                && (self.peek_text().eq_ignore_ascii_case("LIKE_REGEXPR")
+                    || (self.check(TokenType::Not) && self.check_next_identifier("LIKE_REGEXPR")))
+            {
+                let negated = self.match_token(TokenType::Not);
+                self.skip();
+                let mut regex = self.parse_hana_regex("LIKE_REGEXPR", Some(left))?;
+                if let Expression::RegexpLike(ref mut r) = regex {
+                    if let Some(options) = &mut r.options {
+                        options.negated = negated;
+                    }
+                }
+                regex
+            } else if self.match_token(TokenType::Eq) {
                 // Check for ANY/ALL subquery
                 if self.match_token(TokenType::Any) || self.match_token(TokenType::Some) {
                     let was_any = self.previous_token_type() == Some(TokenType::Any);
@@ -29756,6 +31030,8 @@ impl Parser {
                 // PostgreSQL ~ (regexp match) operator / RLIKE / REGEXP
                 let right = self.parse_bitwise_or()?;
                 Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
                     this: left,
                     pattern: right,
                     flags: None,
@@ -29769,6 +31045,8 @@ impl Parser {
                 self.skip(); // consume REGEXP_LIKE
                 let right = self.parse_bitwise_or()?;
                 Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
                     this: left,
                     pattern: right,
                     flags: None,
@@ -29817,6 +31095,8 @@ impl Parser {
                 // PostgreSQL !~ (NOT regexp match) operator
                 let right = self.parse_bitwise_or()?;
                 let regexp_expr = Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
                     this: left,
                     pattern: right,
                     flags: None,
@@ -30102,6 +31382,8 @@ impl Parser {
                 } else if self.match_token(TokenType::RLike) {
                     let right = self.parse_bitwise_or()?;
                     let regexp_expr = Expression::RegexpLike(Box::new(RegexpFunc {
+                        options: None,
+
                         this: left,
                         pattern: right,
                         flags: None,
@@ -32525,7 +33807,31 @@ impl Parser {
         // Check for no-paren functions like CURRENT_TIMESTAMP, CURRENT_DATE, etc.
         // These should be parsed as functions even without parentheses
         let upper_name = self.peek_text().to_ascii_uppercase();
-        if !self.check_next(TokenType::LParen)
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && !self.check(TokenType::QuotedIdentifier)
+            && !self.check_next(TokenType::Dot)
+            && !self.check_next(TokenType::LParen)
+            && matches!(
+                upper_name.as_str(),
+                "CURRENT_UTCTIMESTAMP"
+                    | "CURRENT_UTCDATE"
+                    | "CURRENT_UTCTIME"
+                    | "CURRENT_CONNECTION"
+                    | "CURRENT_TRANSACTION_ISOLATION_LEVEL"
+                    | "SYSUUID"
+                    | "SESSION_USER"
+                    | "CURRENT_SCHEMA"
+                    | "CURRENT_USER"
+            )
+        {
+            let mut function = Function::new(self.advance()?.text, Vec::new());
+            function.no_parens = true;
+            function.source_dialect = self.config.dialect;
+            return Ok(Expression::Function(Box::new(function)));
+        }
+        if !(self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && self.check(TokenType::QuotedIdentifier))
+            && !self.check_next(TokenType::LParen)
             && !self.check_next(TokenType::Dot)
             && crate::function_registry::is_no_paren_function_name_upper(upper_name.as_str())
             && !(matches!(
@@ -32535,6 +33841,10 @@ impl Parser {
         {
             let token = self.advance()?;
             let func = Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: token.text.to_string(),
                 args: Vec::new(),
                 distinct: false,
@@ -32593,6 +33903,10 @@ impl Parser {
                 let args = self.parse_function_args_list()?;
                 self.expect(TokenType::RParen)?;
                 return self.maybe_parse_over(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: dynamic_name,
                     args,
                     distinct: false,
@@ -33013,6 +34327,49 @@ impl Parser {
 
     #[inline(never)]
     fn parse_primary_slow(&mut self) -> Result<Expression> {
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && !self.check(TokenType::QuotedIdentifier)
+            && !self.check_next(TokenType::Dot)
+            && matches!(
+                self.peek_text().to_ascii_uppercase().as_str(),
+                "CURRENT_DATE"
+                    | "CURRENT_TIME"
+                    | "CURRENT_TIMESTAMP"
+                    | "CURRENT_CONNECTION"
+                    | "CURRENT_TRANSACTION_ISOLATION_LEVEL"
+                    | "SYSUUID"
+                    | "SESSION_USER"
+                    | "CURRENT_SCHEMA"
+                    | "CURRENT_USER"
+            )
+        {
+            let name = self.advance_text()?;
+            let upper = name.to_ascii_uppercase();
+            let parenthesized = self.match_token(TokenType::LParen);
+            let args = if parenthesized {
+                if upper != "CURRENT_TIMESTAMP" {
+                    return Err(
+                        self.parse_error("This HANA reserved expression does not take parentheses")
+                    );
+                }
+                let precision = self.expect(TokenType::Number)?;
+                if !precision.text.parse::<u8>().is_ok_and(|p| p <= 7) {
+                    return Err(
+                        self.parse_error("HANA timestamp precision must be between 0 and 7")
+                    );
+                }
+                self.expect(TokenType::RParen)?;
+                vec![Expression::Literal(Box::new(Literal::Number(
+                    precision.text,
+                )))]
+            } else {
+                Vec::new()
+            };
+            let mut function = Function::new(name, args);
+            function.no_parens = !parenthesized;
+            function.source_dialect = self.config.dialect;
+            return Ok(Expression::Function(Box::new(function)));
+        }
         // Handle APPROXIMATE COUNT(DISTINCT expr) - Redshift syntax
         // Parses as ApproxDistinct expression
         if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("APPROXIMATE") {
@@ -33034,6 +34391,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 let func = Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: format!("APPROXIMATE {}", name),
                     args,
                     distinct: false,
@@ -33446,6 +34807,10 @@ impl Parser {
             let predicate = self.parse_expression()?;
             self.expect(TokenType::RParen)?;
             return Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "EXISTS".to_string(),
                 args: vec![array_expr, predicate],
                 distinct: false,
@@ -33791,6 +35156,10 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func_expr = Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "ROW".to_string(),
                 args,
                 distinct: false,
@@ -34328,6 +35697,10 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: token.text.to_string(), // Preserve original case; generator handles normalization
                 args,
                 distinct: false,
@@ -34354,6 +35727,10 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: token.text.to_string(),
                 args,
                 distinct: false,
@@ -34386,6 +35763,10 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: token.text.to_string(),
                 args,
                 distinct: false,
@@ -34442,6 +35823,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 let func = Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: token.text.to_string(),
                     args,
                     distinct: false,
@@ -34457,6 +35842,10 @@ impl Parser {
                 // No parens - parse as no-paren function
                 let token = self.advance()?;
                 let func = Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: token.text.to_string(),
                     args: Vec::new(),
                     distinct: false,
@@ -35131,6 +36520,10 @@ impl Parser {
                 let args = self.parse_function_args_list()?;
                 self.expect(TokenType::RParen)?;
                 return Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: token.text,
                     args,
                     distinct: false,
@@ -35182,6 +36575,10 @@ impl Parser {
         if self.check(TokenType::RParen) {
             self.skip();
             return Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: name.to_string(),
                 args,
                 distinct: false,
@@ -35242,6 +36639,10 @@ impl Parser {
         }
 
         Ok(Expression::Function(Box::new(Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name: name.to_string(),
             args,
             distinct: false,
@@ -35587,6 +36988,10 @@ impl Parser {
                     all_args.extend(remaining);
                     self.expect(TokenType::RParen)?;
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: all_args,
                         distinct: false,
@@ -35698,6 +37103,10 @@ impl Parser {
                     let dimension = self.parse_expression()?;
                     self.expect(TokenType::RParen)?;
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![this, dimension],
                         distinct: false,
@@ -35862,6 +37271,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     // Treat as function call
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![this],
                         distinct: false,
@@ -35906,6 +37319,10 @@ impl Parser {
                 let mut args = vec![part, from_expr];
                 self.normalize_date_part_arg("DATE_PART", &mut args);
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "DATE_PART".to_string(),
                     args,
                     distinct: false,
@@ -35943,6 +37360,10 @@ impl Parser {
                     let mut args = vec![first_arg, second_arg, third_arg];
                     self.normalize_date_part_arg(name, &mut args);
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -35957,6 +37378,10 @@ impl Parser {
                     // BigQuery 2-arg syntax: DATE_ADD(date, interval)
                     self.expect(TokenType::RParen)?;
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![first_arg, second_arg],
                         distinct: false,
@@ -36005,6 +37430,10 @@ impl Parser {
                 }
                 self.normalize_date_part_arg(name, &mut args);
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -36099,6 +37528,10 @@ impl Parser {
                 if self.check(TokenType::RParen) {
                     self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![],
                         distinct: false,
@@ -36114,6 +37547,10 @@ impl Parser {
                 if !self.check(TokenType::Comma) && self.check(TokenType::RParen) {
                     self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![first],
                         distinct: false,
@@ -36210,6 +37647,10 @@ impl Parser {
                     }
                     self.expect(TokenType::RParen)?;
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36258,6 +37699,10 @@ impl Parser {
                 let args = self.parse_function_arguments()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -36336,6 +37781,10 @@ impl Parser {
                     ))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36353,6 +37802,10 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
                 if args.len() > 2 {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: "COALESCE".to_string(),
                         args,
                         distinct: false,
@@ -36374,6 +37827,10 @@ impl Parser {
                     ))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36400,6 +37857,10 @@ impl Parser {
                     ))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36430,6 +37891,10 @@ impl Parser {
                     let args = self.parse_function_arguments()?;
                     self.expect(TokenType::RParen)?;
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36450,6 +37915,10 @@ impl Parser {
                     let args = self.parse_expression_list()?;
                     self.expect(TokenType::RParen)?;
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36482,6 +37951,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -36512,6 +37985,10 @@ impl Parser {
                     ))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36543,6 +38020,10 @@ impl Parser {
                     ))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -36592,6 +38073,10 @@ impl Parser {
                 } else {
                     self.expect(TokenType::RParen)?;
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: Vec::new(),
                         distinct: false,
@@ -36631,6 +38116,10 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "XMLATTRIBUTES".to_string(),
                     args: attrs,
                     distinct: false,
@@ -36650,6 +38139,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: "XMLCOMMENT".to_string(),
                     args,
                     distinct: false,
@@ -36680,6 +38173,10 @@ impl Parser {
 
                 if !self.check_keyword_text("AGAINST") {
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: "MATCH".to_string(),
                         args: expressions,
                         distinct: false,
@@ -36777,6 +38274,10 @@ impl Parser {
                     }))))
                 } else {
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: expressions,
                         distinct: false,
@@ -36847,6 +38348,10 @@ impl Parser {
                                 args.push(s);
                             }
                             return Ok(Some(Expression::Function(Box::new(Function {
+                                on_error: None,
+                                qualified_name: Vec::new(),
+                                source_dialect: None,
+
                                 name: func_name.to_string(),
                                 args,
                                 distinct: false,
@@ -36888,6 +38393,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     let func_name = if is_try { "TRY_CONVERT" } else { "CONVERT" };
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: func_name.to_string(),
                         args,
                         distinct: false,
@@ -36902,6 +38411,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     let func_name = if is_try { "TRY_CONVERT" } else { "CONVERT" };
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: func_name.to_string(),
                         args: vec![this],
                         distinct: false,
@@ -37049,6 +38562,10 @@ impl Parser {
                     } else {
                         self.expect(TokenType::RParen)?;
                         Ok(Some(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: name.to_string(),
                             args: vec![this, replacement],
                             distinct: false,
@@ -37063,6 +38580,10 @@ impl Parser {
                 } else {
                     self.expect(TokenType::RParen)?;
                     Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![this],
                         distinct: false,
@@ -37105,6 +38626,10 @@ impl Parser {
                 let args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -37136,6 +38661,10 @@ impl Parser {
                 if self.check(TokenType::RParen) {
                     self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![],
                         distinct: false,
@@ -37217,6 +38746,10 @@ impl Parser {
 
     fn make_unquoted_function(name: &str, args: Vec<Expression>) -> Expression {
         Expression::Function(Box::new(Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name: name.to_string(),
             args,
             distinct: false,
@@ -37236,6 +38769,8 @@ impl Parser {
         filter: Option<Expression>,
     ) -> Expression {
         Expression::AggregateFunction(Box::new(AggregateFunction {
+            source_dialect: None,
+
             name: name.to_string(),
             args,
             distinct,
@@ -37385,12 +38920,122 @@ impl Parser {
 
     /// Parse a typed function call (after the opening paren)
     /// Following Python SQLGlot pattern: match all function aliases to typed expressions
+    fn parse_hana_typed_function(
+        &mut self,
+        name: &str,
+        upper_name: &str,
+        quoted: bool,
+    ) -> Result<Expression> {
+        if quoted {
+            let mut expression = self.parse_generic_function(name, true)?;
+            if let Expression::Function(function) = &mut expression {
+                let mut identifier = Identifier::new(name);
+                identifier.quoted = true;
+                function.qualified_name = vec![identifier];
+            }
+            return Ok(expression);
+        }
+        if matches!(upper_name, "LOCALTOUTC" | "UTCTOLOCAL") {
+            return self.parse_hana_timezone(upper_name);
+        }
+        if matches!(upper_name, "JSON_VALUE" | "JSON_QUERY" | "JSON_TABLE") {
+            return self.parse_hana_json(upper_name);
+        }
+        if matches!(upper_name, "HIERARCHY" | "HIERARCHY_SPANTREE") {
+            return self.parse_hana_hierarchy(upper_name);
+        }
+        if matches!(
+            upper_name,
+            "SUBSTR_REGEXPR"
+                | "SUBSTRING_REGEXPR"
+                | "LOCATE_REGEXPR"
+                | "OCCURRENCES_REGEXPR"
+                | "REPLACE_REGEXPR"
+        ) {
+            return self.parse_hana_regex(upper_name, None);
+        }
+        if (crate::function_registry::is_hana_builtin(upper_name)
+            || matches!(upper_name, "CONTAINS" | "FUZZY"))
+            && !matches!(
+                upper_name,
+                "COUNT"
+                    | "SUM"
+                    | "MIN"
+                    | "MAX"
+                    | "AVG"
+                    | "CAST"
+                    | "EXTRACT"
+                    | "TRIM"
+                    | "ROW_NUMBER"
+                    | "RANK"
+                    | "DENSE_RANK"
+                    | "LEAD"
+                    | "LAG"
+                    | "NTILE"
+                    | "CUME_DIST"
+                    | "PERCENT_RANK"
+                    | "JSON_TABLE"
+                    | "JSON_QUERY"
+                    | "JSON_VALUE"
+            )
+        {
+            let expr = self.parse_generic_function(name, false)?;
+            if let Expression::Function(mut f) = expr {
+                let arity_valid = match upper_name {
+                    "LOCATE" => (2..=4).contains(&f.args.len()),
+                    "SUBSTRING" | "SUBSTR" => (2..=3).contains(&f.args.len()),
+                    "TO_DECIMAL" => (1..=3).contains(&f.args.len()),
+                    "TO_DATE" | "TO_TIMESTAMP" | "TO_VARCHAR" | "TO_NVARCHAR" => {
+                        (1..=2).contains(&f.args.len())
+                    }
+                    "CURRENT_UTCTIMESTAMP" => {
+                        f.args.len() == 1
+                            && matches!(&f.args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(n) if n.parse::<u8>().is_ok_and(|n| n <= 7)))
+                    }
+                    "CURRENT_UTCDATE" | "CURRENT_UTCTIME" => false,
+                    "ADD_DAYS" | "ADD_MONTHS" | "ADD_MONTHS_LAST" | "ADD_YEARS" | "ADD_SECONDS"
+                    | "DAYS_BETWEEN" | "MONTHS_BETWEEN" | "SECONDS_BETWEEN" | "IFNULL"
+                    | "BITAND" | "BITOR" | "BITXOR" => f.args.len() == 2,
+                    "BITNOT" => f.args.len() == 1,
+                    _ => true,
+                };
+                if !arity_valid {
+                    return Err(
+                        self.parse_error(format!("Invalid arguments for HANA {upper_name}"))
+                    );
+                }
+                f.source_dialect = self.config.dialect;
+                return Ok(Expression::Function(f));
+            }
+            return Ok(match expr {
+                Expression::AggregateFunction(mut f) => {
+                    f.source_dialect = self.config.dialect;
+                    Expression::AggregateFunction(f)
+                }
+                Expression::WithinGroup(mut w) => {
+                    if let Expression::AggregateFunction(mut f) = w.this {
+                        f.source_dialect = self.config.dialect;
+                        w.this = Expression::AggregateFunction(f);
+                    }
+                    Expression::WithinGroup(w)
+                }
+                other => other,
+            });
+        }
+        self.parse_generic_function(name, quoted)
+    }
+
     fn parse_typed_function(
         &mut self,
         name: &str,
         upper_name: &str,
         quoted: bool,
     ) -> Result<Expression> {
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && (quoted || crate::function_registry::hana_uses_source_node(upper_name))
+        {
+            return self.parse_hana_typed_function(name, upper_name, quoted);
+        }
         if self.is_vertica() && !quoted && self.is_vertica_parameter_function(upper_name) {
             return self.parse_vertica_parameter_function(name);
         }
@@ -37464,6 +39109,10 @@ impl Parser {
                 }
                 _ => {
                     return Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -37585,6 +39234,10 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         // Multiple args without DISTINCT - treat as generic function
                         return Ok(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: name.to_string(),
                             args,
                             distinct: false,
@@ -37675,6 +39328,8 @@ impl Parser {
                     || filter.is_some()
                 {
                     Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct,
@@ -37686,6 +39341,10 @@ impl Parser {
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -37720,6 +39379,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -37742,6 +39405,10 @@ impl Parser {
                     // Pass the query directly as an argument to ARRAY function
                     // The generator will handle it correctly
                     return Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: vec![query],
                         distinct: false,
@@ -37814,6 +39481,10 @@ impl Parser {
                         }));
 
                         return Ok(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: name.to_string(),
                             args: vec![subquery],
                             distinct: false,
@@ -37838,6 +39509,10 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct: false,
@@ -37909,6 +39584,10 @@ impl Parser {
                                 Some(crate::dialects::DialectType::ClickHouse)
                             ) {
                                 Expression::Function(Box::new(Function {
+                                    on_error: None,
+                                    qualified_name: Vec::new(),
+                                    source_dialect: None,
+
                                     name: name.to_string(),
                                     args: Vec::new(),
                                     distinct: false,
@@ -37989,6 +39668,8 @@ impl Parser {
                     if is_duckdb_top_n {
                         let filter = self.parse_filter_clause()?;
                         Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                            source_dialect: None,
+
                             name: name.to_string(),
                             args,
                             distinct,
@@ -38000,6 +39681,10 @@ impl Parser {
                         })))
                     } else {
                         Ok(Expression::Function(Box::new(Function {
+                            on_error: None,
+                            qualified_name: Vec::new(),
+                            source_dialect: None,
+
                             name: name.to_string(),
                             args,
                             distinct: false,
@@ -38406,6 +40091,10 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -38713,6 +40402,10 @@ impl Parser {
                     }
                     self.expect(TokenType::RParen)?;
                     let func_expr = Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -38802,6 +40495,9 @@ impl Parser {
 
                 self.expect(TokenType::RParen)?;
                 let func = JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path,
                     returning,
@@ -38836,6 +40532,10 @@ impl Parser {
                     all_args.extend(remaining);
                     self.expect(TokenType::RParen)?;
                     Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args: all_args,
                         distinct: false,
@@ -39252,6 +40952,9 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
 
                 Ok(Expression::JSONTable(Box::new(JSONTable {
+                    options: None,
+                    source_dialect: None,
+
                     this: Box::new(this_with_format),
                     schema: schema.map(Box::new),
                     path,
@@ -39306,6 +41009,10 @@ impl Parser {
                     }
                     self.expect(TokenType::RParen)?;
                     Ok(Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -39328,7 +41035,9 @@ impl Parser {
 
     /// Parse a generic function call (fallback for unrecognized functions)
     fn parse_generic_function(&mut self, name: &str, quoted: bool) -> Result<Expression> {
-        let is_known_agg = self.is_aggregate_function(name);
+        let is_known_agg = !(quoted
+            && self.config.dialect == Some(crate::dialects::DialectType::HANA))
+            && self.is_aggregate_function(name);
 
         let (mut args, distinct) = if self.check(TokenType::RParen) {
             (Vec::new(), false)
@@ -39439,6 +41148,8 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
 
                 let func_expr = Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: name.to_string(),
                     args,
                     distinct,
@@ -39458,6 +41169,8 @@ impl Parser {
                 let filter = self.parse_filter_clause()?;
                 if let Some(filter_expr) = filter {
                     return Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                        source_dialect: None,
+
                         name: format!("__WITHIN_GROUP_{}", name),
                         args: vec![within, filter_expr],
                         distinct: false,
@@ -39488,6 +41201,8 @@ impl Parser {
 
         if filter.is_some() || is_known_agg || ignore_nulls.is_some() {
             Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                source_dialect: None,
+
                 name: name.to_string(),
                 args,
                 distinct,
@@ -39556,6 +41271,21 @@ impl Parser {
     }
 
     fn parse_single_function_argument(&mut self) -> Result<Expression> {
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && self.check_identifier("PLACEHOLDER")
+            && self.check_next(TokenType::Dot)
+        {
+            self.skip();
+            self.skip();
+            let name = self.expect_identifier_with_quoted()?;
+            self.expect(TokenType::FArrow)?;
+            let value = self.parse_expression()?;
+            return Ok(Expression::ViewParameter(Box::new(ViewParameter {
+                source_dialect: self.config.dialect,
+                name,
+                value,
+            })));
+        }
         let is_table_or_model_arg = if !self.is_at_end() {
             self.check(TokenType::Table) || self.peek_text().eq_ignore_ascii_case("MODEL")
         } else {
@@ -40394,6 +42124,10 @@ impl Parser {
                     let values = self.parse_expression()?;
                     self.expect(TokenType::RBracket)?;
                     expr = Expression::Function(Box::new(Function {
+                        on_error: None,
+                        qualified_name: Vec::new(),
+                        source_dialect: None,
+
                         name: "MAP".to_string(),
                         args: vec![keys, values],
                         distinct: false,
@@ -40879,6 +42613,9 @@ impl Parser {
                              // Use parse_json_path_operand to get only the immediate operand for proper left-to-right associativity
                 let path = self.parse_json_path_operand()?;
                 expr = Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this: expr,
                     path,
                     returning: None,
@@ -40894,6 +42631,9 @@ impl Parser {
                 // Use parse_json_path_operand to get only the immediate operand for proper left-to-right associativity
                 let path = self.parse_json_path_operand()?;
                 expr = Expression::JsonExtractScalar(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this: expr,
                     path,
                     returning: None,
@@ -40918,6 +42658,9 @@ impl Parser {
                 // Use parse_json_path_operand to get only the immediate operand for proper left-to-right associativity
                 let path = self.parse_json_path_operand()?;
                 expr = Expression::JsonExtractScalar(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this: expr,
                     path,
                     returning: None,
@@ -42578,7 +44321,9 @@ impl Parser {
         }
         // Handle special token types that represent data type keywords
         // Teradata tokenizes ST_GEOMETRY as TokenType::Geometry
-        if self.check(TokenType::Geometry) {
+        if self.check(TokenType::Geometry)
+            && self.config.dialect != Some(crate::dialects::DialectType::HANA)
+        {
             let _token = self.advance()?;
             let (subtype, srid) = self.parse_spatial_type_args()?;
             return Ok(DataType::Geometry { subtype, srid });
@@ -42592,6 +44337,15 @@ impl Parser {
             raw_name.push_str(&part);
         }
         let mut name = raw_name.to_ascii_uppercase();
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
+            name = match name.as_str() {
+                "INTEGER" => "INT".to_owned(),
+                "DEC" => "DECIMAL".to_owned(),
+                "LONGDATE" => "TIMESTAMP".to_owned(),
+                "DAYDATE" => "DATE".to_owned(),
+                _ => name,
+            };
+        }
 
         // SQL standard: NATIONAL CHAR/CHARACTER → NCHAR
         if name == "NATIONAL" {
@@ -42626,6 +44380,69 @@ impl Parser {
             }
         }
 
+        if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+            && matches!(
+                name.as_str(),
+                "TINYINT"
+                    | "SMALLINT"
+                    | "INT"
+                    | "BIGINT"
+                    | "FLOAT"
+                    | "SMALLDECIMAL"
+                    | "DECIMAL"
+                    | "ALPHANUM"
+                    | "SECONDDATE"
+                    | "TIMESTAMP"
+                    | "TIME"
+                    | "NVARCHAR"
+                    | "VARCHAR"
+                    | "CLOB"
+                    | "NCLOB"
+                    | "TEXT"
+                    | "BINTEXT"
+                    | "SHORTTEXT"
+                    | "REAL_VECTOR"
+                    | "HALF_VECTOR"
+                    | "ST_POINT"
+                    | "ST_GEOMETRY"
+            )
+        {
+            let mut parameters = Vec::new();
+            if self.match_token(TokenType::LParen) {
+                loop {
+                    let token = self.expect(TokenType::Number)?;
+                    let parameter = token.text.parse::<u32>().map_err(|_| {
+                        self.parse_error("Expected a non-negative integer HANA type parameter")
+                    })?;
+                    parameters.push(parameter);
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+            }
+            let valid = match (name.as_str(), parameters.as_slice()) {
+                ("FLOAT", [] | [1..=53]) => true,
+                ("DECIMAL", [] | [1..=38]) => true,
+                ("DECIMAL", [p, scale]) => (1..=38).contains(p) && scale <= p,
+                ("NVARCHAR" | "VARCHAR", [] | [1..=5000]) => true,
+                ("ALPHANUM", [] | [1..=127]) => true,
+                ("SHORTTEXT", [] | [1..=5000]) => true,
+                ("REAL_VECTOR" | "HALF_VECTOR" | "ST_POINT" | "ST_GEOMETRY", [] | [_]) => true,
+                (
+                    "TINYINT" | "SMALLINT" | "INT" | "BIGINT" | "SMALLDECIMAL" | "SECONDDATE"
+                    | "TIMESTAMP" | "TIME" | "CLOB" | "NCLOB" | "TEXT" | "BINTEXT",
+                    [],
+                ) => true,
+                _ => false,
+            };
+            if !valid {
+                return Err(self.parse_error(format!("Invalid HANA {name} type parameters")));
+            }
+            return self.finish_data_type(DataType::Hana {
+                hana_type: HanaDataType { name, parameters },
+            });
+        }
         if let Some(data_type) = self.parse_oracle_data_type(&name)? {
             return Ok(data_type);
         }
@@ -44795,6 +46612,23 @@ impl Parser {
     /// Convert a DataType to a string representation for JSONColumnDef.kind
     fn data_type_to_string(&self, dt: &DataType) -> String {
         match dt {
+            DataType::Hana { hana_type } => {
+                if hana_type.parameters.is_empty() {
+                    hana_type.name.clone()
+                } else {
+                    format!(
+                        "{}({})",
+                        hana_type.name,
+                        hana_type
+                            .parameters
+                            .iter()
+                            .map(u32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
+
             DataType::Int {
                 length: Some(n),
                 integer_spelling: true,
@@ -51244,9 +53078,15 @@ impl Parser {
         self.expect(TokenType::RParen)?;
 
         if is_cube {
-            Ok(Some(Expression::Cube(Box::new(Cube { expressions }))))
+            Ok(Some(Expression::Cube(Box::new(Cube {
+                options: None,
+                expressions,
+            }))))
         } else {
-            Ok(Some(Expression::Rollup(Box::new(Rollup { expressions }))))
+            Ok(Some(Expression::Rollup(Box::new(Rollup {
+                options: None,
+                expressions,
+            }))))
         }
     }
 
@@ -52627,6 +54467,10 @@ impl Parser {
             if !self.check_next(TokenType::LParen) {
                 self.skip();
                 return Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name, // Preserve original case; generator handles normalization
                     args: Vec::new(),
                     distinct: false,
@@ -52675,6 +54519,10 @@ impl Parser {
 
         // Handle window specifications
         let func_expr = Expression::Function(Box::new(Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name, // Preserve original case; generator handles normalization
             args,
             distinct,
@@ -53208,6 +55056,8 @@ impl Parser {
         self.expect(TokenType::RParen)?;
 
         Ok(Some(Expression::GroupingSets(Box::new(GroupingSets {
+            options: None,
+
             expressions,
         }))))
     }
@@ -53342,6 +55192,8 @@ impl Parser {
 
         let hint_text = parts.join(" ");
         Ok(Some(Expression::Hint(Box::new(Hint {
+            source_dialect: None,
+
             expressions: vec![HintExpression::Raw(hint_text)],
         }))))
     }
@@ -53555,6 +55407,10 @@ impl Parser {
             if self.check(TokenType::RParen) {
                 self.skip(); // consume RParen
                 return Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: original_name.clone().unwrap_or_else(|| "IF".to_string()),
                     args: vec![],
                     distinct: false,
@@ -53587,6 +55443,10 @@ impl Parser {
                 }))));
             } else if args.len() == 1 {
                 return Ok(Some(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: original_name.clone().unwrap_or_else(|| "IF".to_string()),
                     args,
                     distinct: false,
@@ -54216,6 +56076,12 @@ impl Parser {
     pub fn parse_json_column_def(&mut self) -> Result<Option<Expression>> {
         if self.match_text_seq(&["NESTED"]) {
             return Ok(Some(Expression::JSONColumnDef(Box::new(JSONColumnDef {
+                source_dialect: None,
+
+                data_type: None,
+                encoding: None,
+                options: None,
+
                 this: None,
                 kind: None,
                 format_json: false,
@@ -54466,6 +56332,12 @@ impl Parser {
             let nested_schema = self.parse_json_table_columns()?;
 
             return Ok(Some(Expression::JSONColumnDef(Box::new(JSONColumnDef {
+                source_dialect: None,
+
+                data_type: None,
+                encoding: None,
+                options: None,
+
                 this: None,
                 kind: None,
                 format_json: false,
@@ -54509,6 +56381,12 @@ impl Parser {
         };
 
         Ok(Some(Expression::JSONColumnDef(Box::new(JSONColumnDef {
+            source_dialect: None,
+
+            data_type: None,
+            encoding: None,
+            options: None,
+
             this: name.map(Box::new),
             kind,
             format_json,
@@ -54573,6 +56451,9 @@ impl Parser {
         let schema = self.parse_json_schema()?;
 
         Ok(Some(Expression::JSONTable(Box::new(JSONTable {
+            options: None,
+            source_dialect: None,
+
             this: Box::new(this),
             schema: schema.map(Box::new),
             path,
@@ -54608,6 +56489,9 @@ impl Parser {
         };
 
         Ok(Some(Expression::JSONValue(Box::new(JSONValue {
+            options: None,
+            source_dialect: None,
+
             this: Box::new(this),
             path: Some(Box::new(path)),
             returning,
@@ -57311,6 +59195,13 @@ impl Parser {
     pub fn parse_pipe_syntax_aggregate(&mut self) -> Result<Option<Expression>> {
         if self.match_text_seq(&["AGGREGATE"]) {
             return Ok(Some(Expression::Select(Box::new(Select {
+                source_dialect: None,
+                total_rowcount: false,
+
+                query_collation: None,
+                query_hints: Vec::new(),
+                result_serialization: None,
+
                 vertica: None,
                 expressions: Vec::new(),
                 from: None,
@@ -57343,6 +59234,7 @@ impl Parser {
                 locks: Vec::new(),
                 for_xml: Vec::new(),
                 for_json: Vec::new(),
+
                 leading_comments: Vec::new(),
                 post_select_comments: Vec::new(),
                 kind: None,
@@ -57436,6 +59328,13 @@ impl Parser {
     pub fn parse_pipe_syntax_extend(&mut self) -> Result<Option<Expression>> {
         if self.match_text_seq(&["EXTEND"]) {
             return Ok(Some(Expression::Select(Box::new(Select {
+                source_dialect: None,
+                total_rowcount: false,
+
+                query_collation: None,
+                query_hints: Vec::new(),
+                result_serialization: None,
+
                 vertica: None,
                 expressions: Vec::new(),
                 from: None,
@@ -57468,6 +59367,7 @@ impl Parser {
                 locks: Vec::new(),
                 for_xml: Vec::new(),
                 for_json: Vec::new(),
+
                 leading_comments: Vec::new(),
                 post_select_comments: Vec::new(),
                 kind: None,
@@ -61394,6 +63294,10 @@ impl Parser {
         self.expect(TokenType::RParen)?;
 
         let func_expr = Expression::Function(Box::new(Function {
+            on_error: None,
+            qualified_name: Vec::new(),
+            source_dialect: None,
+
             name: func_name,
             args,
             distinct: false,
@@ -63474,7 +65378,10 @@ impl Parser {
         }
 
         Ok(Some(Expression::PartitionByProperty(Box::new(
-            PartitionByProperty { expressions },
+            PartitionByProperty {
+                specification: None,
+                expressions,
+            },
         ))))
     }
 

@@ -238,6 +238,9 @@ test-rust-lib:
 
 # Check capabilities separately so Cargo feature unification cannot mask dependencies.
 test-rust-feature-gates:
+	cargo check -p polyglot-sql --no-default-features --features dialect-hana
+	cargo check -p polyglot-sql --no-default-features --features generate,dialect-hana
+	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-hana
 	cargo check -p polyglot-sql --no-default-features
 	@for feature in generate transpile builder ast-tools semantic openlineage diff planner time \
 		function-catalog-clickhouse function-catalog-duckdb function-catalog-all-dialects; do \
@@ -283,6 +286,7 @@ test-rust-verify-core:
 	@echo "=== Lib unit tests ==="
 	@cargo test --lib -p polyglot-sql
 	@cargo test -p polyglot-sql --test deep_nesting_regression
+	@cargo test -p polyglot-sql --test dialect_matrix
 	@echo ""
 	@echo "=== Generic identity tests ==="
 	@cargo test --test sqlglot_identity test_sqlglot_identity_all -p polyglot-sql -- --nocapture

@@ -2109,6 +2109,51 @@ fn test_validate_with_schema_type_check_comparison_mismatch() {
         .any(|e| e.code == validation_codes::E_INCOMPATIBLE_COMPARISON_TYPES));
 }
 
+#[cfg(feature = "dialect-hana")]
+#[test]
+fn hana_integer_casts_participate_in_type_validation() {
+    let schema = ValidationSchema {
+        tables: vec![],
+        strict: Some(true),
+    };
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        strict: Some(true),
+        ..Default::default()
+    };
+    for data_type in ["TINYINT", "SMALLINT", "INT", "INTEGER", "BIGINT"] {
+        for (sql, code) in [
+            (
+                format!("SELECT CAST(1 AS {data_type}) + 'x'"),
+                validation_codes::E_INVALID_ARITHMETIC_TYPE,
+            ),
+            (
+                format!("SELECT CAST(1 AS {data_type}) = DATE '2024-01-01'"),
+                validation_codes::E_INCOMPATIBLE_COMPARISON_TYPES,
+            ),
+            (
+                format!("SELECT LENGTH(CAST(1 AS {data_type}))"),
+                validation_codes::E_INVALID_FUNCTION_ARGUMENT_TYPE,
+            ),
+        ] {
+            let result = validate_with_schema(&sql, DialectType::HANA, &schema, &opts);
+            assert!(!result.valid, "{sql}");
+            assert!(
+                result.errors.iter().any(|e| e.code == code),
+                "{sql}: {result:?}"
+            );
+        }
+        for sql in [
+            format!("SELECT CAST(1 AS {data_type}) + 2"),
+            format!("SELECT CAST(1 AS {data_type}) = 2"),
+            format!("SELECT ABS(CAST(1 AS {data_type}))"),
+        ] {
+            let result = validate_with_schema(&sql, DialectType::HANA, &schema, &opts);
+            assert!(result.valid, "{sql}: {result:?}");
+        }
+    }
+}
+
 #[test]
 fn test_validate_with_schema_type_check_arithmetic_mismatch() {
     let schema = base_schema();

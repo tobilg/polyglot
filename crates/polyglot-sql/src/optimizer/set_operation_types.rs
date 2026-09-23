@@ -329,6 +329,7 @@ fn family(dialect: DialectType) -> Family {
         Doris | StarRocks => Family::Standard,
         Drill | Dremio => Family::Limited,
         Exasol | Vertica => Family::Standard,
+        HANA => Family::Limited,
         Druid | Solr | Tableau => Family::Limited,
     }
 }

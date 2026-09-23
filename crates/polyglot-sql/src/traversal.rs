@@ -211,7 +211,7 @@ impl<'a> Iterator for DfsIter<'a> {
         let expr = self.stack.pop()?;
 
         let child_start = self.stack.len();
-        crate::ast_children::for_each_child(expr, |_, child| self.stack.push(child));
+        crate::ast_children::for_each_child_untracked(expr, |child| self.stack.push(child));
         self.stack[child_start..].reverse();
 
         Some(expr)
@@ -244,7 +244,7 @@ impl<'a> Iterator for BfsIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let expr = self.queue.pop_front()?;
 
-        crate::ast_children::for_each_child(expr, |_, child| self.queue.push_back(child));
+        crate::ast_children::for_each_child_untracked(expr, |child| self.queue.push_back(child));
 
         Some(expr)
     }
@@ -480,7 +480,7 @@ pub fn is_literal(expr: &Expression) -> bool {
 pub fn is_function(expr: &Expression) -> bool {
     matches!(
         expr,
-        Expression::Function(_) | Expression::AggregateFunction(_)
+        Expression::Function(_) | Expression::AggregateFunction(_) | Expression::Hierarchy(_)
     )
 }
 

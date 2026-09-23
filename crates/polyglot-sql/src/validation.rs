@@ -773,6 +773,17 @@ fn data_type_family(data_type: &DataType) -> TypeFamily {
         DataType::Float { .. } | DataType::Double { .. } | DataType::Decimal { .. } => {
             TypeFamily::Numeric
         }
+        DataType::Hana { hana_type } => match hana_type.name.as_str() {
+            "TINYINT" | "SMALLINT" | "INT" | "BIGINT" => TypeFamily::Integer,
+            "TIMESTAMP" | "SECONDDATE" => TypeFamily::Timestamp,
+            "TIME" => TypeFamily::Time,
+            "FLOAT" | "DECIMAL" | "SMALLDECIMAL" => TypeFamily::Numeric,
+            "BINTEXT" => TypeFamily::Binary,
+            "ALPHANUM" | "VARCHAR" | "NVARCHAR" | "CLOB" | "NCLOB" | "TEXT" | "SHORTTEXT" => {
+                TypeFamily::String
+            }
+            _ => TypeFamily::Unknown,
+        },
         DataType::Oracle { oracle_type } => match oracle_type {
             OracleDataType::Number { .. }
             | OracleDataType::BinaryFloat

@@ -369,6 +369,8 @@ impl RedshiftDialect {
                 let string = args.remove(0);
                 let pattern = args.remove(0);
                 Ok(Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
                     this: string,
                     pattern,
                     flags: None,
@@ -381,6 +383,8 @@ impl RedshiftDialect {
                 let string = args.remove(0);
                 let pattern = args.remove(0);
                 Ok(Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
                     this: string,
                     pattern,
                     flags: None,
