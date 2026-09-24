@@ -1548,6 +1548,30 @@ func TestIntegrationPackageLevelAPI(t *testing.T) {
 	assertValidJSON(t, "OpenLineageRunEvent wrapper", runEvent.Event)
 }
 
+func TestIntegrationVerticaStructuredSyntaxAndErrors(t *testing.T) {
+	client := integrationClient(t)
+	sql := "COPY t FROM LOCAL '/tmp/data.json' PARSER FJSONPARSER(flatten_maps=TRUE)"
+	ast, err := client.Parse(sql, "vertica")
+	if err != nil || !strings.Contains(string(ast), `"kind":"copy"`) {
+		t.Fatalf("structured COPY: %s, %v", ast, err)
+	}
+	generated, err := client.Generate(ast, "vertica")
+	if err != nil || len(generated) != 1 || !strings.Contains(generated[0], "FJSONPARSER(flatten_maps = TRUE)") {
+		t.Fatalf("native COPY: %v, %v", generated, err)
+	}
+	for _, level := range []UnsupportedLevel{UnsupportedIgnore, UnsupportedWarn, UnsupportedRaise, UnsupportedImmediate} {
+		for _, sql := range []string{"SELECT x::!INT FROM t", "SELECT LISTAGG(x) FROM t", "SELECT id FROM t FOR UPDATE"} {
+			if _, err := client.Transpile(sql, "vertica", "postgres", TranspileOptions{UnsupportedLevel: level}); err == nil {
+				t.Fatalf("unsafe translation accepted at %s: %s", level, sql)
+			}
+		}
+	}
+	result, err := client.Transpile("SELECT B'101100'", "vertica", "duckdb")
+	if err != nil || len(result) != 1 || result[0] != "SELECT UNHEX('2c')" {
+		t.Fatalf("binary value: %v, %v", result, err)
+	}
+}
+
 func TestIntegrationHana(t *testing.T) {
 	client := integrationClient(t)
 	sql := "SELECT * FROM t FOR JSON ('arraywrap' = 'NO')"

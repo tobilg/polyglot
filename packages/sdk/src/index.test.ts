@@ -2018,3 +2018,41 @@ describe('Edge cases', () => {
     });
   });
 });
+
+describe('Vertica structured syntax and semantics', () => {
+  it('retains COPY parser arguments through the public AST API', () => {
+    const parsed = parse(
+      "COPY t FROM LOCAL '/tmp/data.json' PARSER FJSONPARSER(flatten_maps=TRUE)",
+      Dialect.Vertica,
+    );
+    expect(parsed.success).toBe(true);
+    expect(JSON.stringify(parsed.ast)).toContain('"kind":"copy"');
+    const output = generate(parsed.ast ?? [], Dialect.Vertica);
+    expect(output.success).toBe(true);
+    expect(output.sql?.[0]).toContain('FJSONPARSER(flatten_maps = TRUE)');
+  });
+
+  it('preserves binary values and rejects unsafe conversions in every mode', () => {
+    expect(
+      transpile("SELECT B'101100'", Dialect.Vertica, Dialect.DuckDB).sql,
+    ).toEqual(["SELECT UNHEX('2c')"]);
+    for (const unsupportedLevel of [
+      'ignore',
+      'warn',
+      'raise',
+      'immediate',
+    ] as const) {
+      for (const sql of [
+        'SELECT x::!INT FROM t',
+        'SELECT LISTAGG(x) FROM t',
+        'SELECT id FROM t FOR UPDATE',
+      ]) {
+        expect(
+          transpile(sql, Dialect.Vertica, Dialect.PostgreSQL, {
+            unsupportedLevel,
+          }).success,
+        ).toBe(false);
+      }
+    }
+  });
+});

@@ -50,6 +50,7 @@ export enum Dialect {
   Exasol = 'exasol',
   DataFusion = 'datafusion',
   HANA = 'hana',
+  Vertica = 'vertica',
 }
 
 /**

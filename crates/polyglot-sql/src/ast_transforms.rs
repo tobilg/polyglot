@@ -13,6 +13,63 @@ use crate::ast_mutation as engine;
 use crate::expressions::*;
 use crate::traversal::{is_aggregate, ExpressionWalk};
 
+/// Allocate case-insensitively unique names for synthesized AST scopes.
+#[cfg(feature = "generate")]
+#[derive(Default)]
+pub(crate) struct AstNames(HashSet<String>);
+
+#[cfg(feature = "generate")]
+impl AstNames {
+    pub(crate) fn collect(&mut self, expression: &Expression) {
+        for node in expression.dfs() {
+            match node {
+                Expression::Column(c) => {
+                    self.reserve(&c.name);
+                    if let Some(table) = &c.table {
+                        self.reserve(table);
+                    }
+                }
+                Expression::Identifier(id) => self.reserve(id),
+                Expression::Alias(a) => {
+                    self.reserve(&a.alias);
+                    for id in &a.column_aliases {
+                        self.reserve(id);
+                    }
+                }
+                Expression::Table(t) => {
+                    self.reserve(&t.name);
+                    if let Some(alias) = &t.alias {
+                        self.reserve(alias);
+                    }
+                }
+                Expression::Subquery(s) => {
+                    if let Some(alias) = &s.alias {
+                        self.reserve(alias);
+                    }
+                    for id in &s.column_aliases {
+                        self.reserve(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn reserve(&mut self, id: &Identifier) {
+        self.0.insert(id.name.to_ascii_lowercase());
+    }
+
+    pub(crate) fn fresh(&mut self, stem: &str) -> String {
+        let mut name = stem.to_string();
+        let mut suffix = 0;
+        while !self.0.insert(name.to_ascii_lowercase()) {
+            suffix += 1;
+            name = format!("{stem}_{suffix}");
+        }
+        name
+    }
+}
+
 /// Apply a bottom-up transformation to every node in the tree.
 /// Wraps `crate::traversal::transform` with a simpler signature for this module.
 fn xform<F: Fn(Expression) -> Expression>(expr: Expression, fun: F) -> Expression {
@@ -308,6 +365,32 @@ pub fn remove_nodes<F: Fn(&Expression) -> bool>(expr: Expression, predicate: F) 
 // ---------------------------------------------------------------------------
 // Convenience getters
 // ---------------------------------------------------------------------------
+
+/// Return a single named projection while preserving identifier quoting.
+#[cfg(feature = "generate")]
+pub(crate) fn output_identifier(expression: &Expression) -> Option<&Identifier> {
+    match expression {
+        Expression::Alias(a) if a.column_aliases.is_empty() => Some(&a.alias),
+        Expression::Column(c) => Some(&c.name),
+        _ => None,
+    }
+}
+
+/// Borrow the leftmost projection list through query wrappers and set operations.
+#[cfg(feature = "generate")]
+pub(crate) fn query_projections(mut query: &Expression) -> Option<&[Expression]> {
+    loop {
+        query = match query {
+            Expression::Select(s) => return Some(&s.expressions),
+            Expression::Union(s) => &s.left,
+            Expression::Intersect(s) => &s.left,
+            Expression::Except(s) => &s.left,
+            Expression::Subquery(s) => &s.this,
+            Expression::Paren(p) => &p.this,
+            _ => return None,
+        };
+    }
+}
 
 /// Collect all column names (as `String`) referenced in the expression tree.
 pub fn get_column_names(expr: &Expression) -> Vec<String> {

@@ -198,3 +198,15 @@ def test_hana_native_clauses_and_source_semantics():
     ) == ["SELECT STRPOS('abcabc', 'bc')"]
     with pytest.raises(polyglot_sql.TranspileError):
         polyglot_sql.transpile(sql, read="hana", write="duckdb")
+
+
+def test_vertica_structured_syntax_and_semantic_errors():
+    sql = "COPY t FROM LOCAL '/tmp/data.json' PARSER FJSONPARSER(flatten_maps=TRUE)"
+    ast = polyglot_sql.parse_one(sql, dialect="vertica")
+    assert ast.to_dict()["vertica"]["kind"] == "copy"
+    assert "FJSONPARSER(flatten_maps = TRUE)" in ast.sql(dialect="vertica")
+    assert polyglot_sql.transpile("SELECT B'101100'", read="vertica", write="duckdb") == ["SELECT UNHEX('2c')"]
+    for level in ("ignore", "warn", "raise", "immediate"):
+        for sql in ("SELECT x::!INT FROM t", "SELECT LISTAGG(x) FROM t", "SELECT id FROM t FOR UPDATE"):
+            with pytest.raises(polyglot_sql.TranspileError):
+                polyglot_sql.transpile(sql, read="vertica", write="postgres", unsupported_level=level)

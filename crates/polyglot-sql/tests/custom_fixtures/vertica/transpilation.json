@@ -1,0 +1,188 @@
+{
+  "dialect": "vertica",
+  "category": "transpilation",
+  "identity": [],
+  "transpilation": [
+    {
+      "sql": "SELECT 1 EXCEPT SELECT 2",
+      "write": {
+        "postgresql": "SELECT 1 EXCEPT SELECT 2",
+        "duckdb": "SELECT 1 EXCEPT SELECT 2"
+      },
+      "description": "MINUS/EXCEPT",
+      "read": {}
+    },
+    {
+      "sql": "SELECT 1 FROM dual EXCEPT SELECT 2 FROM dual",
+      "read": {
+        "oracle": "SELECT 1 FROM dual MINUS SELECT 2 FROM dual"
+      },
+      "description": "Oracle MINUS"
+    },
+    {
+      "sql": "SELECT GETDATE(), GETUTCDATE()",
+      "write": {
+        "postgresql": "SELECT CAST(STATEMENT_TIMESTAMP() AS TIMESTAMP), CAST(STATEMENT_TIMESTAMP() AT TIME ZONE 'UTC' AS TIMESTAMP)",
+        "tsql": "SELECT GETDATE(), GETUTCDATE()"
+      },
+      "description": "Statement-start timestamps lower to STATEMENT_TIMESTAMP in PostgreSQL",
+      "read": {}
+    },
+    {
+      "sql": "SELECT GETDATE()",
+      "read": {
+        "redshift": "SELECT SYSDATE",
+        "tsql": "SELECT GETDATE()"
+      },
+      "description": "SYSDATE / GETDATE into Vertica"
+    },
+    {
+      "sql": "SELECT DATEDIFF(DAY, a, b) FROM t",
+      "write": {},
+      "read": {
+        "mysql": "SELECT DATEDIFF(b, a) FROM t",
+        "snowflake": "SELECT DATEDIFF(day, a, b) FROM t"
+      },
+      "description": "DATEDIFF"
+    },
+    {
+      "sql": "SELECT TIMESTAMPADD(DAY, 3, ts) FROM t",
+      "write": {
+        "postgresql": "SELECT ts + INTERVAL '3 DAY' FROM t",
+        "mysql": "SELECT DATE_ADD(ts, INTERVAL 3 DAY) FROM t",
+        "snowflake": "SELECT DATEADD(DAY, 3, ts) FROM t",
+        "tsql": "SELECT DATEADD(DAY, 3, ts) FROM t",
+        "duckdb": "SELECT ts + INTERVAL 3 DAY FROM t"
+      },
+      "read": {
+        "snowflake": "SELECT DATEADD(day, 3, ts) FROM t",
+        "tsql": "SELECT DATEADD(day, 3, ts) FROM t"
+      },
+      "description": "TIMESTAMPADD and DATEADD"
+    },
+    {
+      "sql": "SELECT TIMESTAMPADD(MONTH, n, ts) FROM t",
+      "write": {
+        "postgresql": "SELECT ts + INTERVAL '1 MONTH' * n FROM t"
+      },
+      "description": "TIMESTAMPADD with a non-literal amount",
+      "read": {}
+    },
+    {
+      "sql": "SELECT NVL(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), ZEROIFNULL(a) FROM t",
+      "write": {
+        "postgresql": "SELECT COALESCE(a, b), CASE WHEN NOT a IS NULL THEN b ELSE c END, CASE WHEN a = 1 THEN 'one' ELSE 'other' END, COALESCE(a, 0) FROM t",
+        "snowflake": "SELECT COALESCE(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), IFF(a IS NULL, 0, a) FROM t",
+        "oracle": "SELECT NVL(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), NVL(a, 0) FROM t"
+      },
+      "description": "NULL-handling functions",
+      "read": {}
+    },
+    {
+      "sql": "SELECT DECODE(a, 1, 'x', 'y') FROM t",
+      "read": {
+        "oracle": "SELECT DECODE(a, 1, 'x', 'y') FROM t"
+      },
+      "description": "DECODE stays native"
+    },
+    {
+      "sql": "SELECT APPROXIMATE_COUNT_DISTINCT(a) FROM t",
+      "write": {
+        "snowflake": "SELECT APPROX_COUNT_DISTINCT(a) FROM t",
+        "duckdb": "SELECT APPROX_COUNT_DISTINCT(a) FROM t"
+      },
+      "read": {
+        "snowflake": "SELECT APPROX_COUNT_DISTINCT(a) FROM t"
+      },
+      "description": "Approximate distinct count"
+    },
+    {
+      "sql": "SELECT COALESCE(a, b) FROM t",
+      "read": {
+        "mysql": "SELECT IFNULL(a, b) FROM t",
+        "tsql": "SELECT ISNULL(a, b) FROM t"
+      },
+      "description": "IFNULL/ISNULL to COALESCE"
+    },
+    {
+      "sql": "SELECT CAST(a AS BIGINT) FROM t",
+      "write": {
+        "postgresql": "SELECT CAST(a AS BIGINT) FROM t",
+        "tsql": "SELECT CAST(a AS BIGINT) FROM t"
+      },
+      "read": {
+        "postgresql": "SELECT a::BIGINT FROM t"
+      },
+      "description": "Integers are BIGINT"
+    },
+    {
+      "sql": "SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END FROM t",
+      "read": {
+        "snowflake": "SELECT IFF(a > 1, 'x', 'y') FROM t",
+        "mysql": "SELECT IF(a > 1, 'x', 'y') FROM t"
+      },
+      "description": "IF/IFF to CASE"
+    },
+    {
+      "sql": "SELECT INSTR(a, 'x') FROM t",
+      "read": {
+        "tsql": "SELECT CHARINDEX('x', a) FROM t"
+      },
+      "description": "CHARINDEX to INSTR"
+    },
+    {
+      "sql": "SELECT SUM(CASE WHEN a > 1 THEN 1 ELSE 0 END) FROM t",
+      "read": {
+        "snowflake": "SELECT COUNT_IF(a > 1) FROM t"
+      },
+      "description": "COUNT_IF expansion"
+    },
+    {
+      "sql": "SELECT * FROM a WHERE EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+      "read": {
+        "spark": "SELECT * FROM a LEFT SEMI JOIN b ON a.id = b.id"
+      },
+      "description": "Semi join elimination"
+    },
+    {
+      "sql": "SELECT a FROM t LIMIT 5",
+      "write": {
+        "tsql": "SELECT TOP 5 a FROM t"
+      },
+      "read": {
+        "tsql": "SELECT TOP 5 a FROM t"
+      },
+      "description": "TOP to LIMIT"
+    },
+    {
+      "sql": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 1 ELSE 0 END, a",
+      "read": {
+        "postgresql": "SELECT a FROM t ORDER BY a"
+      },
+      "description": "Source NULL ordering is made explicit"
+    },
+    {
+      "sql": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 1 ELSE 0 END, a DESC",
+      "read": {
+        "duckdb": "SELECT a FROM t ORDER BY a DESC"
+      },
+      "description": "DuckDB NULLS LAST default is made explicit"
+    },
+    {
+      "sql": "SELECT 7 // 2, 5!, ABS(a) FROM t",
+      "write": {
+        "postgresql": "SELECT DIV(7, 2), FACTORIAL(5), ABS(a) FROM t",
+        "duckdb": "SELECT 7 // 2, FACTORIAL(5), ABS(a) FROM t"
+      },
+      "description": "Vertica-only operators",
+      "read": {}
+    },
+    {
+      "sql": "CREATE TABLE t (a BIGINT, b DOUBLE PRECISION, c LONG VARCHAR, d VARBINARY, e TIMESTAMPTZ)",
+      "read": {
+        "postgresql": "CREATE TABLE t (a INT, b REAL, c TEXT, d BYTEA, e TIMESTAMPTZ)"
+      },
+      "description": "PostgreSQL types widen to Vertica types"
+    }
+  ]
+}

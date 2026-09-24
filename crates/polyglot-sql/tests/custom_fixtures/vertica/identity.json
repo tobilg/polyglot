@@ -1,0 +1,215 @@
+{
+  "dialect": "vertica",
+  "category": "identity",
+  "identity": [
+    {
+      "sql": "SELECT 1",
+      "description": "Simple literal select"
+    },
+    {
+      "sql": "SELECT a, b FROM t WHERE a > 1 ORDER BY b LIMIT 10 OFFSET 5",
+      "description": "SELECT with LIMIT/OFFSET"
+    },
+    {
+      "sql": "SELECT \"Mixed Case\" FROM \"My Table\"",
+      "description": "Double-quoted identifiers"
+    },
+    {
+      "sql": "SELECT CAST(a AS VARCHAR(10)) FROM t",
+      "description": "CAST"
+    },
+    {
+      "sql": "SELECT a::VARCHAR(10) FROM t",
+      "expected": "SELECT CAST(a AS VARCHAR(10)) FROM t",
+      "description": "Double-colon cast"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE name ILIKE 'a%'",
+      "description": "ILIKE"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE name NOT ILIKE 'a%'",
+      "description": "NOT ILIKE"
+    },
+    {
+      "sql": "SELECT a || b FROM t",
+      "description": "String concatenation"
+    },
+    {
+      "sql": "SELECT NVL(a, b) FROM t",
+      "description": "NVL is native"
+    },
+    {
+      "sql": "SELECT NVL2(a, b, c) FROM t",
+      "description": "NVL2 is native"
+    },
+    {
+      "sql": "SELECT DECODE(a, 1, 'one', 2, 'two', 'other') FROM t",
+      "description": "DECODE is native"
+    },
+    {
+      "sql": "SELECT ZEROIFNULL(a) FROM t",
+      "description": "ZEROIFNULL is native"
+    },
+    {
+      "sql": "SELECT COALESCE(a, b, c) FROM t",
+      "description": "COALESCE"
+    },
+    {
+      "sql": "SELECT DATEDIFF(DAY, started_at, ended_at) FROM events",
+      "description": "DATEDIFF with unit"
+    },
+    {
+      "sql": "SELECT DATEDIFF('day', started_at, ended_at) FROM events",
+      "description": "DATEDIFF with string unit"
+    },
+    {
+      "sql": "SELECT TIMESTAMPADD(day, 3, occurred_at) FROM events",
+      "expected": "SELECT TIMESTAMPADD(DAY, 3, occurred_at) FROM events",
+      "description": "TIMESTAMPADD unit is upper-cased"
+    },
+    {
+      "sql": "SELECT TIMESTAMPDIFF(hour, started_at, ended_at) FROM events",
+      "expected": "SELECT DATEDIFF(HOUR, started_at, ended_at) FROM events",
+      "description": "TIMESTAMPDIFF is DATEDIFF"
+    },
+    {
+      "sql": "SELECT ADD_MONTHS(invoice_date, 2) FROM invoices",
+      "description": "ADD_MONTHS"
+    },
+    {
+      "sql": "SELECT GETDATE(), GETUTCDATE(), CURRENT_TIMESTAMP(3)",
+      "description": "Statement and transaction timestamps"
+    },
+    {
+      "sql": "SELECT SYSDATE, SYSDATE()",
+      "expected": "SELECT GETDATE(), GETDATE()",
+      "description": "SYSDATE is a synonym for GETDATE"
+    },
+    {
+      "sql": "SELECT TIME_SLICE(ts, 5, 'MINUTE', 'START') FROM ticks",
+      "description": "TIME_SLICE"
+    },
+    {
+      "sql": "SELECT DAYOFMONTH(ts), DAYOFWEEK(ts), DAYOFWEEK_ISO(ts), DAYOFYEAR(ts) FROM t",
+      "description": "DAYOF* functions"
+    },
+    {
+      "sql": "SELECT TO_CHAR(ts, 'YYYY-MM-DD'), TO_DATE('2020-01-01', 'YYYY-MM-DD') FROM t",
+      "description": "TO_CHAR/TO_DATE"
+    },
+    {
+      "sql": "SELECT REGEXP_LIKE(a, 'x.*') FROM t",
+      "description": "REGEXP_LIKE"
+    },
+    {
+      "sql": "SELECT APPROXIMATE_COUNT_DISTINCT(a) FROM t",
+      "description": "APPROXIMATE_COUNT_DISTINCT"
+    },
+    {
+      "sql": "SELECT MEDIAN(b) OVER (PARTITION BY c) FROM t",
+      "description": "MEDIAN analytic"
+    },
+    {
+      "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY k ORDER BY a DESC) FROM t",
+      "description": "Window function"
+    },
+    {
+      "sql": "SELECT LISTAGG(city) FROM places",
+      "description": "LISTAGG default separator"
+    },
+    {
+      "sql": "SELECT LISTAGG(DISTINCT city) FROM places",
+      "description": "LISTAGG DISTINCT"
+    },
+    {
+      "sql": "SELECT LISTAGG(name, ',') WITHIN GROUP (ORDER BY ordinal) FROM names",
+      "expected": "SELECT LISTAGG(name USING PARAMETERS separator = ',') WITHIN GROUP (ORDER BY ordinal) FROM names",
+      "description": "Two-argument LISTAGG becomes USING PARAMETERS"
+    },
+    {
+      "sql": "SELECT LISTAGG(city USING PARAMETERS separator=' | ', max_length=4096, on_overflow='TRUNCATE') WITHIN GROUP (ORDER BY city) FROM places",
+      "expected": "SELECT LISTAGG(city USING PARAMETERS separator = ' | ', max_length = 4096, on_overflow = 'TRUNCATE') WITHIN GROUP (ORDER BY city) FROM places",
+      "description": "LISTAGG USING PARAMETERS"
+    },
+    {
+      "sql": "SELECT a FROM t ORDER BY a NULLS FIRST, b DESC NULLS LAST",
+      "description": "Explicit top-level NULL placement uses CASE sort keys",
+      "expected": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 0 ELSE 1 END, a, CASE WHEN b IS NULL THEN 1 ELSE 0 END, b DESC"
+    },
+    {
+      "sql": "SELECT 1 MINUS SELECT 2",
+      "expected": "SELECT 1 EXCEPT SELECT 2",
+      "description": "MINUS is EXCEPT"
+    },
+    {
+      "sql": "SELECT 1 UNION ALL SELECT 2 INTERSECT SELECT 3",
+      "description": "Set operation chain"
+    },
+    {
+      "sql": "SELECT 117.32 // 2.5, !! 5, 4.98!, @ -5.0",
+      "expected": "SELECT 117.32 // 2.5, 5!, 4.98!, ABS(-5.0)",
+      "description": "Integer division, factorial and absolute value operators"
+    },
+    {
+      "sql": "SELECT -4!, (-4)!, 5! + 1",
+      "description": "Factorial precedence"
+    },
+    {
+      "sql": "SELECT |/ 25.0, ||/ 27.0",
+      "expected": "SELECT SQRT(25.0), CBRT(27.0)",
+      "description": "Square and cube root operators"
+    },
+    {
+      "sql": "SELECT a != b FROM t",
+      "expected": "SELECT a <> b FROM t",
+      "description": "Not-equal is not factorial"
+    },
+    {
+      "sql": "SELECT INTERVAL '1 year 2 months' YEAR TO MONTH",
+      "description": "Interval YEAR TO MONTH"
+    },
+    {
+      "sql": "SELECT INTERVAL '3 days' DAY TO SECOND(3)",
+      "description": "Interval with seconds precision"
+    },
+    {
+      "sql": "SELECT INTERVAL '1.234' SECOND(3)",
+      "description": "Interval SECOND precision"
+    },
+    {
+      "sql": "SELECT ARRAY[1, 2], ROW(1, 'x')",
+      "description": "Collection constructors"
+    },
+    {
+      "sql": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) = 1",
+      "expected": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) AS _w FROM t) AS _t WHERE _w = 1",
+      "description": "QUALIFY is rewritten to a subquery"
+    },
+    {
+      "sql": "CREATE LOCAL TEMPORARY TABLE t (id INT) ON COMMIT DELETE ROWS",
+      "description": "Local temporary table"
+    },
+    {
+      "sql": "CREATE LOCAL TEMP TABLE t_local ON COMMIT PRESERVE ROWS AS SELECT 1 AS c",
+      "description": "Local temporary CTAS"
+    },
+    {
+      "sql": "INSERT INTO t (a, b) VALUES (1, 'x')",
+      "description": "INSERT"
+    },
+    {
+      "sql": "UPDATE t SET a = 1 WHERE b = 2",
+      "description": "UPDATE"
+    },
+    {
+      "sql": "DELETE FROM t WHERE a = 1",
+      "description": "DELETE"
+    },
+    {
+      "sql": "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a WHEN NOT MATCHED THEN INSERT (id, a) VALUES (s.id, s.a)",
+      "description": "MERGE"
+    }
+  ],
+  "transpilation": []
+}

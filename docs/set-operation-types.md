@@ -40,7 +40,7 @@ every SQL expression is executable on a particular engine.
 
 ## Dialect rules and evidence
 
-The policy covers all 33 named dialects and Generic. It is intentionally a
+The policy covers all 34 named dialects and Generic. It is intentionally a
 partial type system: unsupported combinations return no hint, rather than
 claiming a complete implementation of an engine's implicit-cast rules.
 
@@ -62,7 +62,7 @@ claiming a complete implementation of an engine's implicit-cast rules.
 | ClickHouse | Numeric representability, Nullable propagation, and compatible nested types. Int64/Float64 and Int64/UInt64 do not silently become lossy common types. |
 | Teradata | Compatible known operands retain the first SELECT's type, as specified by the engine. |
 | DataFusion | Numeric and decimal coercion, string/numeric union output, recursive nested types, and STRUCT matching by field name. Unsupported Arrow-specific types are unresolved. |
-| Doris, StarRocks, Exasol, Generic | Same-category scalar widening and explicit decimal shapes. Engine-specific complex and cross-category coercions remain unresolved. |
+| Doris, StarRocks, Exasol, Vertica, Generic | Same-category scalar widening and explicit decimal shapes. Engine-specific complex and cross-category coercions remain unresolved. |
 | Drill, Dremio, Druid, Solr, Tableau | Conservative scalar rules; mixed floating, decimal, temporal, and complex combinations without a supported rule remain unresolved. Druid DECIMAL/REAL normalize to DOUBLE. |
 
 Engine documentation and source used to distinguish these rules:

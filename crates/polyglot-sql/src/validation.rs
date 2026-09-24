@@ -752,6 +752,13 @@ fn type_issue(
 
 fn data_type_family(data_type: &DataType) -> TypeFamily {
     match data_type {
+        DataType::Vertica { vertica_type } => match vertica_type.as_ref() {
+            crate::expressions::VerticaDataType::Array { .. }
+            | crate::expressions::VerticaDataType::Set { .. } => TypeFamily::Array,
+            crate::expressions::VerticaDataType::Row { .. } => TypeFamily::Struct,
+            crate::expressions::VerticaDataType::LongVarBinary { .. } => TypeFamily::Binary,
+            crate::expressions::VerticaDataType::Interval { .. } => TypeFamily::Interval,
+        },
         DataType::Boolean => TypeFamily::Boolean,
         DataType::TinyInt { .. }
         | DataType::SmallInt { .. }

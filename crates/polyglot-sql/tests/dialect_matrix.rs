@@ -5702,6 +5702,7 @@ mod hana_regressions {
                 DialectType::Dremio,
                 DialectType::Exasol,
                 DialectType::DataFusion,
+                DialectType::Vertica,
             ] {
                 let ast = Dialect::get(DialectType::HANA).parse(sql).unwrap();
                 assert!(

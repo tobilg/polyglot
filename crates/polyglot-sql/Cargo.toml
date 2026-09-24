@@ -48,6 +48,7 @@ all-dialects = [
     "dialect-druid", "dialect-solr", "dialect-tableau",
     "dialect-dune", "dialect-fabric", "dialect-drill",
     "dialect-dremio", "dialect-exasol", "dialect-datafusion", "dialect-hana",
+    "dialect-vertica",
 ]
 dialect-postgresql = []
 dialect-mysql = []
@@ -83,6 +84,7 @@ dialect-dremio = []
 dialect-exasol = []
 dialect-datafusion = []
 dialect-hana = []
+dialect-vertica = []
 function-catalog-clickhouse = [
     "semantic",
     "dep:polyglot-sql-function-catalogs",

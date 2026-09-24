@@ -91,6 +91,8 @@ mod tidb;
 mod trino;
 #[cfg(any(feature = "dialect-tsql", feature = "dialect-fabric"))]
 mod tsql;
+#[cfg(feature = "dialect-vertica")]
+mod vertica;
 
 pub use generic::GenericDialect; // Always available
 
@@ -162,6 +164,8 @@ pub use tidb::TiDBDialect;
 pub use trino::TrinoDialect;
 #[cfg(feature = "dialect-tsql")]
 pub use tsql::TSQLDialect;
+#[cfg(feature = "dialect-vertica")]
+pub use vertica::VerticaDialect;
 
 use crate::error::Result;
 #[cfg(feature = "transpile")]
@@ -281,6 +285,8 @@ pub enum DialectType {
     DataFusion,
     /// SAP HANA Cloud and SAP HANA Platform SQL.
     HANA,
+    /// Vertica (OpenText Analytics Database) -- columnar MPP analytic database.
+    Vertica,
 }
 
 impl DialectType {
@@ -338,6 +344,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Exasol => write!(f, "exasol"),
             DialectType::DataFusion => write!(f, "datafusion"),
             DialectType::HANA => write!(f, "hana"),
+            DialectType::Vertica => write!(f, "vertica"),
         }
     }
 }
@@ -382,6 +389,7 @@ impl std::str::FromStr for DialectType {
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
             "hana" | "saphana" | "sap_hana" => Ok(DialectType::HANA),
+            "vertica" => Ok(DialectType::Vertica),
             _ => Err(crate::error::Error::parse(
                 format!("Unknown dialect: {}", s),
                 0,
@@ -708,7 +716,8 @@ where
             Expression::Union(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Intersect(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Except(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
-            Expression::Literal(_)
+            Expression::Vertica(_)
+            | Expression::Literal(_)
             | Expression::Boolean(_)
             | Expression::Null(_)
             | Expression::Identifier(_)
@@ -1081,6 +1090,23 @@ where
                 .into_iter()
                 .map(|hint| transform_recursive(hint, transform_fn))
                 .collect::<Result<Vec<_>>>()?;
+            if let Some(extension) = &mut select.vertica {
+                use crate::ast_children::AstNode;
+                let mut failure = None;
+                extension.visit_expressions_mut(&mut |child| {
+                    if failure.is_none() {
+                        let old =
+                            std::mem::replace(child, Expression::Null(crate::expressions::Null));
+                        match transform_recursive(old, transform_fn) {
+                            Ok(new) => *child = new,
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                });
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+            }
             select.expressions = select
                 .expressions
                 .into_iter()
@@ -2433,6 +2459,7 @@ cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
 cached_dialect!(CACHED_HANA, HanaDialect, "dialect-hana");
+cached_dialect!(CACHED_VERTICA, VerticaDialect, "dialect-vertica");
 
 fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -2517,6 +2544,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
         #[cfg(feature = "dialect-hana")]
         DialectType::HANA => from_cache!(CACHED_HANA, HanaDialect),
+        #[cfg(feature = "dialect-vertica")]
+        DialectType::Vertica => from_cache!(CACHED_VERTICA, VerticaDialect),
         _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
@@ -3269,6 +3298,7 @@ impl Dialect {
             feature = "dialect-oracle",
             feature = "dialect-clickhouse",
             feature = "dialect-fabric",
+            feature = "dialect-vertica",
         ))]
         use crate::transforms;
 
@@ -3438,6 +3468,13 @@ impl Dialect {
             // DataFusion supports QUALIFY and semi/anti joins natively
             #[cfg(feature = "dialect-datafusion")]
             DialectType::DataFusion => Ok(expr),
+            // Vertica doesn't support QUALIFY or semi/anti join syntax
+            #[cfg(feature = "dialect-vertica")]
+            DialectType::Vertica => {
+                let expr = transforms::eliminate_qualify(expr)?;
+                let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
+                Ok(expr)
+            }
             // Oracle doesn't support QUALIFY
             #[cfg(feature = "dialect-oracle")]
             DialectType::Oracle => {
@@ -3532,6 +3569,9 @@ impl Dialect {
                     target_dialect.generator_config.dialect.unwrap_or_default(),
                 )?;
 
+                let expr =
+                    normalization::vertica::prepare_conversion(expr, self.dialect_type, target)?;
+                normalization::vertica::validate_conversion(&expr, self.dialect_type, target)?;
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.
@@ -4723,7 +4763,10 @@ impl Dialect {
                 Self::push_unsupported_diagnostic(&mut diagnostics, "UNNEST");
             }
 
-            if !Self::target_supports_remaining_explode(target) && Self::node_is_explode(node) {
+            if !Self::target_supports_remaining_explode(target)
+                && Self::node_is_explode(node)
+                && !(source == DialectType::Vertica && target == DialectType::Vertica)
+            {
                 Self::push_unsupported_diagnostic(&mut diagnostics, "EXPLODE");
             }
 

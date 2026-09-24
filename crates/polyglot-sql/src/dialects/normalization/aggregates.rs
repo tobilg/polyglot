@@ -422,9 +422,11 @@ pub(super) fn rewrite(
                                 // STRING_AGG(x, sep) -> LISTAGG(x, sep)
                                 Ok(Expression::ListAgg(Box::new(
                                     crate::expressions::ListAggFunc {
+                                        source_dialect: None,
                                         this: sa.this,
                                         separator: sa.separator,
                                         on_overflow: None,
+                                        max_length: None,
                                         order_by: sa.order_by,
                                         distinct: sa.distinct,
                                         filter: None,
@@ -542,9 +544,11 @@ pub(super) fn rewrite(
                             let this = wrap_concat_args_in_varchar_cast(gc.this);
                             Ok(Expression::ListAgg(Box::new(
                                 crate::expressions::ListAggFunc {
+                                    source_dialect: None,
                                     this,
                                     separator: Some(sep),
                                     on_overflow: None,
+                                    max_length: None,
                                     order_by: gc.order_by,
                                     distinct: gc.distinct,
                                     filter: gc.filter,
@@ -635,9 +639,11 @@ pub(super) fn rewrite(
                             let sep = gc.separator.unwrap_or(Expression::string(","));
                             Ok(Expression::ListAgg(Box::new(
                                 crate::expressions::ListAggFunc {
+                                    source_dialect: None,
                                     this: gc.this,
                                     separator: Some(sep),
                                     on_overflow: None,
+                                    max_length: None,
                                     order_by: gc.order_by,
                                     distinct: gc.distinct,
                                     filter: None,
@@ -1240,6 +1246,7 @@ pub(super) fn rewrite(
                             this: column.clone(),
                             percentile,
                             order_by: Some(vec![Ordered {
+                                nulls_auto: false,
                                 this: column,
                                 desc: false,
                                 nulls_first: None,

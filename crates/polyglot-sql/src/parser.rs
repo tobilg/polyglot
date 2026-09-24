@@ -1220,6 +1220,15 @@ impl Parser {
             return Err(self.parse_error("Unexpected end of input"));
         }
 
+        if self.is_vertica() && self.peek_text().eq_ignore_ascii_case("AT") {
+            return self.parse_vertica_historical();
+        }
+        if self.is_vertica() {
+            if let Some(statement) = self.parse_vertica_statement()? {
+                return Ok(statement);
+            }
+        }
+
         if self.should_preserve_clickhouse_with_expression_probe(self.current) {
             return self.fallback_to_command(self.current);
         }
@@ -2729,6 +2738,8 @@ impl Parser {
             None
         };
 
+        let timeseries = self.parse_vertica_timeseries()?;
+
         // Parse CONNECT BY clause (Oracle hierarchical queries)
         let connect = self.parse_connect()?;
 
@@ -2793,6 +2804,8 @@ impl Parser {
         } else {
             None
         };
+
+        let match_clause = self.parse_vertica_match()?;
 
         // Parse QUALIFY clause (Snowflake, BigQuery, DuckDB)
         // QUALIFY can appear before or after WINDOW clause
@@ -2962,6 +2975,13 @@ impl Parser {
             (None, None)
         };
 
+        let limit_over =
+            if self.is_vertica() && limit.is_some() && self.match_token(TokenType::Over) {
+                Some(self.parse_over_clause()?)
+            } else {
+                None
+            };
+
         // WITH TIES after LIMIT (ClickHouse, DuckDB)
         if limit.is_some() {
             let _ = self.match_keywords(&[TokenType::With, TokenType::Ties]);
@@ -3092,7 +3112,25 @@ impl Parser {
             into,
         } = *head;
 
+        if self.is_vertica()
+            && match_clause.is_some()
+            && (distinct || group_by.is_some() || having.is_some())
+        {
+            return Err(
+                self.parse_error("MATCH cannot be combined with DISTINCT, GROUP BY or HAVING")
+            );
+        }
+
         let select = Select {
+            vertica: if timeseries.is_some() || match_clause.is_some() || limit_over.is_some() {
+                Some(Box::new(VerticaSelectExtensions {
+                    timeseries,
+                    match_clause,
+                    limit_over,
+                }))
+            } else {
+                None
+            },
             expressions,
             from,
             joins,
@@ -4013,10 +4051,27 @@ impl Parser {
                                 }))
                             }
                         } else {
+                            let column_aliases = if self.is_vertica()
+                                && (matches!(expr, Expression::Struct(_))
+                                    || matches!(&expr, Expression::Function(f) if f.name.eq_ignore_ascii_case("ROW")))
+                                && self.match_token(TokenType::LParen)
+                            {
+                                let mut columns = Vec::new();
+                                loop {
+                                    columns.push(self.expect_identifier_or_keyword_with_quoted()?);
+                                    if !self.match_token(TokenType::Comma) {
+                                        break;
+                                    }
+                                }
+                                self.expect(TokenType::RParen)?;
+                                columns
+                            } else {
+                                Vec::new()
+                            };
                             Expression::Alias(Box::new(Alias {
                                 this: expr,
                                 alias,
-                                column_aliases: Vec::new(),
+                                column_aliases,
                                 alias_explicit_as: true,
                                 alias_keyword,
                                 pre_alias_comments,
@@ -4309,6 +4364,7 @@ impl Parser {
             query_hints: Vec::new(),
             result_serialization: None,
 
+            vertica: None,
             expressions,
             from: Some(from),
             joins,
@@ -8829,13 +8885,17 @@ impl Parser {
 
             let expr = self.maybe_parse_clickhouse_order_collate(expr)?;
 
+            let mut nulls_auto = false;
             let nulls_first = if self.match_token(TokenType::Nulls) {
                 if self.match_token(TokenType::First) {
                     Some(true)
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
+                } else if self.is_vertica() && self.match_text_seq(&["AUTO"]) {
+                    nulls_auto = true;
+                    None
                 } else {
-                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST, LAST or AUTO after NULLS"));
                 }
             } else {
                 None
@@ -8927,6 +8987,7 @@ impl Parser {
             };
 
             expressions.push(Ordered {
+                nulls_auto,
                 this: expr,
                 desc,
                 nulls_first,
@@ -9113,19 +9174,24 @@ impl Parser {
                 (false, false)
             };
 
+            let mut nulls_auto = false;
             let nulls_first = if self.match_token(TokenType::Nulls) {
                 if self.match_token(TokenType::First) {
                     Some(true)
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
+                } else if self.is_vertica() && self.match_text_seq(&["AUTO"]) {
+                    nulls_auto = true;
+                    None
                 } else {
-                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST, LAST or AUTO after NULLS"));
                 }
             } else {
                 None
             };
 
             expressions.push(Ordered {
+                nulls_auto,
                 this: expr,
                 desc,
                 nulls_first,
@@ -9171,6 +9237,7 @@ impl Parser {
             };
 
             expressions.push(Ordered {
+                nulls_auto: false,
                 this: expr,
                 desc,
                 nulls_first: None,
@@ -9201,19 +9268,24 @@ impl Parser {
                 (false, false)
             };
 
+            let mut nulls_auto = false;
             let nulls_first = if self.match_token(TokenType::Nulls) {
                 if self.match_token(TokenType::First) {
                     Some(true)
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
+                } else if self.is_vertica() && self.match_text_seq(&["AUTO"]) {
+                    nulls_auto = true;
+                    None
                 } else {
-                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST, LAST or AUTO after NULLS"));
                 }
             } else {
                 None
             };
 
             expressions.push(Ordered {
+                nulls_auto,
                 this: expr,
                 desc,
                 nulls_first,
@@ -17654,7 +17726,9 @@ impl Parser {
                 col_def.visible = Some(true);
             } else if self.match_identifier("INVISIBLE") {
                 col_def.visible = Some(false);
-            } else if self.match_identifier("ENCODE") {
+            } else if self.match_identifier("ENCODE")
+                || (self.is_vertica() && self.match_text_seq(&["ENCODING"]))
+            {
                 // Redshift: ENCODE encoding_type (e.g., ZSTD, DELTA, LZO, etc.)
                 let encoding = self.expect_identifier_or_keyword()?;
                 col_def.encoding = Some(encoding);
@@ -30532,6 +30606,26 @@ impl Parser {
         // the comments are returned to the caller by being accessible via the
         // `comparison_pre_left_comments` field, so they can be placed appropriately
         // (e.g., after an alias name, or after the expression in an AND chain).
+        if self.is_vertica() && self.match_text_seq(&["INTERPOLATE"]) {
+            let previous = if self.match_text_seq(&["PREVIOUS"]) {
+                true
+            } else if self.match_text_seq(&["NEXT"]) {
+                false
+            } else {
+                return Err(self.parse_error("Expected PREVIOUS or NEXT after INTERPOLATE"));
+            };
+            if !self.match_text_seq(&["VALUE"]) {
+                return Err(self.parse_error("Expected VALUE after INTERPOLATE direction"));
+            }
+            let right = self.parse_bitwise_or()?;
+            return Ok(Expression::Vertica(Box::new(
+                VerticaExpression::Interpolate {
+                    left,
+                    right,
+                    previous,
+                },
+            )));
+        }
         let has_comparison_op = !self.is_at_end()
             && matches!(
                 self.peek().token_type,
@@ -32127,7 +32221,7 @@ impl Parser {
         // Create the Cast expression
         Ok(Some(Expression::Cast(Box::new(Cast {
             this: value,
-            to: data_type,
+            to: self.normalize_dialect_data_type(data_type),
             trailing_comments: Vec::new(),
             double_colon_syntax: false,
             format: None,
@@ -32247,8 +32341,22 @@ impl Parser {
     /// Parse unary expressions
     fn parse_unary(&mut self) -> Result<Expression> {
         let mut prefixes = Vec::new();
+        let is_vertica = self.config.dialect == Some(crate::dialects::DialectType::Vertica);
         while !self.is_at_end() {
             let token = self.peek().token_type;
+            // Vertica: `@ x` is ABS(x) and `!! x` is the prefix factorial
+            if is_vertica
+                && (token == TokenType::DAt
+                    || (token == TokenType::Exclamation && self.check_next(TokenType::Exclamation)))
+            {
+                let _scope = self.enter_parser_depth(prefixes.len() + 1)?;
+                if token == TokenType::Exclamation {
+                    self.skip();
+                }
+                prefixes.push(token);
+                self.skip();
+                continue;
+            }
             if !matches!(
                 token,
                 TokenType::Plus
@@ -32284,6 +32392,8 @@ impl Parser {
                 TokenType::PipeSlash => {
                     Expression::Sqrt(Box::new(UnaryFunc::with_name(expr, "|/".to_string())))
                 }
+                TokenType::DAt => Expression::Abs(Box::new(UnaryFunc::new(expr))),
+                TokenType::Exclamation => factorial(expr),
                 _ => unreachable!("collected prefix operator"),
             };
         }
@@ -32453,6 +32563,14 @@ impl Parser {
             }
         }
 
+        // Vertica: postfix `x!` is factorial
+        if self.config.dialect == Some(crate::dialects::DialectType::Vertica) {
+            while self.check(TokenType::Exclamation) && !self.check_next(TokenType::Exclamation) {
+                self.skip();
+                expr = factorial(expr);
+            }
+        }
+
         // Handle EXCLAMATION for Snowflake model attribute syntax: model!PREDICT(...)
         while self.match_token(TokenType::Exclamation) {
             // Parse the attribute/function after the exclamation mark
@@ -32484,6 +32602,14 @@ impl Parser {
             // IMPORTANT: Use parse_data_type_for_cast to avoid consuming subscripts as array dimensions
             // e.g., ::VARIANT[0] should be cast to VARIANT followed by subscript [0]
             while self.match_token(TokenType::DColon) {
+                if self.is_vertica() && self.match_token(TokenType::Exclamation) {
+                    let to = self.parse_data_type_for_cast()?;
+                    expr = Expression::Vertica(Box::new(VerticaExpression::SafeCast {
+                        this: expr,
+                        to,
+                    }));
+                    continue;
+                }
                 let data_type = self.parse_data_type_for_cast()?;
                 expr = Expression::Cast(Box::new(Cast {
                     this: expr,
@@ -32597,6 +32723,10 @@ impl Parser {
 
     #[inline(never)]
     fn parse_colon_json_path_inner(&mut self, mut this: Expression) -> Result<Expression> {
+        // Vertica uses colons for array slices, not Snowflake variant paths.
+        if self.is_vertica() {
+            return Ok(this);
+        }
         // DuckDB uses colon for prefix alias syntax (e.g., "alias: expr" means "expr AS alias")
         // Skip JSON path extraction for DuckDB - it's handled separately in parse_select_expressions
         if matches!(
@@ -34151,6 +34281,12 @@ impl Parser {
         // empty-input checks, including after a leading EOF has been normalized away.
         if self.tokens.is_empty() {
             return Err(self.end_of_input_error());
+        }
+
+        if self.is_vertica() {
+            if let Some(expression) = self.parse_vertica_primary()? {
+                return self.maybe_parse_subscript(expression);
+            }
         }
 
         // Exasol-style IF expression: IF condition THEN true_value ELSE false_value ENDIF
@@ -38900,6 +39036,9 @@ impl Parser {
         {
             return self.parse_hana_typed_function(name, upper_name, quoted);
         }
+        if self.is_vertica() && !quoted && self.is_vertica_parameter_function(upper_name) {
+            return self.parse_vertica_parameter_function(name);
+        }
         // ClickHouse bitOr/bitAnd/bitXor are scalar functions, not aggregate-family calls.
         // Routing them directly to the generic parser avoids aggregate-specific recursion
         // and matches the syntax used throughout the ClickHouse parser corpus.
@@ -39761,13 +39900,63 @@ impl Parser {
                 // Check for optional DISTINCT
                 let distinct = self.match_token(TokenType::Distinct);
                 let this = self.parse_expression()?;
-                let separator = if self.match_token(TokenType::Comma) {
+                let mut separator = if self.match_token(TokenType::Comma) {
                     Some(self.parse_expression()?)
                 } else {
                     None
                 };
+                let mut max_length = None;
+                let mut vertica_overflow = None;
+                // Vertica: LISTAGG(expr USING PARAMETERS separator = ',', max_length = n,
+                //                   on_overflow = 'ERROR' | 'TRUNCATE')
+                if self.config.dialect == Some(crate::dialects::DialectType::Vertica)
+                    && self.check(TokenType::Using)
+                    && self.check_next_identifier("PARAMETERS")
+                {
+                    self.skip();
+                    self.skip();
+                    loop {
+                        let name = self.expect_identifier_or_keyword()?;
+                        self.expect(TokenType::Eq)?;
+                        let value = self.parse_expression()?;
+                        match name.to_ascii_lowercase().as_str() {
+                            "separator" => separator = Some(value),
+                            "max_length" => max_length = Some(Box::new(value)),
+                            "on_overflow" => {
+                                let mode = match &value {
+                                    Expression::Literal(lit) => match lit.as_ref() {
+                                        Literal::String(mode) => mode.to_ascii_uppercase(),
+                                        _ => String::new(),
+                                    },
+                                    _ => String::new(),
+                                };
+                                vertica_overflow = Some(match mode.as_str() {
+                                    "ERROR" => ListAggOverflow::Error,
+                                    "TRUNCATE" => ListAggOverflow::Truncate {
+                                        filler: None,
+                                        with_count: false,
+                                    },
+                                    _ => {
+                                        return Err(self.parse_error(
+                                            "LISTAGG on_overflow must be 'ERROR' or 'TRUNCATE'",
+                                        ))
+                                    }
+                                });
+                            }
+                            other => {
+                                return Err(self
+                                    .parse_error(format!("Unknown LISTAGG parameter: {}", other)))
+                            }
+                        }
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
                 // Parse optional ON OVERFLOW clause
-                let on_overflow = if self.match_token(TokenType::On) {
+                let on_overflow = if vertica_overflow.is_some() {
+                    vertica_overflow
+                } else if self.match_token(TokenType::On) {
                     if self.match_identifier("OVERFLOW") {
                         if self.match_identifier("ERROR") {
                             Some(ListAggOverflow::Error)
@@ -39801,9 +39990,13 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
                 // WITHIN GROUP (ORDER BY ...) is handled by maybe_parse_over
                 Ok(Expression::ListAgg(Box::new(ListAggFunc {
+                    source_dialect: self
+                        .is_vertica()
+                        .then_some(crate::dialects::DialectType::Vertica),
                     this,
                     separator,
                     on_overflow,
+                    max_length,
                     order_by: None,
                     distinct,
                     filter: None,
@@ -41971,16 +42164,14 @@ impl Parser {
                             expression: end.map(Box::new),
                             step: step.map(Box::new),
                         }));
-                        expr = Expression::Subscript(Box::new(Subscript {
-                            this: expr,
-                            index: slice,
-                        }));
+                        if self.is_vertica() {
+                            return Err(
+                                self.parse_error("Vertica array slices do not support a step")
+                            );
+                        }
+                        expr = self.make_subscript(expr, slice);
                     } else {
-                        expr = Expression::ArraySlice(Box::new(ArraySlice {
-                            this: expr,
-                            start: None,
-                            end,
-                        }));
+                        expr = self.make_array_slice(expr, None, end);
                     }
                 } else {
                     let start = self.parse_slice_element()?;
@@ -42001,23 +42192,21 @@ impl Parser {
                                 expression: end.map(Box::new),
                                 step: step.map(Box::new),
                             }));
-                            expr = Expression::Subscript(Box::new(Subscript {
-                                this: expr,
-                                index: slice,
-                            }));
+                            if self.is_vertica() {
+                                return Err(
+                                    self.parse_error("Vertica array slices do not support a step")
+                                );
+                            }
+                            expr = self.make_subscript(expr, slice);
                         } else {
-                            expr = Expression::ArraySlice(Box::new(ArraySlice {
-                                this: expr,
-                                start,
-                                end,
-                            }));
+                            expr = self.make_array_slice(expr, start, end);
                         }
                     } else {
                         self.expect(TokenType::RBracket)?;
                         // Simple subscript access - start must be Some
                         let index =
                             start.unwrap_or_else(|| Expression::Null(crate::expressions::Null));
-                        expr = Expression::Subscript(Box::new(Subscript { this: expr, index }));
+                        expr = self.make_subscript(expr, index);
                     }
                 }
             } else if self.match_token(TokenType::DotColon) {
@@ -42356,7 +42545,15 @@ impl Parser {
                 } else {
                     // PostgreSQL :: cast operator: expr::type
                     self.skip(); // consume DColon
-                                 // Use parse_data_type_for_cast to avoid consuming subscripts as array dimensions
+                    if self.is_vertica() && self.match_token(TokenType::Exclamation) {
+                        let to = self.parse_data_type_for_cast()?;
+                        expr = Expression::Vertica(Box::new(VerticaExpression::SafeCast {
+                            this: expr,
+                            to,
+                        }));
+                        continue;
+                    }
+                    // Use parse_data_type_for_cast to avoid consuming subscripts as array dimensions
                     let data_type = self.parse_data_type_for_cast()?;
                     expr = Expression::Cast(Box::new(Cast {
                         this: expr,
@@ -42560,7 +42757,11 @@ impl Parser {
         };
 
         // Parse PARTITION BY or DISTRIBUTE BY (Hive uses DISTRIBUTE BY in window specs)
-        let partition_by = if self.match_keywords(&[TokenType::Partition, TokenType::By]) {
+        let partition_by = if self.is_vertica() && self.match_text_seq(&["PARTITION", "BEST"]) {
+            vec![Expression::Vertica(Box::new(
+                VerticaExpression::PartitionBest,
+            ))]
+        } else if self.match_keywords(&[TokenType::Partition, TokenType::By]) {
             self.parse_expression_list()?
         } else if self.match_keywords(&[TokenType::Distribute, TokenType::By]) {
             // Hive: DISTRIBUTE BY is equivalent to PARTITION BY in window specs
@@ -42594,13 +42795,17 @@ impl Parser {
                         let _ = self.expect_identifier_or_keyword();
                     }
                 }
+                let mut nulls_auto = false;
                 let nulls_first = if self.match_token(TokenType::Nulls) {
                     if self.match_token(TokenType::First) {
                         Some(true)
                     } else if self.match_token(TokenType::Last) {
                         Some(false)
+                    } else if self.is_vertica() && self.match_text_seq(&["AUTO"]) {
+                        nulls_auto = true;
+                        None
                     } else {
-                        return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
+                        return Err(self.parse_error("Expected FIRST, LAST or AUTO after NULLS"));
                     }
                 } else {
                     None
@@ -42665,6 +42870,7 @@ impl Parser {
                     None
                 };
                 exprs.push(Ordered {
+                    nulls_auto,
                     this: expr,
                     desc,
                     nulls_first,
@@ -44055,13 +44261,67 @@ impl Parser {
                 && name.eq_ignore_ascii_case("LARGEINT"))
     }
 
+    /// Vertica interval qualifiers may carry a seconds precision: `SECOND(3)`.
+    fn parse_interval_field_precision(&mut self, unit: String) -> Result<String> {
+        if self.config.dialect == Some(crate::dialects::DialectType::Vertica)
+            && self.check(TokenType::LParen)
+            && self.check_next(TokenType::Number)
+        {
+            self.skip();
+            let precision = self.expect_number()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(format!("{}({})", unit, precision));
+        }
+        Ok(unit)
+    }
+
     /// Parse a data type.
     fn parse_data_type(&mut self) -> Result<DataType> {
-        self.with_parser_depth(|parser| parser.parse_data_type_inner())
+        let data_type = self.with_parser_depth(|parser| parser.parse_data_type_inner())?;
+        Ok(self.normalize_dialect_data_type(data_type))
+    }
+
+    /// Apply dialect-specific type aliasing after a data type has been parsed.
+    ///
+    /// Vertica stores every integer type as a signed 64-bit integer and every
+    /// floating-point type as an 8-byte double, so the narrower spellings are
+    /// aliases rather than distinct types.
+    fn normalize_dialect_data_type(&self, data_type: DataType) -> DataType {
+        if self.config.dialect != Some(crate::dialects::DialectType::Vertica) {
+            return data_type;
+        }
+        match data_type {
+            DataType::Int { .. } | DataType::SmallInt { .. } | DataType::TinyInt { .. } => {
+                DataType::BigInt { length: None }
+            }
+            DataType::Float { .. } => DataType::Double {
+                precision: None,
+                scale: None,
+            },
+            DataType::Decimal { precision, scale } => DataType::Decimal {
+                precision: Some(precision.unwrap_or(37)),
+                scale: Some(scale.unwrap_or(15)),
+            },
+            DataType::Custom { ref name }
+                if name.eq_ignore_ascii_case("INT8") || name.eq_ignore_ascii_case("INT4") =>
+            {
+                DataType::BigInt { length: None }
+            }
+            DataType::Custom { ref name } if name.eq_ignore_ascii_case("FLOAT8") => {
+                DataType::Double {
+                    precision: None,
+                    scale: None,
+                }
+            }
+            other => other,
+        }
     }
 
     #[inline(never)]
     fn parse_data_type_inner(&mut self) -> Result<DataType> {
+        if let Some(data_type) = self.parse_vertica_data_type()? {
+            return Ok(data_type);
+        }
         // Handle special token types that represent data type keywords
         // Teradata tokenizes ST_GEOMETRY as TokenType::Geometry
         if self.check(TokenType::Geometry)
@@ -44692,7 +44952,10 @@ impl Parser {
                     && !self.check(TokenType::RParen)
                     && !self.check(TokenType::Comma)
                 {
-                    Some(self.advance_text()?.to_ascii_uppercase())
+                    {
+                        let unit = self.advance_text()?.to_ascii_uppercase();
+                        Some(self.parse_interval_field_precision(unit)?)
+                    }
                 } else {
                     None
                 };
@@ -44702,7 +44965,10 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance_text()?.to_ascii_uppercase())
+                        {
+                            let unit = self.advance_text()?.to_ascii_uppercase();
+                            Some(self.parse_interval_field_precision(unit)?)
+                        }
                     } else {
                         None
                     }
@@ -45042,10 +45308,27 @@ impl Parser {
                     })
                 }
             }
-            // LONG VARCHAR (Exasol) - same as TEXT
+            // LONG VARCHAR (Exasol, Vertica) - same as TEXT
+            // LONG VARBINARY (Vertica) - same as BLOB
             "LONG" => {
                 if self.match_identifier("VARCHAR") {
-                    Ok(DataType::Text)
+                    if self.match_token(TokenType::LParen) {
+                        let length = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::TextWithLength { length })
+                    } else {
+                        Ok(DataType::Text)
+                    }
+                } else if self.match_identifier("VARBINARY") {
+                    if self.match_token(TokenType::LParen) {
+                        let length = self.expect_number()?;
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::Custom {
+                            name: format!("LONG VARBINARY({})", length),
+                        })
+                    } else {
+                        Ok(DataType::Blob)
+                    }
                 } else {
                     Ok(DataType::Custom {
                         name: "LONG".to_string(),
@@ -45352,11 +45635,15 @@ impl Parser {
     /// For other dialects (like Snowflake), brackets are subscript operations
     /// (e.g., x::VARIANT[0] means cast to VARIANT, then subscript with [0]).
     fn parse_data_type_for_cast(&mut self) -> Result<DataType> {
-        self.with_parser_depth(|parser| parser.parse_data_type_for_cast_inner())
+        let data_type = self.with_parser_depth(|parser| parser.parse_data_type_for_cast_inner())?;
+        Ok(self.normalize_dialect_data_type(data_type))
     }
 
     #[inline(never)]
     fn parse_data_type_for_cast_inner(&mut self) -> Result<DataType> {
+        if let Some(data_type) = self.parse_vertica_data_type()? {
+            return Ok(data_type);
+        }
         // Check if dialect supports array type suffixes (e.g., INT[], VARCHAR[3])
         // PostgreSQL: INT[], TEXT[] (no fixed size)
         // DuckDB: INT[3] (fixed size arrays)
@@ -45698,7 +45985,10 @@ impl Parser {
                     && !self.check(TokenType::Not)
                     && !self.check(TokenType::Null)
                 {
-                    Some(self.advance_text()?.to_ascii_uppercase())
+                    {
+                        let unit = self.advance_text()?.to_ascii_uppercase();
+                        Some(self.parse_interval_field_precision(unit)?)
+                    }
                 } else {
                     None
                 };
@@ -45708,7 +45998,10 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance_text()?.to_ascii_uppercase())
+                        {
+                            let unit = self.advance_text()?.to_ascii_uppercase();
+                            Some(self.parse_interval_field_precision(unit)?)
+                        }
                     } else {
                         None
                     }
@@ -47802,6 +48095,14 @@ impl Parser {
     /// Check for an implicit relation alias while preserving clause and join boundaries.
     /// Shared by FROM and JOIN sources, including subqueries and table functions.
     fn can_parse_implicit_table_alias(&self) -> bool {
+        if self.is_vertica()
+            && matches!(
+                self.peek_text().to_ascii_uppercase().as_str(),
+                "TIMESERIES" | "MATCH" | "SEGMENTED" | "UNSEGMENTED" | "KSAFE"
+            )
+        {
+            return false;
+        }
         if self.is_at_end() {
             return false;
         }
@@ -51284,18 +51585,12 @@ impl Parser {
         } else if let Some(base_expr) = this {
             // Subscript access: base[index]
             if expressions.len() == 1 {
-                Ok(Some(Expression::Subscript(Box::new(Subscript {
-                    this: base_expr,
-                    index: expressions.remove(0),
-                }))))
+                Ok(Some(self.make_subscript(base_expr, expressions.remove(0))))
             } else {
                 // Multiple indices - create nested subscripts or array
                 let mut result = base_expr;
                 for expr in expressions {
-                    result = Expression::Subscript(Box::new(Subscript {
-                        this: result,
-                        index: expr,
-                    }));
+                    result = self.make_subscript(result, expr);
                 }
                 Ok(Some(result))
             }
@@ -51952,10 +52247,7 @@ impl Parser {
                 let index = self.parse_disjunction()?;
                 self.match_token(TokenType::RBracket);
                 if let Some(idx) = index {
-                    Some(Expression::Subscript(Box::new(Subscript {
-                        this: expr,
-                        index: idx,
-                    })))
+                    Some(self.make_subscript(expr, idx))
                 } else {
                     Some(expr)
                 }
@@ -54654,6 +54946,7 @@ impl Parser {
                     None
                 };
                 orderings.push(Ordered {
+                    nulls_auto: false,
                     this: order_expr,
                     desc,
                     nulls_first,
@@ -58148,6 +58441,7 @@ impl Parser {
         };
 
         Ok(Some(Ordered {
+            nulls_auto: false,
             this: expr,
             desc,
             nulls_first,
@@ -58902,6 +59196,7 @@ impl Parser {
                 query_hints: Vec::new(),
                 result_serialization: None,
 
+                vertica: None,
                 expressions: Vec::new(),
                 from: None,
                 joins: Vec::new(),
@@ -58985,6 +59280,7 @@ impl Parser {
                         };
                         // Add modified Ordered to orders
                         orders.push(Expression::Ordered(Box::new(Ordered {
+                            nulls_auto: false,
                             this: this.clone(),
                             desc: ordered.desc,
                             nulls_first: ordered.nulls_first,
@@ -59033,6 +59329,7 @@ impl Parser {
                 query_hints: Vec::new(),
                 result_serialization: None,
 
+                vertica: None,
                 expressions: Vec::new(),
                 from: None,
                 joins: Vec::new(),
@@ -65628,6 +65925,739 @@ impl Parser {
     }
 }
 
+// Vertica dialect support.
+impl Parser {
+    fn is_vertica_parameter_function(&self, name: &str) -> bool {
+        // LISTAGG remains owned by the aggregate parser and its canonical AST.
+        name != "LISTAGG" && (name == "EXPLODE" || self.vertica_has_parameters())
+    }
+
+    fn parse_vertica_statement(&mut self) -> Result<Option<Expression>> {
+        let statement = if self.match_text_seq(&["CREATE", "PROJECTION"]) {
+            let name = self.parse_table_ref()?;
+            let mut columns = Vec::new();
+            if self.match_token(TokenType::LParen) {
+                loop {
+                    let name = self.expect_identifier_or_keyword_with_quoted()?;
+                    let encoding = if self.match_text_seq(&["ENCODING"]) {
+                        Some(self.expect_identifier_or_keyword_with_quoted()?)
+                    } else {
+                        None
+                    };
+                    columns.push(VerticaProjectionColumn { name, encoding });
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+            }
+            self.expect(TokenType::As)?;
+            let mut query = self.parse_select()?;
+            let mut physical = self.parse_vertica_physical()?;
+            // In CREATE PROJECTION the trailing ORDER BY describes storage order.
+            if let Expression::Select(select) = &mut query {
+                if let Some(order) = select.order_by.take() {
+                    physical.order_by = order.expressions;
+                }
+            }
+            VerticaExpression::Projection {
+                name,
+                columns,
+                query,
+                physical,
+            }
+        } else if self.check_text_seq(&["CREATE", "FLEX"])
+            || self.check_text_seq(&["CREATE", "FLEXIBLE"])
+        {
+            self.skip();
+            self.skip();
+            let this = self.parse_create_table(false, false, Vec::new(), None)?;
+            let physical = self.parse_vertica_physical()?;
+            VerticaExpression::FlexTable { this, physical }
+        } else if self.check_text_seq(&["CREATE", "TABLE"])
+            || self.check_text_seq(&["CREATE", "TEMP", "TABLE"])
+            || self.check_text_seq(&["CREATE", "TEMPORARY", "TABLE"])
+        {
+            let this = self.parse_statement_slow()?;
+            let physical = self.parse_vertica_physical()?;
+            if physical == VerticaPhysical::default() {
+                return Ok(Some(this));
+            }
+            VerticaExpression::PhysicalTable { this, physical }
+        } else if self.match_token(TokenType::Copy) {
+            let table = self.parse_table_ref()?;
+            let columns = if self.match_token(TokenType::LParen) {
+                self.parse_vertica_identifiers()?
+            } else {
+                Vec::new()
+            };
+            self.expect(TokenType::From)?;
+            let local = self.match_text_seq(&["LOCAL"]);
+            let mut sources = Vec::new();
+            loop {
+                sources.push(if self.match_text_seq(&["STDIN"]) {
+                    Expression::Identifier(Identifier::new("STDIN"))
+                } else {
+                    Expression::string(&self.expect_string()?)
+                });
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            let mut parser = None;
+            let mut options = Vec::new();
+            loop {
+                if self.match_text_seq(&["PARSER"]) {
+                    if parser.is_some() {
+                        return Err(self.parse_error("Duplicate COPY PARSER"));
+                    }
+                    let name = self.parse_table_ref()?;
+                    self.expect(TokenType::LParen)?;
+                    parser = Some(VerticaParserCall {
+                        name,
+                        parameters: self.parse_vertica_named_parameters()?,
+                    });
+                } else if matches!(
+                    self.peek_text().to_ascii_uppercase().as_str(),
+                    "DELIMITER" | "NULL" | "ESCAPE" | "SKIP" | "REJECTMAX"
+                ) {
+                    let name = Identifier::new(self.advance_text()?.to_ascii_uppercase());
+                    let value = self.parse_expression()?;
+                    options.push(VerticaParameter { name, value });
+                } else {
+                    break;
+                }
+            }
+            VerticaExpression::Copy {
+                table,
+                columns,
+                local,
+                sources,
+                parser,
+                options,
+            }
+        } else if self.match_text_seq(&["EXPORT", "TO", "PARQUET"]) {
+            self.expect(TokenType::LParen)?;
+            let options = self.parse_vertica_named_parameters()?;
+            let over = if self.match_token(TokenType::Over) {
+                Some(self.parse_over_clause()?)
+            } else {
+                None
+            };
+            self.expect(TokenType::As)?;
+            let query = self.parse_statement()?;
+            VerticaExpression::ExportParquet {
+                options,
+                over,
+                query,
+            }
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(Expression::Vertica(Box::new(statement))))
+    }
+
+    fn parse_vertica_identifiers(&mut self) -> Result<Vec<Identifier>> {
+        let mut names = Vec::new();
+        loop {
+            names.push(self.expect_identifier_or_keyword_with_quoted()?);
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        Ok(names)
+    }
+
+    fn parse_vertica_named_parameters(&mut self) -> Result<Vec<VerticaParameter>> {
+        let mut parameters = Vec::new();
+        let mut names = HashSet::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                let name = self.expect_identifier_or_keyword_with_quoted()?;
+                if !names.insert(name.name.to_ascii_lowercase()) {
+                    return Err(self.parse_error("Duplicate parameter"));
+                }
+                self.expect(TokenType::Eq)?;
+                parameters.push(VerticaParameter {
+                    name,
+                    value: self.parse_expression()?,
+                });
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        Ok(parameters)
+    }
+
+    fn parse_vertica_physical(&mut self) -> Result<VerticaPhysical> {
+        let mut physical = VerticaPhysical::default();
+        if self.match_text_seq(&["ORDER", "BY"]) {
+            physical.order_by = self.parse_order_by_list()?;
+        }
+        if self.match_text_seq(&["SEGMENTED", "BY"]) {
+            let expression = self.parse_expression()?;
+            if !self.match_text_seq(&["ALL", "NODES"]) {
+                return Err(self.parse_error("SEGMENTED BY requires ALL NODES"));
+            }
+            let offset = if self.match_text_seq(&["OFFSET"]) {
+                Some(self.vertica_nonnegative_integer()?)
+            } else {
+                None
+            };
+            physical.segmentation = Some(VerticaSegmentation::Segmented { expression, offset });
+        } else if self.match_text_seq(&["UNSEGMENTED"]) {
+            let node = if self.match_text_seq(&["ALL", "NODES"]) {
+                None
+            } else if self.match_text_seq(&["NODE"]) {
+                Some(self.expect_identifier_or_keyword_with_quoted()?)
+            } else {
+                return Err(self.parse_error("UNSEGMENTED requires ALL NODES or NODE name"));
+            };
+            physical.segmentation = Some(VerticaSegmentation::Unsegmented { node });
+        }
+        if self.match_text_seq(&["KSAFE"]) {
+            physical.ksafe = Some(if self.check(TokenType::Number) {
+                VerticaKsafe::Level(self.vertica_nonnegative_integer()?)
+            } else {
+                VerticaKsafe::Default
+            });
+        }
+        Ok(physical)
+    }
+
+    fn vertica_nonnegative_integer(&mut self) -> Result<u32> {
+        self.advance_text()?
+            .parse::<u32>()
+            .map_err(|_| self.parse_error("Expected non-negative integer"))
+    }
+
+    fn parse_vertica_timeseries(&mut self) -> Result<Option<VerticaTimeseries>> {
+        if !self.is_vertica() || !self.match_text_seq(&["TIMESERIES"]) {
+            return Ok(None);
+        }
+        let alias = self.expect_identifier_or_keyword_with_quoted()?;
+        self.expect(TokenType::As)?;
+        let interval = Expression::string(&self.expect_string()?);
+        self.expect(TokenType::Over)?;
+        let over = self.parse_over_clause()?;
+        if over.order_by.len() != 1 || over.frame.is_some() || over.window_name.is_some() {
+            return Err(
+                self.parse_error("TIMESERIES requires one ORDER BY expression and no frame")
+            );
+        }
+        Ok(Some(VerticaTimeseries {
+            alias,
+            interval,
+            over,
+        }))
+    }
+
+    fn parse_vertica_match(&mut self) -> Result<Option<VerticaMatch>> {
+        if !self.is_vertica() || !self.match_text_seq(&["MATCH"]) {
+            return Ok(None);
+        }
+        self.expect(TokenType::LParen)?;
+        let partition_by = if self.match_text_seq(&["PARTITION", "BY"]) {
+            self.parse_expression_list()?
+        } else {
+            Vec::new()
+        };
+        if !self.match_text_seq(&["ORDER", "BY"]) {
+            return Err(self.parse_error("MATCH requires ORDER BY"));
+        }
+        let order_by = self.parse_order_by_list()?;
+        if !self.match_text_seq(&["DEFINE"]) {
+            return Err(self.parse_error("MATCH requires DEFINE"));
+        }
+        let mut definitions = Vec::new();
+        let mut names = HashSet::new();
+        loop {
+            let name = self.expect_identifier_or_keyword_with_quoted()?;
+            if !names.insert(name.name.to_ascii_lowercase()) {
+                return Err(self.parse_error("Duplicate MATCH event"));
+            }
+            self.expect(TokenType::As)?;
+            let value = self.parse_expression()?;
+            {
+                use crate::traversal::ExpressionWalk;
+                if value.dfs().any(|e| {
+                    crate::traversal::is_aggregate(e)
+                        || matches!(
+                            e,
+                            Expression::WindowFunction(_)
+                                | Expression::Subquery(_)
+                                | Expression::Select(_)
+                        )
+                }) {
+                    return Err(self.parse_error(
+                        "MATCH DEFINE cannot contain aggregates, windows or subqueries",
+                    ));
+                }
+            }
+            definitions.push(VerticaParameter { name, value });
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+        if definitions.len() > 52 {
+            return Err(self.parse_error("MATCH supports at most 52 events"));
+        }
+        if !self.match_text_seq(&["PATTERN"]) {
+            return Err(self.parse_error("MATCH requires PATTERN"));
+        }
+        let name = self.expect_identifier_or_keyword_with_quoted()?;
+        self.expect(TokenType::As)?;
+        self.expect(TokenType::LParen)?;
+        let pattern = self.parse_vertica_pattern(&names)?;
+        self.expect(TokenType::RParen)?;
+        let first_event = if self.match_text_seq(&["ROWS", "MATCH"]) {
+            if self.match_text_seq(&["FIRST", "EVENT"]) {
+                Some(true)
+            } else if self.match_text_seq(&["ALL", "EVENTS"]) {
+                Some(false)
+            } else {
+                return Err(self.parse_error("Expected FIRST EVENT or ALL EVENTS"));
+            }
+        } else {
+            None
+        };
+        self.expect(TokenType::RParen)?;
+        Ok(Some(VerticaMatch {
+            partition_by,
+            order_by,
+            definitions,
+            name,
+            pattern,
+            first_event,
+        }))
+    }
+
+    fn parse_vertica_pattern(&mut self, events: &HashSet<String>) -> Result<VerticaPattern> {
+        self.with_parser_depth(|parser| {
+            let mut alternatives = Vec::new();
+            loop {
+                let mut sequence = Vec::new();
+                while !parser.is_at_end()
+                    && !parser.check(TokenType::RParen)
+                    && parser.peek_text() != "|"
+                {
+                    let mut atom = if parser.match_token(TokenType::LParen) {
+                        let group = parser.parse_vertica_pattern(events)?;
+                        parser.expect(TokenType::RParen)?;
+                        VerticaPattern::Group(Box::new(group))
+                    } else {
+                        let name = parser.expect_identifier_or_keyword_with_quoted()?;
+                        if !events.contains(&name.name.to_ascii_lowercase()) {
+                            return Err(
+                                parser.parse_error("Pattern references an undefined MATCH event")
+                            );
+                        }
+                        VerticaPattern::Event(name)
+                    };
+                    if matches!(parser.peek_text(), "*" | "+" | "?" | "??") {
+                        let mut quantifier = parser.advance_text()?;
+                        if quantifier.len() == 1 && matches!(parser.peek_text(), "?" | "+") {
+                            quantifier.push_str(&parser.advance_text()?);
+                        }
+                        atom = VerticaPattern::Repeat {
+                            pattern: Box::new(atom),
+                            quantifier,
+                        };
+                    }
+                    sequence.push(atom);
+                }
+                if sequence.is_empty() {
+                    return Err(parser.parse_error("Empty MATCH pattern"));
+                }
+                alternatives.push(if sequence.len() == 1 {
+                    sequence.pop().unwrap()
+                } else {
+                    VerticaPattern::Sequence(sequence)
+                });
+                if parser.peek_text() != "|" {
+                    break;
+                }
+                parser.skip();
+            }
+            Ok(if alternatives.len() == 1 {
+                alternatives.pop().unwrap()
+            } else {
+                VerticaPattern::Alternative(alternatives)
+            })
+        })
+    }
+
+    fn is_vertica(&self) -> bool {
+        self.config.dialect == Some(crate::dialects::DialectType::Vertica)
+    }
+
+    fn vertica_has_parameters(&self) -> bool {
+        let mut depth = 0;
+        for token in self.tokens.iter().skip(self.current) {
+            match token.token_type {
+                TokenType::LParen | TokenType::LBracket => depth += 1,
+                TokenType::RParen | TokenType::RBracket if depth == 0 => return false,
+                TokenType::RParen | TokenType::RBracket => depth -= 1,
+                TokenType::Using if depth == 0 => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn parse_vertica_parameter_function(&mut self, name: &str) -> Result<Expression> {
+        let mut args = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                args.push(self.parse_expression()?);
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        let mut parameters = Vec::new();
+        if self.match_token(TokenType::Using) {
+            if !self.match_text_seq(&["PARAMETERS"]) {
+                return Err(self.parse_error("Expected PARAMETERS after USING"));
+            }
+            let mut names = HashSet::new();
+            loop {
+                let name = self.expect_identifier_or_keyword_with_quoted()?;
+                if !names.insert(name.name.to_ascii_lowercase()) {
+                    return Err(self.parse_error("Duplicate USING PARAMETERS name"));
+                }
+                self.expect(TokenType::Eq)?;
+                let value = self.parse_expression()?;
+                parameters.push(VerticaParameter { name, value });
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        let this = if name.eq_ignore_ascii_case("APPROXIMATE_PERCENTILE")
+            || name.eq_ignore_ascii_case("APPROXIMATE_COUNT_DISTINCT")
+        {
+            Expression::AggregateFunction(Box::new(AggregateFunction {
+                name: name.to_string(),
+                args,
+                ..Default::default()
+            }))
+        } else {
+            Expression::Function(Box::new(Function::new(name.to_string(), args)))
+        };
+        // Even without parameters EXPLODE has a Vertica-specific result shape.
+        if parameters.is_empty() && !name.eq_ignore_ascii_case("EXPLODE") {
+            return Ok(this);
+        }
+        Ok(Expression::Vertica(Box::new(
+            VerticaExpression::UsingParameters { this, parameters },
+        )))
+    }
+
+    fn vertica_precision(&mut self) -> Result<Option<u32>> {
+        if !self.match_token(TokenType::LParen) {
+            return Ok(None);
+        }
+        let text = self.advance_text()?;
+        let number = text
+            .parse::<u32>()
+            .map_err(|_| self.parse_error("Expected non-negative integer precision or bound"))?;
+        self.expect(TokenType::RParen)?;
+        Ok(Some(number))
+    }
+
+    fn vertica_interval_units(&mut self) -> Result<(Option<String>, Option<String>)> {
+        let unit = if matches!(
+            self.peek_text().to_ascii_uppercase().as_str(),
+            "YEAR" | "MONTH" | "DAY" | "HOUR" | "MINUTE" | "SECOND"
+        ) {
+            let unit = self.advance_text()?.to_ascii_uppercase();
+            Some(self.parse_interval_field_precision(unit)?)
+        } else {
+            None
+        };
+        let end = if self.match_token(TokenType::To) {
+            let unit = self.advance_text()?.to_ascii_uppercase();
+            if !matches!(unit.as_str(), "MONTH" | "HOUR" | "MINUTE" | "SECOND") {
+                return Err(self.parse_error("Invalid interval end unit"));
+            }
+            Some(self.parse_interval_field_precision(unit)?)
+        } else {
+            None
+        };
+        Ok((unit, end))
+    }
+
+    fn make_subscript(&self, this: Expression, index: Expression) -> Expression {
+        if self.is_vertica() {
+            Expression::Vertica(Box::new(VerticaExpression::ArrayAccess {
+                this,
+                indices: vec![index],
+            }))
+        } else {
+            Expression::Subscript(Box::new(Subscript { this, index }))
+        }
+    }
+
+    fn make_array_slice(
+        &self,
+        this: Expression,
+        start: Option<Expression>,
+        end: Option<Expression>,
+    ) -> Expression {
+        if self.is_vertica() {
+            Expression::Vertica(Box::new(VerticaExpression::ArraySlice { this, start, end }))
+        } else {
+            Expression::ArraySlice(Box::new(ArraySlice { this, start, end }))
+        }
+    }
+
+    fn parse_vertica_data_type(&mut self) -> Result<Option<DataType>> {
+        if !self.is_vertica() {
+            return Ok(None);
+        }
+        let name = self.peek_text().to_ascii_uppercase();
+        // Resolve defaults before losing the alias spelling. In particular,
+        // NUMBER and MONEY have different defaults from NUMERIC/DECIMAL.
+        // https://docs.vertica.com/25.2.x/en/sql-reference/data-types/numeric-data-types/numeric/
+        let defaults = match name.as_str() {
+            "DECIMAL" | "NUMERIC" => Some((37, 15)),
+            "NUMBER" => Some((38, 0)),
+            "MONEY" => Some((18, 4)),
+            _ => None,
+        };
+        if let Some((default_precision, default_scale)) = defaults {
+            self.skip();
+            let (precision, scale) = if self.match_token(TokenType::LParen) {
+                let precision = self.vertica_nonnegative_integer()?;
+                let scale = if self.match_token(TokenType::Comma) {
+                    self.vertica_nonnegative_integer()?
+                } else {
+                    default_scale
+                };
+                self.expect(TokenType::RParen)?;
+                (precision, scale)
+            } else {
+                (default_precision, default_scale)
+            };
+            if precision == 0 || precision > 1024 || scale > precision {
+                return Err(self.parse_error("Invalid Vertica numeric precision or scale"));
+            }
+            return Ok(Some(DataType::Decimal {
+                precision: Some(precision),
+                scale: Some(scale),
+            }));
+        }
+        let value = match name.as_str() {
+            "ARRAY" | "SET" if self.check_next(TokenType::LBracket) => {
+                self.skip();
+                self.skip();
+                let element_type = self.parse_data_type()?;
+                let mut bound = if self.match_token(TokenType::Comma) {
+                    let text = self.advance_text()?;
+                    let count = text
+                        .parse::<u32>()
+                        .map_err(|_| self.parse_error("Invalid collection bound"))?;
+                    if count == 0 {
+                        return Err(self.parse_error("Collection bound must be positive"));
+                    }
+                    Some(VerticaCollectionBound::Elements(count))
+                } else {
+                    None
+                };
+                self.expect(TokenType::RBracket)?;
+                if let Some(bytes) = self.vertica_precision()? {
+                    if bound.is_some() || bytes == 0 {
+                        return Err(self.parse_error(
+                            "Specify either an element bound or a positive byte size",
+                        ));
+                    }
+                    bound = Some(VerticaCollectionBound::Bytes(bytes));
+                }
+                if name == "ARRAY" {
+                    VerticaDataType::Array {
+                        element_type,
+                        bound,
+                    }
+                } else {
+                    VerticaDataType::Set {
+                        element_type,
+                        bound,
+                    }
+                }
+            }
+            "ROW" if self.check_next(TokenType::LParen) => {
+                self.skip();
+                self.skip();
+                let mut fields = Vec::new();
+                loop {
+                    let name = self.expect_identifier_or_keyword_with_quoted()?;
+                    let data_type = self.parse_data_type()?;
+                    let name = if name.quoted {
+                        format!("\"{}\"", name.name.replace('"', "\"\""))
+                    } else {
+                        name.name
+                    };
+                    fields.push(StructField::new(name, data_type));
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+                VerticaDataType::Row { fields }
+            }
+            "LONG" if self.check_next_identifier("VARBINARY") => {
+                self.skip();
+                self.skip();
+                VerticaDataType::LongVarBinary {
+                    length: self.vertica_precision()?,
+                }
+            }
+            "INTERVAL" | "INTERVALYM" => {
+                self.skip();
+                let precision = self.vertica_precision()?;
+                if precision.is_some_and(|p| p > 6) {
+                    return Err(self.parse_error("Interval precision must be between 0 and 6"));
+                }
+                let (unit, end_unit) = self.vertica_interval_units()?;
+                VerticaDataType::Interval {
+                    precision,
+                    year_month: name == "INTERVALYM",
+                    unit,
+                    end_unit,
+                }
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(DataType::Vertica {
+            vertica_type: Box::new(value),
+        }))
+    }
+
+    fn parse_vertica_primary(&mut self) -> Result<Option<Expression>> {
+        let name = self.peek_text().to_ascii_uppercase();
+        if matches!(name.as_str(), "NUMERIC" | "DECIMAL" | "NUMBER" | "MONEY")
+            && self.check_next(TokenType::String)
+        {
+            let to = self.parse_data_type()?;
+            let value = self.expect_string()?;
+            return Ok(Some(Expression::Cast(Box::new(Cast {
+                this: Expression::string(value),
+                to,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+                inferred_type: None,
+            }))));
+        }
+        if name == "SET" && self.check_next(TokenType::LBracket) {
+            self.skip();
+            self.skip();
+            let values = if self.check(TokenType::RBracket) {
+                Vec::new()
+            } else {
+                self.parse_expression_list()?
+            };
+            self.expect(TokenType::RBracket)?;
+            return Ok(Some(Expression::Vertica(Box::new(
+                VerticaExpression::Set { values },
+            ))));
+        }
+        if matches!(name.as_str(), "INTERVAL" | "INTERVALYM")
+            && (self.check_next(TokenType::LParen) || self.check_next(TokenType::String))
+        {
+            self.skip();
+            let precision = self.vertica_precision()?;
+            if precision.is_some_and(|p| p > 6) {
+                return Err(self.parse_error("Interval precision must be between 0 and 6"));
+            }
+            let value = Expression::string(&self.expect_string()?);
+            let (unit, end_unit) = self.vertica_interval_units()?;
+            return Ok(Some(Expression::Vertica(Box::new(
+                VerticaExpression::Interval {
+                    value,
+                    precision,
+                    year_month: name == "INTERVALYM",
+                    unit,
+                    end_unit,
+                },
+            ))));
+        }
+        if matches!(
+            self.peek().token_type,
+            TokenType::HexString | TokenType::BitString
+        ) {
+            let binary = self.check(TokenType::BitString);
+            let value = self.advance_text()?;
+            let hex = if binary {
+                if !value.chars().all(|c| c == '0' || c == '1') {
+                    return Err(self.parse_error("Invalid binary literal"));
+                }
+                let padded = format!("{}{}", "0".repeat((8 - value.len() % 8) % 8), value);
+                padded
+                    .as_bytes()
+                    .chunks(8)
+                    .map(|bits| {
+                        let byte = bits.iter().fold(0u8, |n, b| (n << 1) | (b - b'0'));
+                        format!("{byte:02x}")
+                    })
+                    .collect::<String>()
+            } else {
+                if !value.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(self.parse_error("Invalid hexadecimal literal"));
+                }
+                format!(
+                    "{}{}",
+                    if value.len() % 2 == 1 { "0" } else { "" },
+                    value.to_ascii_lowercase()
+                )
+            };
+            return Ok(Some(Expression::Vertica(Box::new(
+                VerticaExpression::Binary { hex },
+            ))));
+        }
+        Ok(None)
+    }
+
+    fn parse_vertica_historical(&mut self) -> Result<Expression> {
+        self.skip();
+        let point = if self.match_text_seq(&["EPOCH"]) {
+            if self.match_text_seq(&["LATEST"]) {
+                VerticaHistoricalPoint::Latest
+            } else {
+                if !self.check(TokenType::Number) {
+                    return Err(self.parse_error("Expected epoch number"));
+                }
+                VerticaHistoricalPoint::Epoch(Expression::Literal(Box::new(Literal::Number(
+                    self.advance_text()?,
+                ))))
+            }
+        } else if self.match_text_seq(&["TIME"]) {
+            VerticaHistoricalPoint::Time(Expression::string(&self.expect_string()?))
+        } else {
+            return Err(self.parse_error("Expected EPOCH or TIME after AT"));
+        };
+        let query = self.parse_statement()?;
+        if !matches!(
+            query,
+            Expression::Select(_)
+                | Expression::Union(_)
+                | Expression::Intersect(_)
+                | Expression::Except(_)
+        ) {
+            return Err(self.parse_error("Historical prefix requires a query"));
+        }
+        Ok(Expression::Vertica(Box::new(
+            VerticaExpression::Historical { query, point },
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69559,4 +70589,9 @@ mod explicit_eof_token_tests {
             }]
         );
     }
+}
+
+/// FACTORIAL(x), produced by Vertica's `x!` and `!! x` operators.
+fn factorial(expr: Expression) -> Expression {
+    Expression::Function(Box::new(Function::new("FACTORIAL".to_string(), vec![expr])))
 }

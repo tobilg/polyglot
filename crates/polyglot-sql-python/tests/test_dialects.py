@@ -37,6 +37,7 @@ EXPECTED_DIALECTS = {
     "tidb",
     "trino",
     "tsql",
+    "vertica",
 }
 
 

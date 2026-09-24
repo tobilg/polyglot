@@ -63,6 +63,7 @@ macro_rules! define_expression_subclasses {
 }
 
 define_expression_subclasses!(
+    Vertica,
     Literal,
     Boolean,
     Null,

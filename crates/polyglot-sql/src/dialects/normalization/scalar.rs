@@ -1130,6 +1130,7 @@ pub(super) fn rewrite(
                                         crate::expressions::WithinGroup {
                                             this: inner,
                                             order_by: vec![crate::expressions::Ordered {
+                                                nulls_auto: false,
                                                 this: column,
                                                 desc: false,
                                                 nulls_first: None,
@@ -1173,6 +1174,7 @@ pub(super) fn rewrite(
                                         crate::expressions::WithinGroup {
                                             this: inner,
                                             order_by: vec![crate::expressions::Ordered {
+                                                nulls_auto: false,
                                                 this: column,
                                                 desc: false,
                                                 nulls_first: None,
@@ -5600,7 +5602,7 @@ pub(super) fn rewrite(
                                         ))))
                                     }
                                 }
-                                DialectType::Redshift => {
+                                DialectType::Redshift | DialectType::Vertica => {
                                     let unit = Expression::Identifier(Identifier::new("DAY"));
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATEDIFF".to_string(),
@@ -6853,9 +6855,12 @@ pub(super) fn rewrite(
                         // GETDATE() -> CURRENT_TIMESTAMP for non-TSQL targets
                         "GETDATE" if f.args.is_empty() => match target {
                             DialectType::TSQL => Ok(Expression::Function(f)),
-                            DialectType::Redshift => Ok(Expression::Function(Box::new(
-                                Function::new("GETDATE".to_string(), vec![]),
-                            ))),
+                            DialectType::Redshift | DialectType::Vertica => {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "GETDATE".to_string(),
+                                    vec![],
+                                ))))
+                            }
                             _ => Ok(Expression::CurrentTimestamp(
                                 crate::expressions::CurrentTimestamp {
                                     precision: None,
@@ -7122,6 +7127,10 @@ pub(super) fn rewrite(
                                 DialectType::Oracle | DialectType::Redshift => {
                                     Ok(Expression::Function(f))
                                 }
+                                // Vertica: SYSDATE is a synonym for GETDATE()
+                                DialectType::Vertica => Ok(Expression::Function(Box::new(
+                                    Function::new("GETDATE".to_string(), vec![]),
+                                ))),
                                 DialectType::Snowflake => {
                                     // Snowflake uses SYSDATE() with parens
                                     let mut f = *f;
@@ -10122,6 +10131,7 @@ pub(super) fn rewrite(
                                     | DialectType::Teradata
                                     | DialectType::Spark
                                     | DialectType::Databricks
+                                    | DialectType::Vertica
                             );
                             if keep_as_decode {
                                 return Ok(Expression::Function(f));
@@ -11108,9 +11118,11 @@ pub(super) fn rewrite(
                                     let this = cpa.expressions[0].clone();
                                     let separator = cpa.params.first().cloned();
                                     crate::expressions::ListAggFunc {
+                                        source_dialect: None,
                                         this,
                                         separator,
                                         on_overflow: None,
+                                        max_length: None,
                                         order_by: None,
                                         distinct: false,
                                         filter: None,
@@ -11261,6 +11273,7 @@ pub(super) fn rewrite(
                                 inferred_type: None,
                             }));
                             new_order_by.push(crate::expressions::Ordered {
+                                nulls_auto: false,
                                 this: case_expr,
                                 desc: false,
                                 nulls_first: None,
@@ -11706,6 +11719,7 @@ pub(super) fn rewrite(
                         | DialectType::Teradata
                         | DialectType::Spark
                         | DialectType::Databricks
+                        | DialectType::Vertica
                 );
                 let (a, b, c) = if let Expression::Nvl2(nvl2) = e {
                     if nvl2_native {

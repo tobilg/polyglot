@@ -2050,7 +2050,7 @@ fn test_dialect_list_and_count() {
     let list: Vec<String> = serde_json::from_str(&json).expect("invalid dialect list json");
     let count = polyglot_dialect_count();
     assert_eq!(list.len() as i32, count);
-    assert_eq!(count, 35);
+    assert_eq!(count, 36);
     let unique: BTreeSet<&str> = list.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), list.len());
     assert!(list.iter().any(|d| d == "generic"));
