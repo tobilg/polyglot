@@ -817,6 +817,278 @@ fn vertica_translate(sql: &str, read: &str, write: &str) -> String {
 }
 
 #[test]
+fn vertica_numeric_defaults_survive_parsing_and_generation() {
+    use polyglot_sql::{expressions::DataType, Dialect, DialectType};
+    let source = Dialect::get(DialectType::Vertica);
+    let target = Dialect::get(DialectType::DuckDB);
+    for (name, precision, scale, expected) in [
+        ("DECIMAL", 37, 15, "1.123456000000000"),
+        ("NUMERIC", 37, 15, "1.123456000000000"),
+        ("NUMBER", 38, 0, "1"),
+        ("MONEY", 18, 4, "1.1235"),
+        ("NUMERIC(20)", 20, 15, "1.123456000000000"),
+        ("NUMBER(12,2)", 12, 2, "1.12"),
+        ("MONEY(12)", 12, 4, "1.1235"),
+        ("DECIMAL(20,6)", 20, 6, "1.123456"),
+    ] {
+        assert_eq!(
+            source.parse_data_type(name).unwrap(),
+            DataType::Decimal {
+                precision: Some(precision),
+                scale: Some(scale),
+            }
+        );
+        for sql in [
+            format!("SELECT CAST(1.123456 AS {name})"),
+            format!("SELECT 1.123456::{name}"),
+        ] {
+            let ast = source.parse(&sql).unwrap();
+            let restored = serde_json::from_str(&serde_json::to_string(&ast[0]).unwrap()).unwrap();
+            let generated = target.generate(&restored).unwrap();
+            let transpiled = vertica_translate(&sql, "vertica", "duckdb");
+            assert_eq!(generated, transpiled, "{sql}");
+            if let Some(actual) = execute_vertica_target("", &generated) {
+                assert_eq!(actual, expected, "{sql}");
+            }
+            assert_eq!(
+                source.generate(&ast[0]).unwrap(),
+                format!("SELECT CAST(1.123456 AS DECIMAL({precision}, {scale}))")
+            );
+        }
+    }
+    assert_eq!(
+        vertica_translate(
+            "CREATE TABLE t(d DECIMAL, n NUMBER, m MONEY)",
+            "vertica",
+            "duckdb"
+        ),
+        "CREATE TABLE t (d DECIMAL(37, 15), n DECIMAL(38, 0), m DECIMAL(18, 4))"
+    );
+    for (name, expected) in [
+        ("NUMERIC", "1.123456000000000"),
+        ("DECIMAL", "1.123456000000000"),
+        ("MONEY", "1.1235"),
+        ("NUMBER", "1"),
+    ] {
+        let generated =
+            vertica_translate(&format!("SELECT {name} '1.123456'"), "vertica", "duckdb");
+        if let Some(actual) = execute_vertica_target("", &generated) {
+            assert_eq!(actual, expected);
+        }
+    }
+    for name in ["DECIMAL(0,0)", "NUMERIC(1025,0)", "MONEY(3,4)"] {
+        assert!(source.parse_data_type(name).is_err(), "{name}");
+    }
+}
+
+#[test]
+fn vertica_rejects_casts_that_widen_source_numeric_semantics() {
+    use polyglot_sql::{Dialect, DialectType, TranspileOptions, UnsupportedLevel};
+    let source = Dialect::get(DialectType::DuckDB);
+    let target = Dialect::get(DialectType::Vertica);
+    for sql in [
+        "SELECT CAST(16777217 AS REAL)",
+        "SELECT CAST(40000 AS SMALLINT)",
+        "SELECT CAST(x AS INTEGER) FROM t",
+        "SELECT CAST(x AS TINYINT) FROM t",
+        "SELECT CAST(x AS FLOAT[]) FROM t",
+        "SELECT CAST(x AS STRUCT(a SMALLINT)) FROM t",
+    ] {
+        let ast = source.parse(sql).unwrap();
+        assert!(
+            target
+                .generate(&ast[0])
+                .unwrap_err()
+                .to_string()
+                .contains("Narrow numeric CAST"),
+            "{sql}"
+        );
+        assert!(
+            target
+                .generate_with_source(&ast[0], DialectType::DuckDB)
+                .is_err(),
+            "{sql}"
+        );
+        for level in [
+            UnsupportedLevel::Ignore,
+            UnsupportedLevel::Warn,
+            UnsupportedLevel::Raise,
+            UnsupportedLevel::Immediate,
+        ] {
+            let error = source
+                .transpile_with(
+                    sql,
+                    DialectType::Vertica,
+                    TranspileOptions::default().with_unsupported_level(level),
+                )
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("Narrow numeric CAST"),
+                "{sql}: {error}"
+            );
+        }
+    }
+    for sql in [
+        "SELECT CAST(x AS BIGINT) FROM t",
+        "SELECT CAST(x AS DOUBLE) FROM t",
+    ] {
+        assert!(source.transpile(sql, DialectType::Vertica).is_ok(), "{sql}");
+    }
+    // Native aliases and storage declarations still use Vertica's wider types.
+    assert_eq!(
+        vertica_translate(
+            "SELECT CAST(x AS INT), CAST(x AS REAL) FROM t",
+            "vertica",
+            "vertica"
+        ),
+        "SELECT CAST(x AS BIGINT), CAST(x AS DOUBLE PRECISION) FROM t"
+    );
+    assert_eq!(
+        vertica_translate("CREATE TABLE t(i SMALLINT, f REAL)", "duckdb", "vertica"),
+        "CREATE TABLE t (i BIGINT, f DOUBLE PRECISION)"
+    );
+}
+
+#[test]
+fn vertica_serialized_arrays_preserve_bounds_in_direct_generation() {
+    use polyglot_sql::{Dialect, DialectType};
+    let source = Dialect::get(DialectType::Vertica);
+    let target = Dialect::get(DialectType::DuckDB);
+    for (sql, expected) in [
+        ("SELECT (ARRAY[10,20])[0]", "10"),
+        ("SELECT (ARRAY[10,20])[-1]", "NULL"),
+        ("SELECT (ARRAY[10,20])[99]", "NULL"),
+        ("SELECT (ARRAY[10,20])[NULL]", "NULL"),
+        ("SELECT (ARRAY[ARRAY[1,2],ARRAY[3,4]])[1][0]", "3"),
+        ("SELECT (ARRAY[10,20,30])[0:2]", "[10, 20]"),
+        ("SELECT (ARRAY[10,20,30])[:2]", "[10, 20]"),
+        ("SELECT (ARRAY[10,20,30])[1:]", "[20, 30]"),
+        ("SELECT (ARRAY[10,20])[i] FROM (SELECT 1 AS i) t", "20"),
+    ] {
+        let ast = source.parse(sql).unwrap();
+        let restored = serde_json::from_str(&serde_json::to_string(&ast[0]).unwrap()).unwrap();
+        for generated in [
+            target.generate(&restored).unwrap(),
+            target
+                .generate_with_source(&restored, DialectType::Vertica)
+                .unwrap(),
+            vertica_translate(sql, "vertica", "duckdb"),
+        ] {
+            if let Some(actual) = execute_vertica_target("", &generated) {
+                assert_eq!(actual, expected, "{sql}: {generated}");
+            }
+        }
+        let native = source.generate(&restored).unwrap();
+        assert_eq!(
+            native,
+            source.generate(&source.parse(&native).unwrap()[0]).unwrap()
+        );
+        assert!(Dialect::get(DialectType::MySQL)
+            .generate(&restored)
+            .is_err());
+    }
+    for sql in ["SELECT a[1:3:2] FROM t", "SELECT a[:3:2] FROM t"] {
+        assert!(source.parse(sql).is_err());
+    }
+    // Generic target-array nodes cannot silently acquire Vertica's zero base.
+    for sql in ["SELECT a[1] FROM t", "SELECT a[1:2] FROM t"] {
+        let ast = target.parse(sql).unwrap();
+        assert!(source.generate(&ast[0]).is_err(), "{sql}");
+    }
+    // The generator must evaluate a volatile index once per row, including
+    // direct generation where source normalization has not run.
+    let ast = source
+        .parse("SELECT (ARRAY[10,20])[NEXTVAL('s') % 2] FROM range(4)")
+        .unwrap();
+    let generated = target.generate(&ast[0]).unwrap();
+    assert_eq!(generated.matches("NEXTVAL").count(), 1);
+    if let Some(actual) = execute_vertica_target("CREATE SEQUENCE s MINVALUE 0 START 0", &generated)
+    {
+        assert_eq!(actual, "10\n20\n10\n20");
+    }
+}
+
+#[test]
+fn vertica_listagg_source_semantics_survive_serialization() {
+    use polyglot_sql::{Dialect, DialectType};
+    let source = Dialect::get(DialectType::Vertica);
+    for sql in ["SELECT LISTAGG(x) FROM t", "SELECT LISTAGG(x USING PARAMETERS max_length=8, on_overflow='TRUNCATE') WITHIN GROUP(ORDER BY x) FROM t"] {
+        let ast = source.parse(sql).unwrap();
+        let restored = serde_json::from_str(&serde_json::to_string(&ast[0]).unwrap()).unwrap();
+        assert!(source.generate(&restored).is_ok());
+        for kind in [DialectType::DuckDB, DialectType::PostgreSQL, DialectType::Oracle] {
+            let target = Dialect::get(kind);
+            assert!(target.generate(&restored).is_err(), "{sql} -> {kind}");
+            assert!(target.generate_with_source(&restored, DialectType::Vertica).is_err());
+        }
+    }
+    let other = Dialect::get(DialectType::Oracle)
+        .parse("SELECT LISTAGG(x, ',') FROM t")
+        .unwrap();
+    assert!(source.generate(&other[0]).is_err());
+}
+
+#[test]
+fn vertica_aggregate_filters_preserve_values_and_empty_inputs() {
+    use polyglot_sql::{Dialect, DialectType};
+    let source = Dialect::get(DialectType::PostgreSQL);
+    let target = Dialect::get(DialectType::Vertica);
+    let setup = "CREATE TABLE t(x INT, keep BOOLEAN); INSERT INTO t VALUES (1,TRUE),(1,TRUE),(2,FALSE),(NULL,TRUE),(3,NULL)";
+    for sql in [
+        "SELECT SUM(x) FILTER(WHERE keep), AVG(x) FILTER(WHERE keep), MIN(x) FILTER(WHERE keep), MAX(x) FILTER(WHERE keep) FROM t",
+        "SELECT COUNT(*) FILTER(WHERE keep), COUNT(x) FILTER(WHERE keep), COUNT(DISTINCT x) FILTER(WHERE keep), SUM(DISTINCT x) FILTER(WHERE keep) FROM t",
+        "SELECT COUNT(*) FILTER(WHERE keep), SUM(x) FILTER(WHERE keep) FROM t WHERE FALSE",
+        "SELECT COUNT(*) FILTER(WHERE FALSE), SUM(x) FILTER(WHERE FALSE) FROM t",
+        "SELECT SUM(x) FILTER(WHERE keep) OVER(), COUNT(*) FILTER(WHERE keep) OVER() FROM t",
+    ] {
+        let ast = source.parse(sql).unwrap();
+        for output in [target.generate(&ast[0]).unwrap(), vertica_translate(sql, "postgresql", "vertica")] {
+            assert!(!output.contains("FILTER"), "{output}");
+            assert!(output.contains("CASE WHEN"), "{output}");
+            if let Some(actual) = execute_vertica_target(setup, &output) {
+                assert_eq!(actual, execute_vertica_target(setup, sql).unwrap(), "{sql}: {output}");
+            }
+        }
+    }
+}
+
+#[test]
+fn vertica_unverified_aggregate_filters_fail_in_every_mode() {
+    use polyglot_sql::{Dialect, DialectType, TranspileOptions, UnsupportedLevel};
+    let source = Dialect::get(DialectType::DuckDB);
+    for sql in [
+        "SELECT ARRAY_AGG(x) FILTER(WHERE keep) FROM t",
+        "SELECT FIRST(x) FILTER(WHERE keep) FROM t",
+        "SELECT custom_aggregate(x) FILTER(WHERE keep) FROM t",
+    ] {
+        let ast = source.parse(sql).unwrap();
+        assert!(
+            Dialect::get(DialectType::Vertica)
+                .generate(&ast[0])
+                .is_err(),
+            "{sql}"
+        );
+        for level in [
+            UnsupportedLevel::Ignore,
+            UnsupportedLevel::Warn,
+            UnsupportedLevel::Raise,
+            UnsupportedLevel::Immediate,
+        ] {
+            assert!(
+                source
+                    .transpile_with(
+                        sql,
+                        DialectType::Vertica,
+                        TranspileOptions::default().with_unsupported_level(level)
+                    )
+                    .is_err(),
+                "{sql}: {level:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn vertica_array_access_uses_native_subscripts_without_name_capture() {
     let setup = "CREATE TABLE t(a INT[], arr INT[], i0 BIGINT); INSERT INTO t VALUES ([10,20],[10,20],0),([10,20],[10,20],1),([10,20],[10,20],-1),([10,20],[10,20],NULL),([10,20],[10,20],9223372036854775807)";
     for (sql, expected) in [

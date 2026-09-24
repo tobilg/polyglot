@@ -4,6 +4,7 @@
 //! carry Vertica-only meaning that must be lowered before a foreign target sees them.
 
 use super::*;
+use crate::ast_transforms::{output_identifier, query_projections, AstNames};
 use crate::expressions::{
     AggFunc, AtTimeZone, DateAddFunc, Interval, IntervalUnit, IntervalUnitSpec, VarArgFunc,
 };
@@ -41,6 +42,11 @@ pub(in crate::dialects) fn validate_conversion(
         return Ok(());
     }
     for node in expression.dfs() {
+        if let Expression::Cast(cast) = node {
+            if target == DialectType::Vertica {
+                crate::generator::Generator::validate_vertica_cast_type(&cast.to)?;
+            }
+        }
         let feature = match node {
             Expression::Select(select)
                 if source == DialectType::Vertica
@@ -67,6 +73,8 @@ pub(in crate::dialects) fn validate_conversion(
                     && !matches!(
                         v.as_ref(),
                         crate::expressions::VerticaExpression::Binary { .. }
+                            | crate::expressions::VerticaExpression::ArrayAccess { .. }
+                            | crate::expressions::VerticaExpression::ArraySlice { .. }
                     ) =>
             {
                 Some("native Vertica expression")
@@ -285,8 +293,7 @@ fn projection_index(key: &Expression, projections: &[Expression]) -> Option<usiz
         },
         Expression::Column(c) if c.table.is_none() => {
             let mut matches = projections.iter().enumerate().filter(|(_, p)| {
-                crate::dialects::vertica_ast::output_name(p)
-                    .is_some_and(|n| n.name.eq_ignore_ascii_case(&c.name.name))
+                output_identifier(p).is_some_and(|n| n.name.eq_ignore_ascii_case(&c.name.name))
             });
             let first = matches.next()?.0;
             matches.next().is_none().then_some(first)
@@ -395,8 +402,7 @@ fn prepare_query_order(
     queries: &[&Expression],
     target: DialectType,
 ) -> Result<()> {
-    let projections = crate::dialects::vertica_ast::projections(queries[0])
-        .ok_or_else(|| unknown_order(target))?;
+    let projections = query_projections(queries[0]).ok_or_else(|| unknown_order(target))?;
     for ordered in &mut order.expressions {
         if ordered.nulls_auto {
             return Err(unknown_order(target));
@@ -442,41 +448,6 @@ pub(super) fn normalize_from_vertica(e: Expression, target: DialectType) -> Resu
         {
             lower_partitioned_limit(*select, target)
         }
-        Expression::Subscript(sub)
-            if matches!(target, DialectType::PostgreSQL | DialectType::DuckDB) =>
-        {
-            Ok(crate::dialects::vertica_ast::array_access(
-                sub.this,
-                vec![sub.index],
-            ))
-        }
-        Expression::Subscript(sub) => {
-            let mut this = sub.this;
-            let mut indices = Vec::new();
-            if let Expression::Vertica(node) = this {
-                match *node {
-                    crate::expressions::VerticaExpression::ArrayAccess {
-                        this: array,
-                        indices: inner,
-                    } => {
-                        this = array;
-                        indices = inner;
-                    }
-                    other => this = Expression::Vertica(Box::new(other)),
-                }
-            }
-            indices.push(sub.index);
-            Ok(Expression::Vertica(Box::new(
-                crate::expressions::VerticaExpression::ArrayAccess { this, indices },
-            )))
-        }
-        Expression::ArraySlice(slice) => Ok(Expression::Vertica(Box::new(
-            crate::expressions::VerticaExpression::ArraySlice {
-                this: slice.this,
-                start: slice.start,
-                end: slice.end,
-            },
-        ))),
         Expression::DateDiff(diff) => {
             let unit = diff.unit.ok_or_else(|| {
                 crate::error::Error::unsupported(
@@ -727,7 +698,7 @@ fn lower_partitioned_limit(
     let outer_with = base.with.take();
     let outer_comments = std::mem::take(&mut base.leading_comments);
     let original = base.expressions.clone();
-    let mut names = crate::dialects::vertica_ast::Names::default();
+    let mut names = AstNames::default();
     // Collect identifiers directly, without cloning/serializing the complete AST.
     let base_node = Expression::Select(Box::new(base));
     names.collect(&base_node);
@@ -755,7 +726,7 @@ fn lower_partitioned_limit(
     // Preserve the base query's aliases: GROUP BY, WHERE, HAVING and later
     // projections may still refer to them in the original scope.
     for expression in &original {
-        let name = crate::dialects::vertica_ast::output_name(expression)
+        let name = output_identifier(expression)
             .ok_or_else(unsupported)?
             .clone();
         if !visible_names.insert(name.name.to_ascii_lowercase()) {
@@ -838,7 +809,7 @@ fn lower_partitioned_limit(
             internal_names.push(name.clone());
             name
         };
-        Ok(crate::dialects::vertica_ast::column(table, &name))
+        Ok(crate::ast_mutation::qualified_column(table, &name))
     };
     for key in &mut over.partition_by {
         *key = resolve(key, &source_alias, false)?;
@@ -853,12 +824,15 @@ fn lower_partitioned_limit(
         }
     }
     let subquery = |select: Select, name: String| {
-        crate::dialects::vertica_ast::subquery(Expression::Select(Box::new(select)), Some(name))
+        crate::ast_mutation::derived_table(
+            Expression::Select(Box::new(select)),
+            Some(Identifier::new(name)),
+        )
     };
     let mut ranked = Select::new();
     ranked.expressions = internal_names
         .iter()
-        .map(|name| crate::dialects::vertica_ast::column(&source_alias, name))
+        .map(|name| crate::ast_mutation::qualified_column(&source_alias, name))
         .collect();
     ranked.expressions.push(
         Expression::WindowFunction(Box::new(WindowFunction {
@@ -878,7 +852,7 @@ fn lower_partitioned_limit(
         .enumerate()
         .map(|(i, name)| {
             Expression::Alias(Box::new(Alias::new(
-                crate::dialects::vertica_ast::column(&ranked_alias, &internal_names[i]),
+                crate::ast_mutation::qualified_column(&ranked_alias, &internal_names[i]),
                 name,
             )))
         })

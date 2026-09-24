@@ -32221,7 +32221,7 @@ impl Parser {
         // Create the Cast expression
         Ok(Some(Expression::Cast(Box::new(Cast {
             this: value,
-            to: data_type,
+            to: self.normalize_dialect_data_type(data_type),
             trailing_comments: Vec::new(),
             double_colon_syntax: false,
             format: None,
@@ -39990,6 +39990,9 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
                 // WITHIN GROUP (ORDER BY ...) is handled by maybe_parse_over
                 Ok(Expression::ListAgg(Box::new(ListAggFunc {
+                    source_dialect: self
+                        .is_vertica()
+                        .then_some(crate::dialects::DialectType::Vertica),
                     this,
                     separator,
                     on_overflow,
@@ -42161,16 +42164,14 @@ impl Parser {
                             expression: end.map(Box::new),
                             step: step.map(Box::new),
                         }));
-                        expr = Expression::Subscript(Box::new(Subscript {
-                            this: expr,
-                            index: slice,
-                        }));
+                        if self.is_vertica() {
+                            return Err(
+                                self.parse_error("Vertica array slices do not support a step")
+                            );
+                        }
+                        expr = self.make_subscript(expr, slice);
                     } else {
-                        expr = Expression::ArraySlice(Box::new(ArraySlice {
-                            this: expr,
-                            start: None,
-                            end,
-                        }));
+                        expr = self.make_array_slice(expr, None, end);
                     }
                 } else {
                     let start = self.parse_slice_element()?;
@@ -42191,23 +42192,21 @@ impl Parser {
                                 expression: end.map(Box::new),
                                 step: step.map(Box::new),
                             }));
-                            expr = Expression::Subscript(Box::new(Subscript {
-                                this: expr,
-                                index: slice,
-                            }));
+                            if self.is_vertica() {
+                                return Err(
+                                    self.parse_error("Vertica array slices do not support a step")
+                                );
+                            }
+                            expr = self.make_subscript(expr, slice);
                         } else {
-                            expr = Expression::ArraySlice(Box::new(ArraySlice {
-                                this: expr,
-                                start,
-                                end,
-                            }));
+                            expr = self.make_array_slice(expr, start, end);
                         }
                     } else {
                         self.expect(TokenType::RBracket)?;
                         // Simple subscript access - start must be Some
                         let index =
                             start.unwrap_or_else(|| Expression::Null(crate::expressions::Null));
-                        expr = Expression::Subscript(Box::new(Subscript { this: expr, index }));
+                        expr = self.make_subscript(expr, index);
                     }
                 }
             } else if self.match_token(TokenType::DotColon) {
@@ -44298,6 +44297,10 @@ impl Parser {
             DataType::Float { .. } => DataType::Double {
                 precision: None,
                 scale: None,
+            },
+            DataType::Decimal { precision, scale } => DataType::Decimal {
+                precision: Some(precision.unwrap_or(37)),
+                scale: Some(scale.unwrap_or(15)),
             },
             DataType::Custom { ref name }
                 if name.eq_ignore_ascii_case("INT8") || name.eq_ignore_ascii_case("INT4") =>
@@ -51582,18 +51585,12 @@ impl Parser {
         } else if let Some(base_expr) = this {
             // Subscript access: base[index]
             if expressions.len() == 1 {
-                Ok(Some(Expression::Subscript(Box::new(Subscript {
-                    this: base_expr,
-                    index: expressions.remove(0),
-                }))))
+                Ok(Some(self.make_subscript(base_expr, expressions.remove(0))))
             } else {
                 // Multiple indices - create nested subscripts or array
                 let mut result = base_expr;
                 for expr in expressions {
-                    result = Expression::Subscript(Box::new(Subscript {
-                        this: result,
-                        index: expr,
-                    }));
+                    result = self.make_subscript(result, expr);
                 }
                 Ok(Some(result))
             }
@@ -52250,10 +52247,7 @@ impl Parser {
                 let index = self.parse_disjunction()?;
                 self.match_token(TokenType::RBracket);
                 if let Some(idx) = index {
-                    Some(Expression::Subscript(Box::new(Subscript {
-                        this: expr,
-                        index: idx,
-                    })))
+                    Some(self.make_subscript(expr, idx))
                 } else {
                     Some(expr)
                 }
@@ -66398,11 +66392,66 @@ impl Parser {
         Ok((unit, end))
     }
 
+    fn make_subscript(&self, this: Expression, index: Expression) -> Expression {
+        if self.is_vertica() {
+            Expression::Vertica(Box::new(VerticaExpression::ArrayAccess {
+                this,
+                indices: vec![index],
+            }))
+        } else {
+            Expression::Subscript(Box::new(Subscript { this, index }))
+        }
+    }
+
+    fn make_array_slice(
+        &self,
+        this: Expression,
+        start: Option<Expression>,
+        end: Option<Expression>,
+    ) -> Expression {
+        if self.is_vertica() {
+            Expression::Vertica(Box::new(VerticaExpression::ArraySlice { this, start, end }))
+        } else {
+            Expression::ArraySlice(Box::new(ArraySlice { this, start, end }))
+        }
+    }
+
     fn parse_vertica_data_type(&mut self) -> Result<Option<DataType>> {
         if !self.is_vertica() {
             return Ok(None);
         }
         let name = self.peek_text().to_ascii_uppercase();
+        // Resolve defaults before losing the alias spelling. In particular,
+        // NUMBER and MONEY have different defaults from NUMERIC/DECIMAL.
+        // https://docs.vertica.com/25.2.x/en/sql-reference/data-types/numeric-data-types/numeric/
+        let defaults = match name.as_str() {
+            "DECIMAL" | "NUMERIC" => Some((37, 15)),
+            "NUMBER" => Some((38, 0)),
+            "MONEY" => Some((18, 4)),
+            _ => None,
+        };
+        if let Some((default_precision, default_scale)) = defaults {
+            self.skip();
+            let (precision, scale) = if self.match_token(TokenType::LParen) {
+                let precision = self.vertica_nonnegative_integer()?;
+                let scale = if self.match_token(TokenType::Comma) {
+                    self.vertica_nonnegative_integer()?
+                } else {
+                    default_scale
+                };
+                self.expect(TokenType::RParen)?;
+                (precision, scale)
+            } else {
+                (default_precision, default_scale)
+            };
+            if precision == 0 || precision > 1024 || scale > precision {
+                return Err(self.parse_error("Invalid Vertica numeric precision or scale"));
+            }
+            return Ok(Some(DataType::Decimal {
+                precision: Some(precision),
+                scale: Some(scale),
+            }));
+        }
         let value = match name.as_str() {
             "ARRAY" | "SET" if self.check_next(TokenType::LBracket) => {
                 self.skip();
@@ -66491,6 +66540,21 @@ impl Parser {
 
     fn parse_vertica_primary(&mut self) -> Result<Option<Expression>> {
         let name = self.peek_text().to_ascii_uppercase();
+        if matches!(name.as_str(), "NUMERIC" | "DECIMAL" | "NUMBER" | "MONEY")
+            && self.check_next(TokenType::String)
+        {
+            let to = self.parse_data_type()?;
+            let value = self.expect_string()?;
+            return Ok(Some(Expression::Cast(Box::new(Cast {
+                this: Expression::string(value),
+                to,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+                inferred_type: None,
+            }))));
+        }
         if name == "SET" && self.check_next(TokenType::LBracket) {
             self.skip();
             self.skip();

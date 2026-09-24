@@ -127,6 +127,7 @@ impl DialectImpl for ExasolDialect {
 
             // GROUP_CONCAT -> LISTAGG in Exasol (with WITHIN GROUP for ORDER BY)
             Expression::GroupConcat(f) => Ok(Expression::ListAgg(Box::new(ListAggFunc {
+                source_dialect: None,
                 this: f.this,
                 separator: f.separator,
                 on_overflow: None,

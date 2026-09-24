@@ -13,6 +13,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::ast_transforms::{output_identifier, query_projections, AstNames};
 use crate::error::Result;
 use crate::expressions::*;
 use crate::guard::{enforce_generate_ast, ComplexityGuardOptions};
@@ -2658,6 +2659,14 @@ impl Generator {
     }
 
     fn generate_expression_inner(&mut self, expr: &Expression) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && matches!(expr, Expression::StringAgg(_) | Expression::GroupConcat(_))
+        {
+            return Err(crate::error::Error::unsupported(
+                "string aggregation without Vertica's byte limit and overflow behavior",
+                "vertica",
+            ));
+        }
         if self.config.dialect == Some(DialectType::HANA)
             && matches!(
                 expr,
@@ -4880,6 +4889,139 @@ impl Generator {
         Ok(())
     }
 
+    /// Sort outside DISTINCT/set operations so emulated NULL ordering may add CASE keys
+    /// without changing the result columns or the deduplication operation.
+    fn wrap_vertica_ordered_query(mut query: Expression) -> Result<Expression> {
+        let unsupported = || {
+            crate::error::Error::unsupported("Vertica ordered DISTINCT/set operation requires unique named outputs and resolvable sort keys", "vertica")
+        };
+        let projections = query_projections(&query).ok_or_else(unsupported)?.to_vec();
+        let output_names = projections
+            .iter()
+            .map(|p| output_identifier(p).cloned().ok_or_else(unsupported))
+            .collect::<Result<Vec<_>>>()?;
+        let mut unique = std::collections::HashSet::new();
+        if output_names
+            .iter()
+            .any(|n| !unique.insert(n.name.to_ascii_lowercase()))
+        {
+            return Err(unsupported());
+        }
+        let mut names = AstNames::default();
+        names.collect(&query);
+        let table = names.fresh("_vertica_ordered");
+        let mut outer = Select::new();
+        macro_rules! take_set_modifiers {
+            ($set:expr) => {{
+                if $set.by_name || $set.corresponding || $set.side.is_some() || $set.kind.is_some()
+                {
+                    return Err(unsupported());
+                }
+                outer.with = $set.with.take();
+                outer.order_by = $set.order_by.take();
+                outer.limit = $set.limit.take().map(|l| Limit {
+                    this: *l,
+                    percent: false,
+                    comments: Vec::new(),
+                });
+                outer.offset = $set.offset.take().map(|o| Offset {
+                    this: *o,
+                    rows: None,
+                });
+            }};
+        }
+        match &mut query {
+            Expression::Select(s) => {
+                if s.into.is_some() || !s.locks.is_empty() || s.vertica.is_some() {
+                    return Err(unsupported());
+                }
+                outer.with = s.with.take();
+                outer.order_by = s.order_by.take();
+                outer.limit = s.limit.take();
+                outer.offset = s.offset.take();
+                outer.fetch = s.fetch.take();
+                outer.top = s.top.take();
+            }
+            Expression::Union(s) => take_set_modifiers!(s),
+            Expression::Intersect(s) => take_set_modifiers!(s),
+            Expression::Except(s) => take_set_modifiers!(s),
+            Expression::Subquery(s) => {
+                outer.order_by = s.order_by.take();
+                outer.limit = s.limit.take();
+                outer.offset = s.offset.take();
+                query = std::mem::replace(&mut s.this, Expression::Null(Null));
+            }
+            _ => return Err(unsupported()),
+        }
+        for ordered in &mut outer.order_by.as_mut().ok_or_else(unsupported)?.expressions {
+            let index = match &ordered.this {
+                Expression::Literal(l) => match l.as_ref() {
+                    Literal::Number(n) => n
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| i.checked_sub(1))
+                        .filter(|i| *i < output_names.len()),
+                    _ => None,
+                },
+                Expression::Column(c) if c.table.is_none() => output_names
+                    .iter()
+                    .position(|n| n.name.eq_ignore_ascii_case(&c.name.name)),
+                _ => None,
+            }
+            .or_else(|| {
+                projections.iter().position(|p| {
+                    let value = if let Expression::Alias(a) = p {
+                        &a.this
+                    } else {
+                        p
+                    };
+                    value == &ordered.this
+                })
+            })
+            .ok_or_else(unsupported)?;
+            ordered.this = crate::ast_mutation::qualified_column(&table, &output_names[index]);
+        }
+        outer.expressions = output_names
+            .iter()
+            .map(|name| {
+                Expression::Alias(Box::new(Alias::new(
+                    crate::ast_mutation::qualified_column(&table, name),
+                    name.clone(),
+                )))
+            })
+            .collect();
+        outer.from = Some(From {
+            expressions: vec![crate::ast_mutation::derived_table(
+                query,
+                Some(Identifier::new(table)),
+            )],
+        });
+        Ok(Expression::Select(Box::new(outer)))
+    }
+
+    /// Keep the enclosing subquery's alias/column aliases while moving its ordering
+    /// into an ordinary SELECT that can emulate Vertica's top-level NULL placement.
+    fn wrap_vertica_subquery_order(mut query: Subquery) -> Result<Subquery> {
+        if query.distribute_by.is_some() || query.sort_by.is_some() || query.cluster_by.is_some() {
+            return Err(crate::error::Error::unsupported(
+                "ordered subquery modifiers",
+                "vertica",
+            ));
+        }
+        let mut ordered = crate::ast_mutation::derived_table(
+            std::mem::replace(&mut query.this, Expression::Null(Null)),
+            None,
+        );
+        let Expression::Subquery(inner) = &mut ordered else {
+            unreachable!()
+        };
+        inner.order_by = query.order_by.take();
+        inner.limit = query.limit.take();
+        inner.offset = query.offset.take();
+        query.this = Self::wrap_vertica_ordered_query(ordered)?;
+        Ok(query)
+    }
+
     fn generate_select(&mut self, select: &Select) -> Result<()> {
         Self::validate_hana_select(select, self.config.dialect.unwrap_or_default())?;
 
@@ -4890,9 +5032,8 @@ impl Generator {
                 .as_ref()
                 .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
         {
-            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Select(
-                Box::new(select.clone()),
-            ))?;
+            let wrapped =
+                Self::wrap_vertica_ordered_query(Expression::Select(Box::new(select.clone())))?;
             return self.generate_expression(&wrapped);
         }
         if select.vertica.is_some() && self.config.dialect != Some(DialectType::Vertica) {
@@ -7493,9 +7634,8 @@ impl Generator {
                 .as_ref()
                 .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
         {
-            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Union(
-                Box::new(outermost.clone()),
-            ))?;
+            let wrapped =
+                Self::wrap_vertica_ordered_query(Expression::Union(Box::new(outermost.clone())))?;
             return self.generate_expression(&wrapped);
         }
         if self.should_wrap_set_operation_modifiers(
@@ -7683,9 +7823,9 @@ impl Generator {
                 .as_ref()
                 .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
         {
-            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Intersect(
-                Box::new(outermost.clone()),
-            ))?;
+            let wrapped = Self::wrap_vertica_ordered_query(Expression::Intersect(Box::new(
+                outermost.clone(),
+            )))?;
             return self.generate_expression(&wrapped);
         }
         if self.should_wrap_set_operation_modifiers(
@@ -7868,9 +8008,8 @@ impl Generator {
                 .as_ref()
                 .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
         {
-            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Except(
-                Box::new(outermost.clone()),
-            ))?;
+            let wrapped =
+                Self::wrap_vertica_ordered_query(Expression::Except(Box::new(outermost.clone())))?;
             return self.generate_expression(&wrapped);
         }
         if self.should_wrap_set_operation_modifiers(
@@ -18498,8 +18637,62 @@ impl Generator {
         Ok(())
     }
 
+    /// Storage types may widen, but an explicit cast must retain its source range
+    /// and precision. Native Vertica aliases are already BIGINT/DOUBLE in the AST.
+    pub(crate) fn validate_vertica_cast_type(data_type: &DataType) -> Result<()> {
+        match data_type {
+            DataType::TinyInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::Int { .. }
+            | DataType::Float { .. } => {
+                return Err(crate::error::Error::unsupported(
+                    "Narrow numeric CAST to Vertica requires a verified source conversion; widening changes precision or overflow behavior",
+                    "vertica",
+                ));
+            }
+            DataType::Array { element_type, .. }
+            | DataType::List { element_type }
+            | DataType::Nullable {
+                inner: element_type,
+            }
+            | DataType::Vector {
+                element_type: Some(element_type),
+                ..
+            } => {
+                Self::validate_vertica_cast_type(element_type)?;
+            }
+            DataType::Map {
+                key_type,
+                value_type,
+            } => {
+                Self::validate_vertica_cast_type(key_type)?;
+                Self::validate_vertica_cast_type(value_type)?;
+            }
+            DataType::Struct { fields, .. } => {
+                for field in fields {
+                    Self::validate_vertica_cast_type(&field.data_type)?;
+                }
+            }
+            DataType::Union { fields } => {
+                for (_, data_type) in fields {
+                    Self::validate_vertica_cast_type(data_type)?;
+                }
+            }
+            DataType::Object { fields, .. } => {
+                for (_, data_type, _) in fields {
+                    Self::validate_vertica_cast_type(data_type)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
         self.validate_cast_to_hana(cast)?;
+        if self.config.dialect == Some(DialectType::Vertica) {
+            Self::validate_vertica_cast_type(&cast.to)?;
+        }
         if self.config.dialect != Some(DialectType::HANA) {
             if let DataType::Hana { hana_type } = &cast.to {
                 if matches!(
@@ -20974,13 +21167,7 @@ impl Generator {
         }
 
         if let Some(filter) = &func.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
 
         Ok(())
@@ -22888,7 +23075,51 @@ impl Generator {
 
     // Typed aggregate function generators
 
+    fn generate_aggregate_filter_clause(&mut self, filter: &Expression) -> Result<()> {
+        // Vertica filters must be lowered by a verified aggregate mapping before
+        // reaching this shared renderer. Never emit unsupported FILTER syntax.
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "aggregate FILTER without a verified CASE rewrite",
+                "vertica",
+            ));
+        }
+        self.write_space();
+        self.write_keyword("FILTER");
+        self.write("(");
+        self.write_keyword("WHERE");
+        self.write_space();
+        self.generate_expression(filter)?;
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_filtered_argument(
+        &mut self,
+        filter: &Expression,
+        argument: Option<&Expression>,
+    ) -> Result<()> {
+        self.write_keyword("CASE WHEN");
+        self.write_space();
+        self.generate_expression(filter)?;
+        self.write_space();
+        self.write_keyword("THEN");
+        self.write_space();
+        if let Some(argument) = argument {
+            self.generate_expression(argument)?;
+        } else {
+            self.write("1");
+        }
+        self.write_space();
+        self.write_keyword("END");
+        Ok(())
+    }
+
     fn generate_count(&mut self, f: &CountFunc) -> Result<()> {
+        let case_filter = f
+            .filter
+            .as_ref()
+            .filter(|_| self.config.dialect == Some(DialectType::Vertica));
         // Use normalize_functions for COUNT to respect ClickHouse case preservation
         let count_name = match self.config.normalize_functions {
             NormalizeFunctions::Upper => "COUNT".to_string(),
@@ -22904,7 +23135,15 @@ impl Generator {
             self.write_keyword("DISTINCT");
             self.write_space();
         }
-        if f.star {
+        if let Some(filter) = case_filter {
+            if matches!(&f.this, Some(Expression::Tuple(_))) {
+                return Err(crate::error::Error::unsupported(
+                    "multi-argument COUNT FILTER",
+                    "vertica",
+                ));
+            }
+            self.generate_filtered_argument(filter, if f.star { None } else { f.this.as_ref() })?;
+        } else if f.star {
             self.write("*");
         } else if let Some(ref expr) = f.this {
             // For COUNT(DISTINCT a, b), unwrap the Tuple to avoid extra parentheses
@@ -22969,19 +23208,29 @@ impl Generator {
                 self.write_keyword("RESPECT NULLS");
             }
         }
-        if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+        if let Some(ref filter) = f.filter.as_ref().filter(|_| case_filter.is_none()) {
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
 
     fn generate_agg_func(&mut self, name: &str, f: &AggFunc) -> Result<()> {
+        let case_filter = f
+            .filter
+            .as_ref()
+            .filter(|_| self.config.dialect == Some(DialectType::Vertica));
+        if case_filter.is_some()
+            && (!matches!(name, "SUM" | "AVG" | "MIN" | "MAX")
+                || f.ignore_nulls.is_some()
+                || f.having_max.is_some()
+                || !f.order_by.is_empty()
+                || f.limit.is_some())
+        {
+            return Err(crate::error::Error::unsupported(
+                "aggregate FILTER without a verified CASE rewrite",
+                "vertica",
+            ));
+        }
         // Apply function name normalization based on config
         let func_name: Cow<'_, str> = match self.config.normalize_functions {
             NormalizeFunctions::Upper => Cow::Owned(name.to_ascii_uppercase()),
@@ -23006,7 +23255,9 @@ impl Generator {
         // Other aggregates may legitimately receive NULL as an explicit argument.
         let is_zero_arg_mode =
             name.eq_ignore_ascii_case("MODE") && matches!(f.this, Expression::Null(_));
-        if !is_zero_arg_mode {
+        if let Some(filter) = case_filter {
+            self.generate_filtered_argument(filter, Some(&f.this))?;
+        } else if !is_zero_arg_mode {
             self.generate_expression(&f.this)?;
         }
         // Generate IGNORE NULLS / RESPECT NULLS inside parens if config says so (BigQuery style)
@@ -23088,14 +23339,8 @@ impl Generator {
                 None => {}
             }
         }
-        if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+        if let Some(ref filter) = f.filter.as_ref().filter(|_| case_filter.is_none()) {
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23177,13 +23422,7 @@ impl Generator {
         }
         self.write(")");
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23242,13 +23481,7 @@ impl Generator {
             }
         }
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23342,6 +23575,14 @@ impl Generator {
 
     fn generate_listagg(&mut self, f: &ListAggFunc) -> Result<()> {
         use crate::dialects::DialectType;
+        if (f.source_dialect == Some(DialectType::Vertica))
+            != (self.config.dialect == Some(DialectType::Vertica))
+        {
+            return Err(crate::error::Error::unsupported(
+                "Vertica LISTAGG byte limit and overflow behavior",
+                self.config.dialect.unwrap_or_default().to_string(),
+            ));
+        }
         let order_inside_args = matches!(self.config.dialect, Some(DialectType::DuckDB));
         self.write_keyword("LISTAGG");
         self.write("(");
@@ -23425,13 +23666,7 @@ impl Generator {
             }
         }
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23444,13 +23679,7 @@ impl Generator {
         self.generate_expression(&f.condition)?;
         self.write(")");
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23467,13 +23696,7 @@ impl Generator {
         }
         self.write(")");
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -23499,13 +23722,7 @@ impl Generator {
             self.write(")");
         }
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -24908,13 +25125,7 @@ impl Generator {
         }
         self.write(")");
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -24934,13 +25145,7 @@ impl Generator {
         }
         self.write(")");
         if let Some(ref filter) = f.filter {
-            self.write_space();
-            self.write_keyword("FILTER");
-            self.write("(");
-            self.write_keyword("WHERE");
-            self.write_space();
-            self.generate_expression(filter)?;
-            self.write(")");
+            self.generate_aggregate_filter_clause(filter)?;
         }
         Ok(())
     }
@@ -25372,6 +25577,12 @@ impl Generator {
     // Array/struct/map access generators
 
     fn generate_subscript(&mut self, s: &Subscript) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "array index and bound semantics when targeting Vertica",
+                "vertica",
+            ));
+        }
         // Wrap the base expression in parentheses when it uses arrow syntax (->)
         // which has lower precedence than bracket subscript ([]).
         // E.g., (t.v -> '$.a')[s.x] instead of t.v -> '$.a'[s.x]
@@ -25429,6 +25640,12 @@ impl Generator {
     }
 
     fn generate_array_slice(&mut self, s: &ArraySlice) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "array index and bound semantics when targeting Vertica",
+                "vertica",
+            ));
+        }
         // Check if we need to wrap the inner expression in parentheses
         // JSON arrow expressions have lower precedence than array subscript
         let needs_parens = matches!(
@@ -26326,7 +26543,7 @@ impl Generator {
                 .as_ref()
                 .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
         {
-            let wrapped = crate::dialects::vertica_ast::wrap_subquery_order(subquery.clone())?;
+            let wrapped = Self::wrap_vertica_subquery_order(subquery.clone())?;
             return self.generate_subquery(&wrapped);
         }
         if subquery.lateral {
@@ -33400,6 +33617,12 @@ impl Generator {
 
     fn generate_filter(&mut self, e: &Filter) -> Result<()> {
         // agg_func FILTER(WHERE condition)
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "aggregate FILTER without a verified CASE rewrite",
+                "vertica",
+            ));
+        }
         self.generate_expression(&e.this)?;
         self.write_space();
         self.write_keyword("FILTER");
@@ -43842,6 +44065,120 @@ impl Generator {
         Ok(())
     }
 
+    fn repeatable_vertica_index(index: &Expression) -> bool {
+        match index {
+            Expression::Column(_)
+            | Expression::Identifier(_)
+            | Expression::Literal(_)
+            | Expression::Null(_) => true,
+            Expression::Paren(p) => Self::repeatable_vertica_index(&p.this),
+            Expression::Neg(n) => Self::repeatable_vertica_index(&n.this),
+            Expression::Cast(c) => Self::repeatable_vertica_index(&c.this),
+            Expression::Add(b) | Expression::Sub(b) | Expression::Mul(b) | Expression::Mod(b) => {
+                Self::repeatable_vertica_index(&b.left) && Self::repeatable_vertica_index(&b.right)
+            }
+            _ => false,
+        }
+    }
+
+    fn adjust_vertica_index(index: Expression) -> Expression {
+        // PostgreSQL subscripts are signed int32. Fold constants so ordinary array
+        // access retains the target's native vectorized plan, without a CASE or join.
+        if let Expression::Literal(lit) = &index {
+            if let Literal::Number(n) = lit.as_ref() {
+                if let Ok(n) = n.parse::<i128>() {
+                    return if (0..i32::MAX as i128).contains(&n) {
+                        Expression::number((n + 1) as i64)
+                    } else {
+                        Expression::Null(Null)
+                    };
+                }
+            }
+        }
+        if matches!(index, Expression::Null(_)) {
+            return index;
+        }
+        if let Expression::Neg(n) = &index {
+            if matches!(&n.this, Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(v) if v.parse::<u128>().is_ok_and(|v| v > 0)))
+            {
+                return Expression::Null(Null);
+            }
+        }
+        Expression::Case(Box::new(Case {
+            operand: None,
+            whens: vec![(
+                Expression::Or(Box::new(BinaryOp::new(
+                    Expression::Lt(Box::new(BinaryOp::new(
+                        index.clone(),
+                        Expression::number(0),
+                    ))),
+                    Expression::Gte(Box::new(BinaryOp::new(
+                        index.clone(),
+                        Expression::number(i64::from(i32::MAX)),
+                    ))),
+                ))),
+                Expression::Null(Null),
+            )],
+            else_: Some(Expression::Add(Box::new(BinaryOp::new(
+                index,
+                Expression::number(1),
+            )))),
+            comments: Vec::new(),
+            inferred_type: None,
+        }))
+    }
+
+    /// Evaluate a non-repeatable index once, without a correlated subquery (which
+    /// can evaluate volatile calls once per distinct outer value rather than per row).
+    fn adjust_vertica_index_once(index: Expression) -> Expression {
+        let cast = |this, to| {
+            Expression::Cast(Box::new(Cast {
+                this,
+                to,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+                inferred_type: None,
+            }))
+        };
+        let call = |name: &str, args| {
+            Expression::Function(Box::new(Function::new(name.to_string(), args)))
+        };
+        // Clamp before adding one, so int64 extremes cannot overflow. Map both
+        // sentinels to zero (out of bounds in a normal one-based target array)
+        // before converting to PostgreSQL's int32. All arithmetic stays in int64.
+        // Do not use NULLIF: DuckDB expands it to a CASE that repeats its first arg.
+        let wide = cast(index, DataType::BigInt { length: None });
+        let upper = i64::from(i32::MAX) + 1;
+        let bounded = call(
+            "LEAST",
+            vec![
+                call("GREATEST", vec![wide, Expression::number(-1)]),
+                Expression::number(i64::from(i32::MAX)),
+            ],
+        );
+        let offset = Expression::Add(Box::new(BinaryOp::new(bounded, Expression::number(1))));
+        let adjusted = Expression::Mod(Box::new(BinaryOp::new(offset, Expression::number(upper))));
+        cast(
+            adjusted,
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        )
+    }
+
+    /// Lower only the index so generation can borrow the base, including nested
+    /// array accesses, without repeatedly cloning an entire expression subtree.
+    fn lower_vertica_array_index(index: Expression) -> Expression {
+        if Self::repeatable_vertica_index(&index) {
+            Self::adjust_vertica_index(index)
+        } else {
+            Self::adjust_vertica_index_once(index)
+        }
+    }
+
     fn generate_vertica(&mut self, node: &VerticaExpression) -> Result<()> {
         use VerticaExpression as V;
         if matches!(
@@ -43850,9 +44187,26 @@ impl Generator {
         ) {
             match node {
                 V::ArrayAccess { this, indices } => {
-                    let lowered =
-                        crate::dialects::vertica_ast::array_access(this.clone(), indices.clone());
-                    return self.generate_expression(&lowered);
+                    let parens = !matches!(
+                        this,
+                        Expression::Column(_)
+                            | Expression::Identifier(_)
+                            | Expression::Paren(_)
+                            | Expression::Subscript(_)
+                    ) && !matches!(this, Expression::Vertica(v) if matches!(v.as_ref(), V::ArrayAccess { .. } | V::ArraySlice { .. }));
+                    if parens {
+                        self.write("(");
+                    }
+                    self.generate_expression(this)?;
+                    if parens {
+                        self.write(")");
+                    }
+                    for index in indices {
+                        self.write("[");
+                        self.generate_expression(&Self::lower_vertica_array_index(index.clone()))?;
+                        self.write("]");
+                    }
+                    return Ok(());
                 }
                 V::ArraySlice { this, start, end } => {
                     let bound = |e: &Expression| match e {
@@ -44041,7 +44395,27 @@ impl Generator {
                 });
                 self.generate_expression(right)?;
             }
-            V::ArrayAccess { .. } | V::ArraySlice { .. } | V::BoundaryDateDiff { .. } => {
+            V::ArrayAccess { this, indices } => {
+                self.generate_expression(this)?;
+                for index in indices {
+                    self.write("[");
+                    self.generate_expression(index)?;
+                    self.write("]");
+                }
+            }
+            V::ArraySlice { this, start, end } => {
+                self.generate_expression(this)?;
+                self.write("[");
+                if let Some(start) = start {
+                    self.generate_expression(start)?;
+                }
+                self.write(":");
+                if let Some(end) = end {
+                    self.generate_expression(end)?;
+                }
+                self.write("]");
+            }
+            V::BoundaryDateDiff { .. } => {
                 return Err(crate::error::Error::unsupported(
                     "lowered Vertica semantics",
                     "vertica",

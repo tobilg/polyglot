@@ -422,6 +422,7 @@ pub(super) fn rewrite(
                                 // STRING_AGG(x, sep) -> LISTAGG(x, sep)
                                 Ok(Expression::ListAgg(Box::new(
                                     crate::expressions::ListAggFunc {
+                                        source_dialect: None,
                                         this: sa.this,
                                         separator: sa.separator,
                                         on_overflow: None,
@@ -543,6 +544,7 @@ pub(super) fn rewrite(
                             let this = wrap_concat_args_in_varchar_cast(gc.this);
                             Ok(Expression::ListAgg(Box::new(
                                 crate::expressions::ListAggFunc {
+                                    source_dialect: None,
                                     this,
                                     separator: Some(sep),
                                     on_overflow: None,
@@ -637,6 +639,7 @@ pub(super) fn rewrite(
                             let sep = gc.separator.unwrap_or(Expression::string(","));
                             Ok(Expression::ListAgg(Box::new(
                                 crate::expressions::ListAggFunc {
+                                    source_dialect: None,
                                     this: gc.this,
                                     separator: Some(sep),
                                     on_overflow: None,

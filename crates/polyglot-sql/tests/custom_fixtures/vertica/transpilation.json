@@ -111,7 +111,7 @@
         "tsql": "SELECT CAST(a AS BIGINT) FROM t"
       },
       "read": {
-        "postgresql": "SELECT a::INTEGER FROM t"
+        "postgresql": "SELECT a::BIGINT FROM t"
       },
       "description": "Integers are BIGINT"
     },

@@ -64,6 +64,7 @@ impl DialectImpl for VerticaDialect {
             limit_fetch_style: LimitFetchStyle::Limit,
             nvl2_supported: true,
             supports_median: true,
+            aggregate_filter_supported: false,
             ..Default::default()
         }
     }
@@ -161,6 +162,7 @@ impl DialectImpl for VerticaDialect {
 
             // GROUP_CONCAT / STRING_AGG -> LISTAGG
             Expression::GroupConcat(f) => Ok(Expression::ListAgg(Box::new(ListAggFunc {
+                source_dialect: None,
                 this: f.this,
                 separator: f.separator,
                 on_overflow: None,
@@ -171,6 +173,7 @@ impl DialectImpl for VerticaDialect {
                 inferred_type: None,
             }))),
             Expression::StringAgg(f) => Ok(Expression::ListAgg(Box::new(ListAggFunc {
+                source_dialect: None,
                 this: f.this,
                 separator: f.separator,
                 on_overflow: None,

@@ -1131,6 +1131,7 @@ impl Expression {
         match self {
             Self::Function(f) => f.source_dialect,
             Self::AggregateFunction(f) => f.source_dialect,
+            Self::ListAgg(f) => f.source_dialect,
             Self::Select(s) => s.source_dialect,
             Self::CreateTable(t) => t.source_dialect,
             Self::Upsert(u) => u.source_dialect,
@@ -7135,6 +7136,10 @@ pub struct StringAggFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ListAggFunc {
+    /// Retain source byte-limit and overflow semantics through AST generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     pub this: Expression,
     pub separator: Option<Expression>,
     pub on_overflow: Option<ListAggOverflow>,
@@ -15850,7 +15855,7 @@ pub enum VerticaExpression {
         right: Expression,
         previous: bool,
     },
-    /// Lowered array access retains source bounds semantics until generation.
+    /// Zero-based array access retains source bounds semantics from parsing.
     ArrayAccess {
         this: Expression,
         indices: Vec<Expression>,

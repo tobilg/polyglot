@@ -11118,6 +11118,7 @@ pub(super) fn rewrite(
                                     let this = cpa.expressions[0].clone();
                                     let separator = cpa.params.first().cloned();
                                     crate::expressions::ListAggFunc {
+                                        source_dialect: None,
                                         this,
                                         separator,
                                         on_overflow: None,

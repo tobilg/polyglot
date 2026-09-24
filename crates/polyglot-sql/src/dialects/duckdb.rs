@@ -197,6 +197,7 @@ impl DialectImpl for DuckDBDialect {
             // GROUP_CONCAT -> LISTAGG in DuckDB
             Expression::GroupConcat(f) => Ok(Expression::ListAgg(Box::new(
                 crate::expressions::ListAggFunc {
+                    source_dialect: None,
                     this: f.this,
                     separator: f.separator,
                     on_overflow: None,
@@ -214,6 +215,7 @@ impl DialectImpl for DuckDBDialect {
             // STRING_AGG -> LISTAGG in DuckDB (normalize to LISTAGG)
             Expression::StringAgg(f) => Ok(Expression::ListAgg(Box::new(
                 crate::expressions::ListAggFunc {
+                    source_dialect: None,
                     this: f.this,
                     separator: f.separator,
                     on_overflow: None,
