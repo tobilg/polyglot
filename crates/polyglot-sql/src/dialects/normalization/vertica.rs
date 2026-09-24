@@ -42,9 +42,15 @@ pub(in crate::dialects) fn validate_conversion(
         return Ok(());
     }
     for node in expression.dfs() {
-        if let Expression::Cast(cast) = node {
-            if target == DialectType::Vertica {
-                crate::generator::Generator::validate_vertica_cast_type(&cast.to)?;
+        if target == DialectType::Vertica {
+            match node {
+                Expression::Cast(cast) => {
+                    crate::generator::Generator::validate_vertica_cast_type(&cast.to)?;
+                }
+                Expression::Function(function) => {
+                    crate::generator::Generator::validate_vertica_function(function, Some(source))?;
+                }
+                _ => {}
             }
         }
         let feature = match node {

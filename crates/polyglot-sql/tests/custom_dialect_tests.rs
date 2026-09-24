@@ -882,6 +882,251 @@ fn vertica_numeric_defaults_survive_parsing_and_generation() {
 }
 
 #[test]
+fn vertica_preserves_incoming_decimal_defaults() {
+    use polyglot_sql::{Dialect, DialectType, TranspileOptions, UnsupportedLevel};
+    let target = Dialect::get(DialectType::Vertica);
+    for read in [DialectType::PostgreSQL, DialectType::DuckDB] {
+        let source = Dialect::get(read);
+        for (sql, expected) in [
+            (
+                "SELECT CAST(1.6 AS NUMERIC(20))",
+                "SELECT CAST(1.6 AS DECIMAL(20, 0))",
+            ),
+            (
+                "CREATE TABLE t(amount NUMERIC(10))",
+                "CREATE TABLE t (amount DECIMAL(10, 0))",
+            ),
+        ] {
+            assert_eq!(
+                vertica_translate(sql, &read.to_string(), "vertica"),
+                expected
+            );
+            let ast = source.parse(sql).unwrap();
+            assert_eq!(target.generate(&ast[0]).unwrap(), expected);
+            assert_eq!(
+                target.generate_with_source(&ast[0], read).unwrap(),
+                expected
+            );
+            // In particular, NUMERIC(10) must not inherit Vertica's invalid
+            // default scale of 15. Verify the generated declaration parses.
+            target.parse(expected).unwrap();
+        }
+    }
+    if let Some(value) = execute_vertica_target(
+        "",
+        &vertica_translate("SELECT CAST(1.6 AS NUMERIC(20))", "postgres", "vertica"),
+    ) {
+        assert_eq!(value, "2");
+    }
+    for (sql, expected) in [
+        (
+            "SELECT CAST(1.12345 AS DECIMAL)",
+            "SELECT CAST(1.12345 AS DECIMAL(18, 3))",
+        ),
+        (
+            "CREATE TABLE t(amount DECIMAL)",
+            "CREATE TABLE t (amount DECIMAL(18, 3))",
+        ),
+    ] {
+        assert_eq!(vertica_translate(sql, "duckdb", "vertica"), expected);
+        let ast = Dialect::get(DialectType::DuckDB).parse(sql).unwrap();
+        assert_eq!(
+            target
+                .generate_with_source(&ast[0], DialectType::DuckDB)
+                .unwrap(),
+            expected
+        );
+    }
+    let source = Dialect::get(DialectType::PostgreSQL);
+    for (sql, diagnostic) in [
+        (
+            "SELECT CAST(1.1234567890123456789 AS NUMERIC)",
+            "unconstrained NUMERIC",
+        ),
+        (
+            "SELECT 123456789012345678901234::NUMERIC",
+            "unconstrained NUMERIC",
+        ),
+        ("CREATE TABLE t(amount NUMERIC)", "unconstrained NUMERIC"),
+        (
+            "SELECT CAST(x AS NUMERIC[]) FROM t",
+            "unconstrained NUMERIC",
+        ),
+        ("CREATE TABLE t(amount NUMERIC[])", "unconstrained NUMERIC"),
+        // PostgreSQL permits scale greater than precision; Vertica does not.
+        ("SELECT CAST(x AS NUMERIC(3,5)) FROM t", "DECIMAL scale"),
+        ("CREATE TABLE t(amount NUMERIC(3,5))", "DECIMAL scale"),
+    ] {
+        let ast = source.parse(sql).unwrap();
+        assert!(target.generate(&ast[0]).is_err(), "{sql}");
+        assert!(
+            target
+                .generate_with_source(&ast[0], DialectType::PostgreSQL)
+                .is_err(),
+            "{sql}"
+        );
+        for level in [
+            UnsupportedLevel::Ignore,
+            UnsupportedLevel::Warn,
+            UnsupportedLevel::Raise,
+            UnsupportedLevel::Immediate,
+        ] {
+            let error = source
+                .transpile_with(
+                    sql,
+                    DialectType::Vertica,
+                    TranspileOptions::default().with_unsupported_level(level),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{sql}: {error}");
+        }
+    }
+}
+
+#[test]
+fn vertica_decimal_precision_must_fit_the_target() {
+    use polyglot_sql::{
+        expressions::{DataType, Expression},
+        Dialect, DialectType, TranspileOptions, UnsupportedLevel,
+    };
+    let source = Dialect::get(DialectType::Vertica);
+    for (write, limit) in [(DialectType::DuckDB, 38), (DialectType::PostgreSQL, 1000)] {
+        let target = Dialect::get(write);
+        for precision in [limit, limit + 1, limit + 2, 1024] {
+            // Shared container ASTs must validate their decimal leaves, too.
+            // Native Vertica ARRAY[...] types are separately rejected because
+            // their collection constraints have no verified foreign mapping.
+            let nested = Expression::DataType(DataType::Array {
+                element_type: Box::new(
+                    source
+                        .parse_data_type(&format!("NUMERIC({precision}, 5)"))
+                        .unwrap(),
+                ),
+                dimension: None,
+            });
+            let generated = target.generate(&nested);
+            if precision == limit {
+                assert_eq!(generated.unwrap(), format!("DECIMAL({precision}, 5)[]"));
+            } else {
+                assert!(generated
+                    .unwrap_err()
+                    .to_string()
+                    .contains("DECIMAL precision"));
+            }
+            for sql in [
+                format!("SELECT 1::NUMERIC({precision}, 5)"),
+                format!("CREATE TABLE t(amount NUMERIC({precision}, 5))"),
+            ] {
+                let ast = source.parse(&sql).unwrap();
+                let restored =
+                    serde_json::from_str(&serde_json::to_string(&ast[0]).unwrap()).unwrap();
+                let generated = target.generate(&restored);
+                if precision == limit {
+                    let generated = generated.unwrap();
+                    assert!(
+                        generated.contains(&format!("DECIMAL({precision}, 5)")),
+                        "{generated}"
+                    );
+                    if write == DialectType::DuckDB && sql.starts_with("SELECT 1") {
+                        if let Some(value) = execute_vertica_target("", &generated) {
+                            assert_eq!(value, "1.00000");
+                        }
+                    }
+                } else {
+                    assert!(
+                        generated
+                            .unwrap_err()
+                            .to_string()
+                            .contains("DECIMAL precision"),
+                        "{sql}"
+                    );
+                }
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    let result = source.transpile_with(
+                        &sql,
+                        write,
+                        TranspileOptions::default().with_unsupported_level(level),
+                    );
+                    if precision == limit {
+                        assert!(result.is_ok(), "{sql}: {result:?}");
+                    } else {
+                        assert!(
+                            result
+                                .unwrap_err()
+                                .to_string()
+                                .contains("DECIMAL precision"),
+                            "{sql}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // The source's full range remains valid for native generation.
+    assert_eq!(
+        vertica_translate("SELECT 1::NUMERIC(1024,5)", "vertica", "vertica"),
+        "SELECT CAST(1 AS DECIMAL(1024, 5))"
+    );
+}
+
+#[test]
+fn vertica_rejects_mysql_elapsed_timestampdiff() {
+    use polyglot_sql::{Dialect, DialectType, TranspileOptions, UnsupportedLevel};
+    for read in [DialectType::MySQL, DialectType::TiDB] {
+        let source = Dialect::get(read);
+        for sql in [
+            "SELECT TIMESTAMPDIFF(MONTH, DATE '2026-01-31', DATE '2026-02-01')",
+            "SELECT TIMESTAMPDIFF(MONTH, DATE '2026-02-01', DATE '2026-01-31')",
+            "SELECT TIMESTAMPDIFF(HOUR, TIMESTAMP '2026-01-31 23:59:00', TIMESTAMP '2026-02-01 00:01:00')",
+            "SELECT TIMESTAMPDIFF(DAY, started_at, ended_at) FROM events",
+            "SELECT 1 + TIMESTAMPDIFF(MONTH, started_at, ended_at) FROM events",
+        ] {
+            let ast = source.parse(sql).unwrap();
+            assert!(Dialect::get(DialectType::Vertica)
+                .generate_with_source(&ast[0], read)
+                .unwrap_err()
+                .to_string()
+                .contains("TIMESTAMPDIFF elapsed-unit semantics"));
+            for level in [
+                UnsupportedLevel::Ignore,
+                UnsupportedLevel::Warn,
+                UnsupportedLevel::Raise,
+                UnsupportedLevel::Immediate,
+            ] {
+                let error = source
+                    .transpile_with(
+                        sql,
+                        DialectType::Vertica,
+                        TranspileOptions::default().with_unsupported_level(level),
+                    )
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("TIMESTAMPDIFF elapsed-unit semantics"),
+                    "{sql}: {error}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        vertica_translate(
+            "SELECT TIMESTAMPDIFF(hour, started_at, ended_at) FROM events",
+            "vertica",
+            "vertica"
+        ),
+        "SELECT DATEDIFF(HOUR, started_at, ended_at) FROM events"
+    );
+    assert_eq!(
+        vertica_translate("SELECT DATEDIFF(b, a) FROM t", "mysql", "vertica"),
+        "SELECT DATEDIFF(DAY, a, b) FROM t"
+    );
+}
+
+#[test]
 fn vertica_rejects_casts_that_widen_source_numeric_semantics() {
     use polyglot_sql::{Dialect, DialectType, TranspileOptions, UnsupportedLevel};
     let source = Dialect::get(DialectType::DuckDB);

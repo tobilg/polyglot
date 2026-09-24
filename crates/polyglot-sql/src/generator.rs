@@ -18637,6 +18637,25 @@ impl Generator {
         Ok(())
     }
 
+    pub(crate) fn validate_vertica_function(
+        function: &Function,
+        source: Option<DialectType>,
+    ) -> Result<()> {
+        if matches!(source, Some(DialectType::MySQL | DialectType::TiDB))
+            && !function.quoted
+            && function.qualified_name.is_empty()
+            && function.name.eq_ignore_ascii_case("TIMESTAMPDIFF")
+        {
+            // MySQL counts complete elapsed units, whereas Vertica's
+            // identically named function counts calendar boundaries.
+            return Err(crate::error::Error::unsupported(
+                "MySQL TIMESTAMPDIFF elapsed-unit semantics have no verified Vertica mapping",
+                "vertica",
+            ));
+        }
+        Ok(())
+    }
+
     /// Storage types may widen, but an explicit cast must retain its source range
     /// and precision. Native Vertica aliases are already BIGINT/DOUBLE in the AST.
     pub(crate) fn validate_vertica_cast_type(data_type: &DataType) -> Result<()> {
@@ -20195,6 +20214,12 @@ impl Generator {
     }
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica) {
+            Self::validate_vertica_function(
+                func,
+                func.source_dialect.or(self.config.source_dialect),
+            )?;
+        }
         if func.source_dialect == Some(DialectType::HANA)
             && self.config.dialect != Some(DialectType::HANA)
         {
@@ -28053,6 +28078,51 @@ impl Generator {
                 }
             }
             DataType::Decimal { precision, scale } => {
+                // Vertica's omitted scale is 15, unlike the standard zero used
+                // by PostgreSQL and DuckDB. Native Vertica types already carry
+                // their defaults in the AST; make foreign defaults explicit for
+                // casts, column definitions, and nested types alike.
+                let (precision, scale) = if self.config.dialect == Some(DialectType::Vertica) {
+                    match (*precision, *scale) {
+                        (Some(p), s) => (Some(p), Some(s.unwrap_or(0))),
+                        (None, None) if self.config.source_dialect == Some(DialectType::DuckDB) => {
+                            (Some(18), Some(3))
+                        }
+                        _ => {
+                            return Err(crate::error::Error::unsupported(
+                                "DECIMAL without explicit precision has no verified Vertica mapping; unconstrained NUMERIC cannot be represented by a fixed precision and scale",
+                                "vertica",
+                            ));
+                        }
+                    }
+                } else {
+                    (*precision, *scale)
+                };
+
+                // Do not silently narrow a source decimal or emit a declaration
+                // rejected by the target. This also protects direct generation.
+                let max_precision = match self.config.dialect {
+                    Some(DialectType::DuckDB) => Some(38),
+                    Some(DialectType::PostgreSQL) => Some(1000),
+                    Some(DialectType::Vertica) => Some(1024),
+                    _ => None,
+                };
+                if let (Some(p), Some(max)) = (precision, max_precision) {
+                    if p == 0 || p > max {
+                        return Err(crate::error::Error::unsupported(
+                            format!("DECIMAL precision {p} exceeds the target range 1..={max}"),
+                            self.config.dialect.unwrap_or_default().to_string(),
+                        ));
+                    }
+                    if self.config.dialect == Some(DialectType::Vertica)
+                        && scale.is_some_and(|s| s > p)
+                    {
+                        return Err(crate::error::Error::unsupported(
+                            format!("DECIMAL scale exceeds the target precision {p}"),
+                            "vertica",
+                        ));
+                    }
+                }
                 // Dialect-specific decimal type mappings
                 match self.config.dialect {
                     Some(DialectType::ClickHouse) => {
