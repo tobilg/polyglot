@@ -3253,6 +3253,7 @@ fn source_output_identifier<'a>(
         Expression::Subquery(query) => &query.column_aliases,
         Expression::Alias(alias) => &alias.column_aliases,
         Expression::Table(table) => &table.column_aliases,
+        Expression::Values(values) => &values.column_aliases,
         Expression::Paren(paren) => return source_output_identifier(&paren.this, name),
         _ => &[],
     };
@@ -3260,6 +3261,7 @@ fn source_output_identifier<'a>(
         return columns.iter().find(|column| column.name == name);
     }
     match scope_query(expression) {
+        Expression::Values(values) => values.column_aliases.iter().find(|column| column.name == name),
         Expression::Select(select) => select.expressions.iter().find_map(|projection| {
             let identifier = match projection {
                 Expression::Alias(alias) => &alias.alias,
@@ -3591,9 +3593,22 @@ fn validate_scope_tree(
         .chain(&scope.derived_table_scopes)
         .chain(&scope.union_scopes)
     {
+        // A lateral child sees the sources registered before it, not its own
+        // output, later siblings, or unused CTE declarations. Keep even an
+        // empty context so standalone schema lookup cannot invent an input.
+        let lateral = child.is_lateral.then(|| {
+            let mut lateral = crate::scope::Scope::new(Expression::null());
+            lateral.sources = child.lateral_sources.clone();
+            lateral
+        });
+        let lateral_ancestors = lateral.as_ref().map(|lateral| {
+            std::iter::once(lateral)
+                .chain(ancestors.iter().copied())
+                .collect::<Vec<_>>()
+        });
         validate_scope_tree(
             child,
-            ancestors,
+            lateral_ancestors.as_deref().unwrap_or(ancestors),
             schema_map,
             resolver_schema,
             options,
@@ -3737,14 +3752,17 @@ fn validate_statement_with_schema(
                     }));
                 }
                 if let Some(query) = &insert.query {
-                    // A leading WITH belongs to both the INSERT and its source.
-                    let mut source = crate::expressions::Select::new();
-                    source.with = insert.with.clone();
-                    source.expressions.push(query.clone());
-                    let scope = build_scope(&Expression::Select(Box::new(source)));
+                    // Validate the source as a query, not as a bare SELECT in
+                    // a synthetic projection (which is not a scalar subquery).
+                    // The leading CTEs were already checked in the DML scope.
+                    let source = crate::scope::build_scope_with_ctes(query, &scope.cte_sources);
+                    // INSERT does not expose its target columns to the source.
+                    // An empty enclosing scope also disables standalone-schema
+                    // fallback for source queries without a FROM clause.
+                    let outer = crate::scope::Scope::new(Expression::null());
                     validate_scope_tree(
-                        &scope,
-                        &[],
+                        &source,
+                        &[&outer],
                         schema_map,
                         resolver_schema,
                         options,

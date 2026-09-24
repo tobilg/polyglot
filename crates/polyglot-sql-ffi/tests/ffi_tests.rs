@@ -1254,6 +1254,88 @@ fn test_schema_validation_shared_behavior_and_spans() {
 }
 
 #[test]
+fn test_schema_validation_values_sources_471() {
+    let schema = c(r#"{"tables":[{"name":"orders","columns":[{"name":"total","type":"INT"}]}]}"#);
+    let dialect = c("snowflake");
+    let options = c("{}");
+    for (sql, expected_valid) in [
+        ("WITH inventory AS (SELECT column1 AS product_id FROM VALUES (1)) SELECT product_id FROM inventory", 1),
+        ("SELECT inventory_rows.product_id FROM VALUES (1) AS inventory_rows(product_id)", 1),
+        ("SELECT inventory_rows.missing FROM VALUES (1) AS inventory_rows(product_id)", 0),
+    ] {
+        let sql_arg = c(sql);
+        let (status, valid, errors, error) = consume_validation(polyglot_validate_with_schema(
+            sql_arg.as_ptr(), schema.as_ptr(), dialect.as_ptr(), options.as_ptr(),
+        ));
+        assert!(error.is_none(), "{sql}: {error:?}");
+        assert_eq!(valid, expected_valid, "{sql}: {errors:?}");
+        assert_eq!(status, if expected_valid == 1 { 0 } else { 4 });
+    }
+}
+
+#[test]
+fn test_schema_validation_lateral_sources_472() {
+    let schema = c(r#"{"tables":[{"name":"orders","columns":[{"name":"total","type":"INT"}]}]}"#);
+    let dialect = c("snowflake");
+    let options = c("{}");
+    for (sql, expected_valid) in [
+        ("SELECT nested.value FROM orders AS orders_source, LATERAL (SELECT orders_source.total AS value) AS nested", 1),
+        ("SELECT nested.value FROM LATERAL (SELECT orders_source.total AS value) AS nested, orders AS orders_source", 0),
+    ] {
+        let sql_arg = c(sql);
+        let (status, valid, errors, error) = consume_validation(polyglot_validate_with_schema(
+            sql_arg.as_ptr(), schema.as_ptr(), dialect.as_ptr(), options.as_ptr(),
+        ));
+        assert!(error.is_none(), "{sql}: {error:?}");
+        assert_eq!(valid, expected_valid, "{sql}: {errors:?}");
+        assert_eq!(status, if expected_valid == 1 { 0 } else { 4 });
+    }
+}
+
+#[test]
+fn test_analyze_query_non_recursive_cte_types_473() {
+    let sql = c("WITH orders AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id FROM orders) SELECT id FROM orders");
+    let options = c(
+        r#"{"dialect":"duckdb","schema":{"tables":[{"name":"orders","columns":[{"name":"id","type":"BIGINT"}]}]}}"#,
+    );
+    let (status, data, error) =
+        consume_result(polyglot_analyze_query(sql.as_ptr(), options.as_ptr()));
+    assert_eq!(status, 0, "{error:?}");
+    let analysis: Value = serde_json::from_str(&data.unwrap()).unwrap();
+    assert_eq!(analysis["projections"][0]["typeHint"], "BIGINT");
+}
+
+#[test]
+fn test_schema_validation_insert_select_474() {
+    let schema = c(
+        r#"{"tables":[{"name":"orders","columns":[{"name":"order_id","type":"INT"}]},{"name":"order_archive","columns":[{"name":"order_id","type":"INT"}]}]}"#,
+    );
+    let dialect = c("postgres");
+    let options = c("{}");
+    for sql in [
+        "SELECT missing FROM orders",
+        "INSERT INTO order_archive (order_id) SELECT missing FROM orders",
+    ] {
+        let sql_arg = c(sql);
+        let (status, valid, errors, error) = consume_validation(polyglot_validate_with_schema(
+            sql_arg.as_ptr(),
+            schema.as_ptr(),
+            dialect.as_ptr(),
+            options.as_ptr(),
+        ));
+        assert!(error.is_none(), "{sql}: {error:?}");
+        assert_eq!((status, valid), (4, 0), "{sql}: {errors:?}");
+        let errors: Vec<Value> = serde_json::from_str(&errors.unwrap()).unwrap();
+        assert_eq!(errors.len(), 1, "{sql}: {errors:?}");
+        assert_eq!(errors[0]["code"], "E201");
+        assert_eq!(
+            errors[0]["message"],
+            "Unknown column 'missing' in table 'orders'"
+        );
+    }
+}
+
+#[test]
 fn test_schema_validation_invalid_ffi_arguments() {
     let args = [c("SELECT 1"), c(r#"{"tables":[]}"#), c("generic"), c("{}")];
     let names = ["sql", "schema_json", "dialect", "options_json"];
@@ -1769,6 +1851,31 @@ fn test_analyze_query_pivot_alias_columns() {
         .unwrap()
         .iter()
         .any(|reference| reference["table"] == "sales" && reference["column"] == "amt"));
+}
+
+#[test]
+fn test_analyze_query_pivot_over_cte_470() {
+    let options = c(r#"{"dialect":"snowflake"}"#);
+    for values in ["'books', 'games'", "ANY ORDER BY category"] {
+        for projection in ["*", "customer_id"] {
+            let sql = c(&format!(
+                "WITH pivot_input AS (SELECT customer_id, category, amount FROM staged_orders) SELECT {projection} FROM pivot_input PIVOT(MAX(amount) FOR category IN ({values}))"
+            ));
+            let (status, data, error) =
+                consume_result(polyglot_analyze_query(sql.as_ptr(), options.as_ptr()));
+            assert_eq!(status, 0, "{values}/{projection}: {error:?}");
+            let analysis: Value = serde_json::from_str(&data.unwrap()).unwrap();
+            assert!(!analysis["projections"].as_array().unwrap().is_empty());
+            if projection == "customer_id" {
+                assert!(analysis["projections"][0]["upstream"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|reference| reference["table"] == "staged_orders"
+                        && reference["column"] == "customer_id"));
+            }
+        }
+    }
 }
 
 #[test]

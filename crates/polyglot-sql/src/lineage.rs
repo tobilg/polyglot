@@ -713,6 +713,9 @@ fn expand_star_from_sources(
         let qual_normalized = normalize_cte_name(qual);
         for src in sources {
             if src.normalized == qual_normalized || src.alias.to_lowercase() == qual_normalized {
+                if src.transforms_columns {
+                    return None;
+                }
                 // Try CTE first
                 if let Some(cols) = resolved_ctes.get(&src.normalized) {
                     expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
@@ -734,6 +737,9 @@ fn expand_star_from_sources(
         // This matches sqlglot's behavior (raises SqlglotError when schema is missing).
         let mut any_expanded = false;
         for src in sources {
+            if src.transforms_columns {
+                return None;
+            }
             if let Some(cols) = resolved_ctes.get(&src.normalized) {
                 expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
                 any_expanded = true;
@@ -801,6 +807,8 @@ struct SourceInfo {
     normalized: String,
     /// Fully-qualified table name for schema lookup (e.g., "db.schema.table").
     fq_name: String,
+    /// PIVOT/UNPIVOT outputs cannot be expanded using the input relation's columns.
+    transforms_columns: bool,
 }
 
 /// Extract source info (alias, normalized CTE name, fully-qualified name) from a
@@ -815,6 +823,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 quoted: alias.quoted,
                 normalized: normalize_cte_name(alias),
                 fq_name: alias.name.clone(),
+                transforms_columns: false,
             }
         }
 
@@ -824,6 +833,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 quoted: false,
                 normalized: alias.to_lowercase(),
                 fq_name: alias.to_string(),
+                transforms_columns: false,
             }
         }
 
@@ -849,6 +859,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     quoted: t.name.quoted,
                     normalized,
                     fq_name,
+                    transforms_columns: false,
                 })
             }
             Expression::Subquery(s) => {
@@ -861,6 +872,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     quoted: alias_identifier.quoted,
                     normalized,
                     fq_name,
+                    transforms_columns: false,
                 })
             }
             Expression::Unnest(u) => u.alias.as_ref().map(virtual_source_info),
@@ -886,6 +898,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     quoted: false,
                     normalized: alias.to_lowercase(),
                     fq_name: alias,
+                    transforms_columns: true,
                 })
             }
             Expression::Unpivot(unpivot) => {
@@ -898,6 +911,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     quoted: false,
                     normalized: alias.to_lowercase(),
                     fq_name: alias,
+                    transforms_columns: true,
                 })
             }
             Expression::Paren(p) => extract_source(&p.this),
@@ -2176,24 +2190,32 @@ fn attach_pivot_input_column(
     let scope = context.scope(scope_id);
     match source_expr {
         Expression::Table(table) => {
-            let table_name = col_ref
-                .table
-                .as_ref()
-                .map(|identifier| identifier.name.as_str())
-                .unwrap_or(table.name.name.as_str());
-            if scope.cte_sources.contains_key(table_name) {
-                resolve_qualified_column(
-                    node,
-                    context,
-                    scope_id,
-                    dialect,
-                    table_name,
-                    &col_ref.column,
-                    &node.name.clone(),
-                    trim_selects,
-                    all_cte_scopes,
-                    depth + 1,
-                );
+            let table_name = table.name.name.as_str();
+            if table.schema.is_none()
+                && table.catalog.is_none()
+                && scope.cte_sources.contains_key(table_name)
+            {
+                // The visible source under this name is the pivot wrapper.
+                // Resolve its input CTE directly instead of entering that same
+                // wrapper again through resolve_qualified_column.
+                if let Some(input_scope) =
+                    find_child_scope_in(context, all_cte_scopes, scope_id, table_name)
+                {
+                    if let Ok(child) = to_node_inner(
+                        ColumnRef::Name(&col_ref.column),
+                        context,
+                        input_scope,
+                        dialect,
+                        &node.name,
+                        table_name,
+                        &node.name,
+                        trim_selects,
+                        all_cte_scopes,
+                        depth + 1,
+                    ) {
+                        node.downstream.push(child);
+                    }
+                }
             } else {
                 let mut source = ScopeSourceInfo::new(
                     Expression::Table(Box::new(table.as_ref().clone())),
@@ -7506,6 +7528,44 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         let node = lineage("q1", &expr, Some(DialectType::DuckDB), false).unwrap();
 
         assert_lineage_contains(&node, "sales.amt");
+    }
+
+    #[test]
+    fn test_lineage_pivot_cte_input_resolution_470() {
+        for source in ["src", "src AS i"] {
+            for values in ["'books' AS books", "ANY ORDER BY category"] {
+                let sql = format!("WITH src AS (SELECT customer_id, category, amount FROM staged_orders) SELECT customer_id FROM {source} PIVOT(MAX(amount) FOR category IN ({values}))");
+                let expr = parse_dialect(&sql, DialectType::Snowflake);
+                let node = lineage("customer_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+                assert_lineage_contains(&node, "staged_orders.customer_id");
+            }
+        }
+        for (column, relation, expected) in [
+            (
+                "books",
+                "src PIVOT(MAX(amount) FOR category IN ('books' AS books))",
+                "staged_orders.amount",
+            ),
+            (
+                "value",
+                "src UNPIVOT(value FOR measure IN (customer_id, amount))",
+                "staged_orders.amount",
+            ),
+            (
+                "category",
+                "public.src PIVOT(MAX(amount) FOR customer_id IN (1))",
+                "src.category",
+            ),
+        ] {
+            let expr = parse_dialect(&format!("WITH src AS (SELECT customer_id, category, amount FROM staged_orders) SELECT {column} FROM {relation}"), DialectType::Snowflake);
+            let node = lineage(column, &expr, Some(DialectType::Snowflake), false).unwrap();
+            assert_lineage_contains(&node, expected);
+            if relation.starts_with("public.") {
+                assert!(!lineage_names(&node)
+                    .iter()
+                    .any(|name| name.starts_with("staged_orders.")));
+            }
+        }
     }
 
     #[test]

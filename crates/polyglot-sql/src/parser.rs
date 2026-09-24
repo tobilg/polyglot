@@ -6463,9 +6463,7 @@ impl Parser {
                             if self.check(TokenType::RParen) {
                                 break;
                             }
-                            aliases.push(
-                                self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?,
-                            );
+                            aliases.push(self.expect_identifier_or_keyword_with_quoted()?);
                             if !self.match_token(TokenType::Comma) {
                                 break;
                             }
@@ -6590,8 +6588,7 @@ impl Parser {
             let mut column_aliases = if self.match_token(TokenType::LParen) {
                 let mut aliases = Vec::new();
                 loop {
-                    aliases
-                        .push(self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?);
+                    aliases.push(self.expect_identifier_or_keyword_with_quoted()?);
                     if !self.match_token(TokenType::Comma) {
                         break;
                     }
@@ -32503,6 +32500,7 @@ impl Parser {
                 Ok(Expression::Abs(Box::new(UnaryFunc::new(col_expr))))
             }
         } else if self.check(TokenType::DAt)
+            && self.config.dialect != Some(crate::dialects::DialectType::BigQuery)
             && (self.check_next(TokenType::LParen) || self.check_next(TokenType::Dash))
         {
             // Non-DuckDB dialects: only handle @(expr) and @-expr as ABS
@@ -34283,6 +34281,13 @@ impl Parser {
             return Err(self.end_of_input_error());
         }
 
+        if self.config.dialect == Some(crate::dialects::DialectType::BigQuery)
+            && (self.check(TokenType::DAt)
+                || (self.check(TokenType::Var) && self.peek_text().starts_with('@')))
+        {
+            return self.parse_bigquery_parameter();
+        }
+
         if self.is_vertica() {
             if let Some(expression) = self.parse_vertica_primary()? {
                 return self.maybe_parse_subscript(expression);
@@ -34323,6 +34328,39 @@ impl Parser {
         }
 
         self.parse_primary_slow()
+    }
+
+    fn parse_bigquery_parameter(&mut self) -> Result<Expression> {
+        // The shared tokenizer combines @name into a Var for TSQL variables.
+        // BigQuery uses the same spelling for a query parameter, including when
+        // its name is a keyword. Keep it distinct from a column or an ABS operand.
+        let (name, quoted) = if self.match_token(TokenType::DAt) {
+            if self.check(TokenType::QuotedIdentifier) {
+                (self.advance_text()?, true)
+            } else if self.is_identifier_token() || self.peek().token_type.is_keyword() {
+                (self.advance_text()?, false)
+            } else {
+                return Err(self.parse_error("Expected parameter name after @"));
+            }
+        } else {
+            (self.advance_text()?[1..].to_owned(), false)
+        };
+        if !quoted {
+            let mut chars = name.chars();
+            if !chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                || !chars.all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Err(self.parse_error("Invalid BigQuery parameter name"));
+            }
+        }
+        self.maybe_parse_subscript(Expression::Parameter(Box::new(Parameter {
+            name: Some(name),
+            index: None,
+            style: ParameterStyle::At,
+            quoted,
+            string_quoted: false,
+            expression: None,
+        })))
     }
 
     #[inline(never)]
@@ -36408,14 +36446,17 @@ impl Parser {
             // Check for identifier following the dollar sign → session variable ($x, $query_id, etc.)
             if self.check(TokenType::Identifier)
                 || self.check(TokenType::Var)
+                || self.check(TokenType::QuotedIdentifier)
                 || self.is_safe_keyword_as_identifier()
+                || (self.config.dialect == Some(crate::dialects::DialectType::DuckDB)
+                    && self.peek().token_type.is_keyword())
             {
                 let name_token = self.advance()?;
-                return Ok(Expression::Parameter(Box::new(Parameter {
+                return self.maybe_parse_subscript(Expression::Parameter(Box::new(Parameter {
                     name: Some(name_token.text.to_string()),
                     index: None,
                     style: ParameterStyle::Dollar,
-                    quoted: false,
+                    quoted: name_token.token_type == TokenType::QuotedIdentifier,
                     string_quoted: false,
                     expression: None,
                 })));

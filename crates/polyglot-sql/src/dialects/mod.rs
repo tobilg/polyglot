@@ -480,7 +480,7 @@ pub trait DialectImpl {
     feature = "generate",
     feature = "semantic"
 ))]
-fn transform_data_type_recursive<F>(
+pub(crate) fn transform_data_type_recursive<F>(
     dt: crate::expressions::DataType,
     transform_fn: &F,
 ) -> Result<crate::expressions::DataType>
@@ -648,7 +648,7 @@ fn is_default_presto_date_format(fmt: &str) -> bool {
     fmt == "%Y-%m-%d" || fmt == "%F"
 }
 
-/// Applies a transform function bottom-up through an entire expression tree.
+/// Applies a dialect transform bottom-up through selected syntax children.
 ///
 /// The public entrypoint uses an explicit task stack for the recursion-heavy shapes
 /// that dominate deeply nested SQL (nested SELECT/FROM/SUBQUERY chains, set-operation
@@ -692,14 +692,6 @@ fn transform_recursive_inner<F>(expr: Expression, transform_fn: &F) -> Result<Ex
 where
     F: Fn(Expression) -> Result<Expression>,
 {
-    enum Task {
-        Visit(Expression),
-        Finish {
-            shell: Expression,
-            child_count: usize,
-        },
-    }
-
     // These are the shapes handled by the former explicit-stack fast path. Other
     // nodes retain the reference transformer's selective and wrapper-aware child
     // semantics even though all physical children are visible to traversal APIs.
@@ -725,6 +717,7 @@ where
             | Expression::Parameter(_)
             | Expression::Placeholder(_)
             | Expression::SessionParameter(_)
+            | Expression::Interval(_)
             | Expression::Alias(_)
             | Expression::Paren(_)
             | Expression::Not(_)
@@ -803,62 +796,12 @@ where
         }
     }
 
-    let mut tasks = vec![Task::Visit(expr)];
-    let mut results = Vec::new();
-
-    while let Some(task) = tasks.pop() {
-        match task {
-            Task::Visit(mut expression) => {
-                if !uses_generated_dispatch(&expression) {
-                    results.push(transform_recursive_reference(expression, transform_fn)?);
-                    continue;
-                }
-
-                let mut children = Vec::new();
-                crate::ast_children::for_each_child_mut(&mut expression, |child| {
-                    children.push(std::mem::replace(child, Expression::Null(Null)));
-                });
-                let child_count = children.len();
-                tasks.push(Task::Finish {
-                    shell: expression,
-                    child_count,
-                });
-                for child in children.into_iter().rev() {
-                    tasks.push(Task::Visit(child));
-                }
-            }
-            Task::Finish {
-                mut shell,
-                child_count,
-            } => {
-                if results.len() < child_count {
-                    return Err(crate::error::Error::Internal(
-                        "transform result stack underflow".to_string(),
-                    ));
-                }
-                let transformed_children = results.split_off(results.len() - child_count);
-                let mut transformed_children = transformed_children.into_iter();
-                crate::ast_children::for_each_child_mut(&mut shell, |child| {
-                    *child = transformed_children
-                        .next()
-                        .expect("validated transform child count");
-                });
-                if transformed_children.next().is_some() {
-                    return Err(crate::error::Error::Internal(
-                        "transform child restoration mismatch".to_string(),
-                    ));
-                }
-                results.push(transform_fn(shell)?);
-            }
-        }
-    }
-
-    match results.len() {
-        1 => Ok(results.pop().expect("single transform result")),
-        _ => Err(crate::error::Error::Internal(
-            "unexpected transform result stack size".to_string(),
-        )),
-    }
+    crate::traversal::transform_with_dispatch(
+        expr,
+        transform_fn,
+        &uses_generated_dispatch,
+        &transform_recursive_reference,
+    )
 }
 
 #[cfg(any(

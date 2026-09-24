@@ -4,6 +4,107 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.13.0] - 2026-09-24
+
+### Added
+
+- SAP HANA dialect support across Rust, TypeScript/WASM, Python, FFI, Go, and
+  the playground, with a `dialect-hana` feature included in `all-dialects`.
+  Native parsing and generation cover HANA types and functions, row/column
+  tables, partitioning and storage clauses, `UPSERT`, `CALL`, hierarchy queries,
+  JSON/XML result serialization, query hints, regex syntax, and locking clauses.
+  Shared AST nodes retain source semantics through traversal and JSON round trips;
+  cross-dialect conversions reject constructs whose semantics cannot be preserved.
+  ([#469](https://github.com/tobilg/polyglot/pull/469))
+- Vertica dialect support across the same APIs and playground, with a
+  `dialect-vertica` feature included in `all-dialects`. Native coverage includes
+  Vertica numeric defaults, arrays/sets/rows, zero-based subscripts,
+  `USING PARAMETERS`, `TIMESERIES`, `MATCH`, partitioned `LIMIT`, projections,
+  segmentation, `KSAFE`, epoch queries, and native casts and functions.
+  Supported conversions preserve array bounds, NULL ordering, aggregate filters,
+  and statement-clock semantics; unsupported conversions report errors instead
+  of silently changing behavior. ([#468](https://github.com/tobilg/polyglot/pull/468), [#467](https://github.com/tobilg/polyglot/issues/467))
+- Rust `transform_all` for complete, iterative, bottom-up AST transformation.
+  It visits every expression covered by the read-only walkers, including typed
+  function arguments and clause expressions, without cloning subtrees.
+  Each original node is visited once, and callback errors propagate immediately.
+  ([#475](https://github.com/tobilg/polyglot/issues/475))
+- Athena, Presto, and Trino `TO_ISO8601` conversion to DuckDB for verified input
+  types. Dates and supported unzoned Athena/Trino timestamp precisions have exact
+  translations; permissive mode also supports normalized timestamp formatting
+  and UTC output for zoned values. Strict mode rejects conversions that cannot
+  preserve source precision or time-zone semantics, and unresolved types or
+  unsupported precision still produce errors. ([#466](https://github.com/tobilg/polyglot/issues/466))
+- Python expression classes and stubs for `Upsert`, `StorageProperty`,
+  `Hierarchy`, `ViewParameter`, `Call`, and `Vertica`. The TypeScript SDK's
+  `isQuery` guard recognizes `UPSERT`.
+
+### Changed
+
+- Public Rust AST enums and structs include new dialect syntax, type variants,
+  and source-semantics fields. Callers using exhaustive enum matches or struct
+  literals may need to update them. Shared optimizers and AST helpers preserve
+  the new metadata and qualified function names.
+- AST rename and replacement helpers use complete expression traversal while
+  retaining their embedded-wrapper callbacks. Existing `transform`,
+  `transform_map`, and `transform_owned` keep their selective traversal behavior
+  for compatibility; use `transform_all` when complete coverage is required.
+  ([#475](https://github.com/tobilg/polyglot/issues/475))
+- Read-only AST walkers avoid constructing child paths, and dialect rewrites
+  share an iterative traversal engine for common nodes. HANA compatibility
+  checks inspect AST syntax and types directly, eliminating duplicate SQL
+  generation during validation.
+- Latency and allocation benchmarks share SQL inputs and cover nested HANA
+  parsing and HANA-to-DuckDB transpilation. A manual DuckDB execution benchmark
+  covers Vertica array conversion. Routine Rust verification now runs the dialect
+  matrix, and feature-gate checks cover both new dialects.
+- Three incorrect SQLGlot BigQuery-to-DuckDB expectations are narrowly excluded
+  because they narrow BigQuery `NUMERIC(38, 9)` to DuckDB's default
+  `DECIMAL(18, 3)`. Native execution regressions cover precision preservation
+  and both rounding modes. ([#479](https://github.com/tobilg/polyglot/issues/479))
+
+### Fixed
+
+- Snowflake `PIVOT`/`UNPIVOT` over CTEs no longer causes recursive lineage
+  analysis or stack overflow. Star expansion remains conservative when a source
+  changes its output columns. ([#470](https://github.com/tobilg/polyglot/issues/470))
+- Schema validation resolves `VALUES` sources, including Snowflake `COLUMN1`
+  and PostgreSQL `column1` defaults, explicit column aliases, and quoted names.
+  ([#471](https://github.com/tobilg/polyglot/issues/471))
+- `LATERAL` validation resolves preceding sources and chained lateral queries
+  without admitting forward references, self-references, or unrelated CTEs.
+  ([#472](https://github.com/tobilg/polyglot/issues/472))
+- CTE type inference only pre-binds recursive anchors when recursion is enabled
+  by the query or dialect. Non-recursive CTEs can reference a same-named physical
+  table without incorrectly narrowing the inferred output type.
+  ([#473](https://github.com/tobilg/polyglot/issues/473))
+- Schema validation checks `INSERT ... SELECT` source queries and their CTEs,
+  keeping source and target scopes separate and avoiding duplicate diagnostics
+  for leading CTEs. ([#474](https://github.com/tobilg/polyglot/issues/474))
+- AST column renaming and replacement reach arguments of typed functions such
+  as `INSTR`, `NVL2`, `LAST_DAY`, `YEAR`, and `STARTS_WITH`, including deeply
+  nested expressions. ([#475](https://github.com/tobilg/polyglot/issues/475))
+- BigQuery `DATE(timestamp, time_zone)` conversion to DuckDB preserves timestamp
+  instants, BigQuery's UTC default, named time zones, and literal numeric offsets
+  without depending on DuckDB's session time zone.
+  ([#476](https://github.com/tobilg/polyglot/issues/476))
+- BigQuery variable interval amounts generate valid parenthesized DuckDB SQL,
+  and functions inside intervals are transformed before the enclosing date
+  arithmetic. ([#477](https://github.com/tobilg/polyglot/issues/477))
+- BigQuery named query parameters parse as parameters rather than columns and
+  generate DuckDB `$name` placeholders instead of `ABS(name)`. Quoted names,
+  field access, array subscripts, and `IN UNNEST` are supported while retaining
+  other dialects' `@` absolute-value behavior.
+  ([#478](https://github.com/tobilg/polyglot/issues/478))
+- BigQuery-to-DuckDB transpilation preserves explicit decimal precision and
+  scale and maps bare `NUMERIC`/`DECIMAL` to `DECIMAL(38, 9)`, including in
+  `ROUND`, safe casts, nested types, and table definitions. BigQuery's restriction
+  on parameterized cast targets is applied during BigQuery SQL generation,
+  without discarding precision from the shared AST.
+  ([#479](https://github.com/tobilg/polyglot/issues/479))
+- CommonJS SDK builds defer the WASM startup call until after instantiation
+  and export binding, avoiding calls to unavailable `__wbindgen_start` exports.
+
 ## [0.12.1] - 2026-09-21
 
 ### Added
@@ -1894,6 +1995,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.13.0]: https://github.com/tobilg/polyglot/compare/v0.12.1...v0.13.0
 [0.4.3]: https://github.com/tobilg/polyglot/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/tobilg/polyglot/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/tobilg/polyglot/compare/v0.4.0...v0.4.1

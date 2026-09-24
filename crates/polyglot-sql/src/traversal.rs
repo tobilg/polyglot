@@ -27,8 +27,10 @@
 //!
 //! # Transformation
 //!
-//! The [`transform`] and [`transform_map`] functions perform bottom-up (post-order)
-//! tree rewrites, delegating to [`transform_recursive`](crate::dialects::transform_recursive).
+//! [`transform_all`] rewrites every expression visited by the read-only walkers,
+//! bottom-up, using the generated child visitor and an explicit stack.
+//! [`transform`] and [`transform_map`] retain the selective child traversal of
+//! [`transform_recursive`](crate::dialects::transform_recursive) for compatibility.
 //! The [`ExpressionWalk::transform_owned`] method provides the same capability as
 //! an owned method on `Expression`.
 //!
@@ -304,7 +306,8 @@ pub trait ExpressionWalk {
 
     /// Transforms this expression tree bottom-up using the given function (owned variant).
     ///
-    /// Children are transformed first, then `fun` is called on the resulting node.
+    /// Uses the selective legacy traversal of [`transform`]. For complete child
+    /// coverage, use [`transform_all`]. Visited children are transformed first.
     /// Return `Ok(None)` from `fun` to replace a node with `NULL`.
     /// Return `Ok(Some(expr))` to substitute the node with `expr`.
     #[cfg(any(
@@ -390,7 +393,9 @@ impl ExpressionWalk for Expression {
 
 /// Transforms an expression tree bottom-up, with optional node removal.
 ///
-/// Recursively transforms all children first, then applies `fun` to the resulting node.
+/// Uses the legacy dialect traversal to transform children before their parent.
+/// This traversal is selective: it skips some typed functions and syntax fields.
+/// Use [`transform_all`] for complete expression traversal.
 /// If `fun` returns `Ok(None)`, the node is replaced with an `Expression::Null`.
 /// If `fun` returns `Ok(Some(expr))`, the node is replaced with `expr`.
 ///
@@ -424,7 +429,10 @@ where
     })
 }
 
-/// Transforms an expression tree bottom-up without node removal.
+/// Transforms an expression tree bottom-up using the legacy dialect traversal.
+///
+/// Child traversal is selective; use [`transform_all`] to visit every expression,
+/// including arguments of all typed function nodes.
 ///
 /// Like [`transform`], but `fun` returns an `Expression` directly rather than
 /// `Option<Expression>`, so nodes cannot be deleted. This is a convenience wrapper
@@ -455,6 +463,121 @@ where
     F: Fn(Expression) -> crate::Result<Expression>,
 {
     crate::dialects::transform_recursive(expr, fun)
+}
+
+/// Transforms every expression node bottom-up using the generated child visitor.
+///
+/// Visits the same nodes as [`ExpressionWalk::dfs`], including every typed function
+/// argument and expressions nested in clauses. Each original node is transformed
+/// once, after its children, in their stored order. Replacement nodes are not
+/// revisited, and callback errors propagate immediately.
+///
+/// Like the read-only walkers, this visits actual `Expression` fields. Embedded
+/// structs such as `Update.table` and `Select.joins` are not synthesized as extra
+/// `Table` or `Join` nodes; their expression children are still visited. A callback
+/// can edit those structs when it receives their containing expression.
+///
+/// Traversal uses an explicit stack and does not clone subtrees. Inferred types and
+/// other fields marked as AST metadata are preserved without visiting them.
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
+pub fn transform_all<F>(expr: Expression, fun: &F) -> crate::Result<Expression>
+where
+    F: Fn(Expression) -> crate::Result<Expression>,
+{
+    transform_with_dispatch(expr, fun, &|_| true, &|node, fun| fun(node))
+}
+
+// Shared stack engine. Dialect rewrites retain their selective dispatch and
+// wrapper semantics; general AST rewrites use the generated visitor everywhere.
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
+pub(crate) fn transform_with_dispatch<F, P, G>(
+    expr: Expression,
+    transform_fn: &F,
+    uses_generated_dispatch: &P,
+    fallback: &G,
+) -> crate::Result<Expression>
+where
+    F: Fn(Expression) -> crate::Result<Expression>,
+    P: Fn(&Expression) -> bool,
+    G: Fn(Expression, &F) -> crate::Result<Expression>,
+{
+    enum Task {
+        Visit(Expression),
+        Finish {
+            shell: Expression,
+            child_count: usize,
+        },
+    }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut results = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(mut expression) => {
+                if !uses_generated_dispatch(&expression) {
+                    results.push(fallback(expression, transform_fn)?);
+                    continue;
+                }
+
+                let mut children = Vec::new();
+                crate::ast_children::for_each_child_mut(&mut expression, |child| {
+                    children.push(std::mem::replace(
+                        child,
+                        Expression::Null(crate::expressions::Null),
+                    ));
+                });
+                let child_count = children.len();
+                tasks.push(Task::Finish {
+                    shell: expression,
+                    child_count,
+                });
+                for child in children.into_iter().rev() {
+                    tasks.push(Task::Visit(child));
+                }
+            }
+            Task::Finish {
+                mut shell,
+                child_count,
+            } => {
+                if results.len() < child_count {
+                    return Err(crate::error::Error::Internal(
+                        "transform result stack underflow".to_string(),
+                    ));
+                }
+                let transformed_children = results.split_off(results.len() - child_count);
+                let mut transformed_children = transformed_children.into_iter();
+                crate::ast_children::for_each_child_mut(&mut shell, |child| {
+                    *child = transformed_children
+                        .next()
+                        .expect("validated transform child count");
+                });
+                if transformed_children.next().is_some() {
+                    return Err(crate::error::Error::Internal(
+                        "transform child restoration mismatch".to_string(),
+                    ));
+                }
+                results.push(transform_fn(shell)?);
+            }
+        }
+    }
+
+    match results.len() {
+        1 => Ok(results.pop().expect("single transform result")),
+        _ => Err(crate::error::Error::Internal(
+            "unexpected transform result stack size".to_string(),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------

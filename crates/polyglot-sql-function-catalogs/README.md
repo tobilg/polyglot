@@ -25,7 +25,7 @@ With `polyglot-sql` compile-time wiring (recommended):
 
 ```toml
 [dependencies]
-polyglot-sql = { version = "0.12.1", features = ["function-catalog-clickhouse"] }
+polyglot-sql = { version = "0.13.0", features = ["function-catalog-clickhouse"] }
 ```
 
 Then run schema validation with type checks:

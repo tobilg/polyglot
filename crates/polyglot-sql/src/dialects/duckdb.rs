@@ -872,22 +872,9 @@ impl DialectImpl for DuckDBDialect {
                 })))
             }
 
-            // CAST(x AS DECIMAL) -> CAST(x AS DECIMAL(18, 3)) in DuckDB (default precision)
-            // Exception: CAST(a // b AS DECIMAL) from DIV conversion keeps bare DECIMAL
+            // Keep omitted decimal parameters until generation, where the source
+            // dialect is available to distinguish DuckDB and BigQuery defaults.
             Expression::Cast(mut c) => {
-                if matches!(
-                    &c.to,
-                    DataType::Decimal {
-                        precision: None,
-                        ..
-                    }
-                ) && !matches!(&c.this, Expression::IntDiv(_))
-                {
-                    c.to = DataType::Decimal {
-                        precision: Some(18),
-                        scale: Some(3),
-                    };
-                }
                 let transformed_this = self.transform_expr(c.this)?;
                 c.this = transformed_this;
                 Ok(Expression::Cast(c))
@@ -7689,30 +7676,635 @@ mod tests {
         );
     }
 
+    // Optional execution assertions complement the SQL assertions on machines
+    // with DuckDB installed, without making it a dependency of the Rust suite.
+    fn assert_duckdb_value(sql: &str, expected: &str) {
+        let Ok(engine) = std::env::var("POLYGLOT_DUCKDB") else {
+            return;
+        };
+        for timezone in ["UTC", "America/New_York"] {
+            let query = format!("SET TimeZone = '{timezone}'; {sql}");
+            let output = std::process::Command::new(&engine)
+                .args([
+                    "-init",
+                    "/dev/null",
+                    "-noheader",
+                    "-list",
+                    "-nullvalue",
+                    "NULL",
+                    ":memory:",
+                    &query,
+                ])
+                .output()
+                .expect("run POLYGLOT_DUCKDB");
+            assert!(
+                output.status.success(),
+                "{query}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim_end(),
+                expected,
+                "{query}"
+            );
+        }
+    }
+
     #[test]
-    fn test_athena_to_iso8601_reports_unsupported_translation() {
+    fn test_bigquery_numeric_precision_to_duckdb_479() {
+        for (sql, expected_sql, expected_value) in [
+            (
+                "SELECT CAST(1.005 AS NUMERIC(10, 2)) AS a",
+                "SELECT CAST(1.005 AS DECIMAL(10, 2)) AS a",
+                "1.01",
+            ),
+            (
+                "SELECT CAST(0.1249 AS NUMERIC)",
+                "SELECT CAST(0.1249 AS DECIMAL(38, 9))",
+                "0.124900000",
+            ),
+            (
+                "SELECT ROUND(CAST(0.1249 AS NUMERIC), 2)",
+                "SELECT ROUND(CAST(0.1249 AS DECIMAL(38, 9)), 2)",
+                "0.12",
+            ),
+            (
+                "SELECT SAFE_CAST('0.1249' AS NUMERIC)",
+                "SELECT TRY_CAST('0.1249' AS DECIMAL(38, 9))",
+                "0.124900000",
+            ),
+            (
+                "SELECT NUMERIC '0.000000001'",
+                "SELECT CAST('0.000000001' AS DECIMAL(38, 9))",
+                "0.000000001",
+            ),
+        ] {
+            let output = transpile_to_duckdb_from(sql, DialectType::BigQuery);
+            assert_eq!(output, expected_sql, "{sql}");
+            assert_duckdb_value(&output, expected_value);
+        }
+        for (sql, expected) in [
+            ("SELECT CAST(-1.005 AS DECIMAL(10, 2))", "-1.01"),
+            ("SELECT CAST(1.6 AS NUMERIC(10))", "2"),
+            ("SELECT ROUND(CAST(-0.1249 AS NUMERIC), 2)", "-0.12"),
+            ("SELECT SAFE_CAST('invalid' AS NUMERIC)", "NULL"),
+            (
+                "SELECT CAST('12345678901234567890123456789.123456789' AS NUMERIC)",
+                "12345678901234567890123456789.123456789",
+            ),
+            (
+                "SELECT COALESCE(CAST(NULL AS NUMERIC), DECIMAL '0.1249')",
+                "0.124900000",
+            ),
+            (
+                "SELECT CAST(['0.1249'] AS ARRAY<NUMERIC>)[OFFSET(0)]",
+                "0.124900000",
+            ),
+            ("SELECT ABS(CAST(-0.1249 AS NUMERIC))", "0.124900000"),
+            (
+                "SELECT ROUND(NUMERIC '2.25', 1, 'ROUND_HALF_AWAY_FROM_ZERO')",
+                "2.3",
+            ),
+            ("SELECT ROUND(NUMERIC '2.25', 1, 'ROUND_HALF_EVEN')", "2.2"),
+            (
+                "SELECT ROUND(NUMERIC '0.1249', 2, 'ROUND_HALF_AWAY_FROM_ZERO')",
+                "0.12",
+            ),
+            (
+                "SELECT ROUND(NUMERIC '0.1349', 2, 'ROUND_HALF_EVEN')",
+                "0.13",
+            ),
+        ] {
+            let output = transpile_to_duckdb_from(sql, DialectType::BigQuery);
+            assert_duckdb_value(&output, expected);
+        }
+        let ddl = transpile_to_duckdb_from(
+            "CREATE TABLE t (a NUMERIC, b NUMERIC(10, 2), c ARRAY<NUMERIC>, d STRUCT<n NUMERIC>)",
+            DialectType::BigQuery,
+        );
+        assert_duckdb_value(
+            &format!("{ddl}; INSERT INTO t VALUES ('0.1249', 1.005, ['0.1249'], {{'n': '0.1249'}}); SELECT a, b, c[1], d.n FROM t"),
+            "0.124900000|1.01|0.124900000|0.124900000",
+        );
+        assert_eq!(
+            transpile_to_duckdb_from("SELECT CAST(0.1249 AS NUMERIC)", DialectType::DuckDB),
+            "SELECT CAST(0.1249 AS DECIMAL(18, 3))"
+        );
+    }
+
+    #[test]
+    fn test_bigquery_named_parameters_to_duckdb_478() {
+        let unnest = transpile_to_duckdb_from(
+            "SELECT * FROM UNNEST(@sites) AS site",
+            DialectType::BigQuery,
+        );
+        assert_eq!(unnest, "SELECT * FROM UNNEST($sites) AS _t0(site)");
+        assert_duckdb_value(
+            &format!("PREPARE q AS {unnest}; EXECUTE q(sites := ['alpha', 'beta'])"),
+            "alpha\nbeta",
+        );
+        let membership = transpile_to_duckdb_from(
+            "SELECT x FROM t WHERE id IN UNNEST(@ids)",
+            DialectType::BigQuery,
+        );
+        assert!(!membership.contains("ABS("), "{membership}");
+        assert!(
+            membership.contains("ARRAY_CONTAINS($ids, id)"),
+            "{membership}"
+        );
+        for (ids, expected) in [
+            ("[2]", "b"),
+            ("[]", ""),
+            ("NULL::INTEGER[]", ""),
+            ("[NULL, 1]", "a"),
+        ] {
+            assert_duckdb_value(
+                &format!("CREATE TABLE t AS SELECT 1 AS id, 'a' AS x UNION ALL SELECT 2, 'b'; PREPARE q AS {membership}; EXECUTE q(ids := {ids})"), expected,
+            );
+        }
+        for (sql, expected_sql, binding, value) in [
+            ("SELECT @name + 1", "SELECT $name + 1", "name := 6", "7"),
+            ("SELECT @select", "SELECT $select", "\"select\" := 7", "7"),
+            ("SELECT @`a b`", "SELECT $\"a b\"", "\"a b\" := 7", "7"),
+            (
+                "SELECT @`a\"b`",
+                "SELECT $\"a\"\"b\"",
+                "\"a\"\"b\" := 7",
+                "7",
+            ),
+            (
+                "SELECT @param.dataField",
+                "SELECT $param.dataField",
+                "param := {'dataField': 7}",
+                "7",
+            ),
+            (
+                "SELECT @ids[OFFSET(0)]",
+                "SELECT $ids[1]",
+                "ids := [7, 8]",
+                "7",
+            ),
+        ] {
+            let output = transpile_to_duckdb_from(sql, DialectType::BigQuery);
+            assert_eq!(output, expected_sql, "{sql}");
+            assert_eq!(
+                transpile_to_duckdb_from(&output, DialectType::DuckDB),
+                output
+            );
+            assert_duckdb_value(
+                &format!("PREPARE q AS {output}; EXECUTE q({binding})"),
+                value,
+            );
+        }
+        for dialect in [
+            DialectType::PostgreSQL,
+            DialectType::DuckDB,
+            DialectType::Vertica,
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from("SELECT @(-7)", dialect),
+                "SELECT ABS((-7))"
+            );
+            let output = transpile_to_duckdb_from("SELECT @n FROM (SELECT -7 AS n) AS t", dialect);
+            assert!(output.contains("ABS(n)"), "{dialect:?}: {output}");
+            assert_duckdb_value(&output, "7");
+        }
+        let reverse = Dialect::get(DialectType::DuckDB)
+            .transpile("SELECT $\"a b\"", DialectType::BigQuery)
+            .unwrap();
+        assert_eq!(reverse[0], "SELECT @`a b`");
+    }
+
+    #[test]
+    fn test_bigquery_variable_interval_to_duckdb_477() {
+        for (sql, expected_sql, value) in [
+            (
+                "SELECT DATE_ADD(DATE '2026-01-01', INTERVAL n MONTH) AS d FROM (SELECT 2 AS n)",
+                "SELECT CAST('2026-01-01' AS DATE) + INTERVAL (n) MONTH AS d FROM (SELECT 2 AS n)",
+                "2026-03-01 00:00:00",
+            ),
+            (
+                "SELECT DATE_ADD(DATE '2026-01-01', INTERVAL DATE_DIFF(DATE '2026-03-15', DATE '2026-01-01', MONTH) MONTH) AS d",
+                "SELECT CAST('2026-01-01' AS DATE) + INTERVAL (DATE_DIFF('MONTH', CAST('2026-01-01' AS DATE), CAST('2026-03-15' AS DATE))) MONTH AS d",
+                "2026-03-01 00:00:00",
+            ),
+        ] {
+            let output = transpile_to_duckdb_from(sql, DialectType::BigQuery);
+            assert_eq!(output, expected_sql);
+            assert_duckdb_value(&output, value);
+        }
+        for (amount, expected) in [
+            ("(n)", "2026-03-01 00:00:00"),
+            ("(n + 1)", "2026-04-01 00:00:00"),
+            ("ABS(-n)", "2026-03-01 00:00:00"),
+            ("CASE WHEN n > 0 THEN n ELSE 1 END", "2026-03-01 00:00:00"),
+            ("-n", "2025-11-01 00:00:00"),
+            ("NULL", "NULL"),
+        ] {
+            let sql = format!(
+                "SELECT DATE_ADD(DATE '2026-01-01', INTERVAL {amount} MONTH) FROM (SELECT 2 AS n)"
+            );
+            let output = transpile_to_duckdb_from(&sql, DialectType::BigQuery);
+            assert_duckdb_value(&output, expected);
+        }
+        for (sql, expected) in [
+            ("SELECT INTERVAL (n) MONTH FROM (SELECT 2 AS n)", "2 months"),
+            (
+                "SELECT INTERVAL (ABS(n)) MONTH FROM (SELECT -2 AS n)",
+                "2 months",
+            ),
+            (
+                "SELECT INTERVAL (s) FROM (SELECT '1 month' AS s)",
+                "1 month",
+            ),
+            ("SELECT INTERVAL '2' MONTH", "2 months"),
+        ] {
+            let output = transpile_to_duckdb_from(sql, DialectType::DuckDB);
+            assert!(!output.contains("INTERVAL (("), "{output}");
+            assert_duckdb_value(&output, expected);
+        }
+        let output = transpile_to_duckdb_from(
+            "SELECT DATE_SUB(DATE '2026-01-01', INTERVAL DATE_DIFF(DATE '2026-03-15', DATE '2026-01-01', MONTH) MONTH)",
+            DialectType::BigQuery,
+        );
+        assert_duckdb_value(&output, "2025-11-01 00:00:00");
+    }
+
+    #[test]
+    fn test_bigquery_date_timezone_to_duckdb_476() {
+        let source = Dialect::get(DialectType::BigQuery);
+        for (argument, zone, expected) in [
+            (
+                "TIMESTAMP '2026-01-31 23:30:00+00'",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP '2016-12-25 05:30:00+07'",
+                "'America/Los_Angeles'",
+                "2016-12-24",
+            ),
+            (
+                "TIMESTAMP '2026-07-31 22:30:00+00'",
+                "'Europe/Berlin'",
+                "2026-08-01",
+            ),
+            (
+                "TIMESTAMP '2026-01-31 23:30:00-05:00'",
+                "'UTC'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP '2026-01-31T23:30:00Z'",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP '2026-01-31 23:30:00 America/New_York'",
+                "'UTC'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP '2016-12-25'",
+                "'America/Los_Angeles'",
+                "2016-12-24",
+            ),
+            (
+                "TIMESTAMP '2026-01-31 23:30:00'",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            ("'2026-01-31 23:30:00'", "'Europe/Berlin'", "2026-02-01"),
+            (
+                "TIMESTAMP('2026-01-31 23:30:00')",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "CAST('2026-01-31 23:30:00' AS TIMESTAMP)",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "COALESCE(NULL, TIMESTAMP '2026-01-31 23:30:00')",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP_MILLIS(1769902200000)",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP_MICROS(1769902200000000)",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP_SECONDS(1769902200)",
+                "'Europe/Berlin'",
+                "2026-02-01",
+            ),
+            (
+                "TIMESTAMP '2026-01-31 20:00:00+00'",
+                "'+05:30'",
+                "2026-02-01",
+            ),
+            ("TIMESTAMP '2026-02-01 01:00:00+00'", "'-08'", "2026-01-31"),
+            ("NULL", "'Europe/Berlin'", "NULL"),
+            ("TIMESTAMP '2026-01-31 23:30:00+00'", "NULL", "NULL"),
+        ] {
+            let input = format!("SELECT DATE({argument}, {zone}) AS d");
+            let output = source
+                .transpile(&input, DialectType::DuckDB)
+                .unwrap()
+                .remove(0);
+            assert!(!output.contains("STRPTIME"), "{input}: {output}");
+            assert!(output.contains("AT TIME ZONE"), "{input}: {output}");
+            assert_duckdb_value(&output, expected);
+        }
+        let input = "SELECT DATE(TIMESTAMP '2026-01-31 23:30:00+00', 'Europe/Berlin') AS d";
+        assert_eq!(source.transpile(input, DialectType::DuckDB).unwrap()[0],
+            "SELECT CAST(CAST('2026-01-31 23:30:00+00' AS TIMESTAMPTZ) AT TIME ZONE 'Europe/Berlin' AS DATE) AS d");
+
+        let input = "SELECT DATE(ts, zone) AS d FROM (SELECT TIMESTAMP '2026-01-31 23:30:00+00' AS ts, 'Europe/Berlin' AS zone) AS t";
+        let output = source
+            .transpile(input, DialectType::DuckDB)
+            .unwrap()
+            .remove(0);
+        assert!(
+            output.contains("CAST(ts AS TIMESTAMPTZ) AT TIME ZONE zone"),
+            "{output}"
+        );
+        assert_duckdb_value(&output, "2026-02-01");
+
+        // Keep other DATE overloads and source dialect meanings intact.
+        for (sql, read, expected) in [
+            (
+                "SELECT DATE(2026, 2, 1)",
+                DialectType::BigQuery,
+                "2026-02-01",
+            ),
+            (
+                "SELECT DATE(DATETIME '2026-02-01 12:00:00')",
+                DialectType::BigQuery,
+                "2026-02-01",
+            ),
+            (
+                "SELECT DATE('2026-02-01', 'YYYY-MM-DD')",
+                DialectType::Snowflake,
+                "2026-02-01",
+            ),
+        ] {
+            let output = transpile_to_duckdb_from(sql, read);
+            assert_duckdb_value(&output, expected);
+        }
+        let identity = source
+            .transpile(
+                "SELECT DATE(ts, 'Europe/Berlin') FROM t",
+                DialectType::BigQuery,
+            )
+            .unwrap();
+        assert_eq!(identity[0], "SELECT DATE(ts, 'Europe/Berlin') FROM t");
+    }
+
+    #[test]
+    fn test_athena_to_iso8601_exact_translation() {
+        use crate::dialects::TranspileOptions;
+        use crate::generator::UnsupportedLevel;
+
+        for read in [DialectType::Athena, DialectType::Trino] {
+            for (argument, target_argument, format, expected_value) in [
+                (
+                    "DATE '2026-05-26'",
+                    "CAST('2026-05-26' AS DATE)",
+                    "%Y-%m-%d",
+                    "2026-05-26",
+                ),
+                (
+                    "TIMESTAMP '2026-05-26 02:08:02'",
+                    "CAST('2026-05-26 02:08:02' AS TIMESTAMP(0))",
+                    "%Y-%m-%dT%H:%M:%S",
+                    "2026-05-26T02:08:02",
+                ),
+                (
+                    "TIMESTAMP '2026-05-26 02:08:02.930'",
+                    "CAST('2026-05-26 02:08:02.930' AS TIMESTAMP(3))",
+                    "%Y-%m-%dT%H:%M:%S.%g",
+                    "2026-05-26T02:08:02.930",
+                ),
+                (
+                    "TIMESTAMP '2026-05-26 02:08:02.123456'",
+                    "CAST('2026-05-26 02:08:02.123456' AS TIMESTAMP(6))",
+                    "%Y-%m-%dT%H:%M:%S.%f",
+                    "2026-05-26T02:08:02.123456",
+                ),
+                (
+                    "TIMESTAMP '2026-05-26 02:08:02.123456789'",
+                    "CAST('2026-05-26 02:08:02.123456789' AS TIMESTAMP(9))",
+                    "%Y-%m-%dT%H:%M:%S.%n",
+                    "2026-05-26T02:08:02.123456789",
+                ),
+                (
+                    "TIMESTAMP '1969-12-31 23:59:59.123456789'",
+                    "CAST('1969-12-31 23:59:59.123456789' AS TIMESTAMP(9))",
+                    "%Y-%m-%dT%H:%M:%S.%n",
+                    "1969-12-31T23:59:59.123456789",
+                ),
+                (
+                    "CAST('2026-05-26 02:08:02.930' AS TIMESTAMP)",
+                    "CAST('2026-05-26 02:08:02.930' AS TIMESTAMP(3))",
+                    "%Y-%m-%dT%H:%M:%S.%g",
+                    "2026-05-26T02:08:02.930",
+                ),
+                (
+                    "CAST(TIMESTAMP '2026-05-26 02:08:02.930' AS TIMESTAMP(6))",
+                    "CAST(CAST('2026-05-26 02:08:02.930' AS TIMESTAMP(3)) AS TIMESTAMP(6))",
+                    "%Y-%m-%dT%H:%M:%S.%f",
+                    "2026-05-26T02:08:02.930000",
+                ),
+                (
+                    "CAST(CASE WHEN TRUE THEN TIMESTAMP '2026-05-26 02:08:02.123456789' ELSE NULL END AS TIMESTAMP(9))",
+                    "CAST(CASE WHEN TRUE THEN CAST('2026-05-26 02:08:02.123456789' AS TIMESTAMP(9)) ELSE NULL END AS TIMESTAMP(9))",
+                    "%Y-%m-%dT%H:%M:%S.%n",
+                    "2026-05-26T02:08:02.123456789",
+                ),
+                (
+                    "(TIMESTAMP '2026-05-26 02:08:02.930')",
+                    "(CAST('2026-05-26 02:08:02.930' AS TIMESTAMP(3)))",
+                    "%Y-%m-%dT%H:%M:%S.%g",
+                    "2026-05-26T02:08:02.930",
+                ),
+                (
+                    "CAST(NULL AS DATE)",
+                    "CAST(NULL AS DATE)",
+                    "%Y-%m-%d",
+                    "NULL",
+                ),
+                (
+                    "CAST(NULL AS TIMESTAMP(3))",
+                    "CAST(NULL AS TIMESTAMP(3))",
+                    "%Y-%m-%dT%H:%M:%S.%g",
+                    "NULL",
+                ),
+                (
+                    "TRY_CAST('invalid' AS TIMESTAMP(3))",
+                    "TRY_CAST('invalid' AS TIMESTAMP(3))",
+                    "%Y-%m-%dT%H:%M:%S.%g",
+                    "NULL",
+                ),
+            ] {
+                let sql = format!("SELECT TO_ISO8601({argument}) AS answer");
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    let output = Dialect::get(read)
+                        .transpile_with(
+                            &sql,
+                            DialectType::DuckDB,
+                            TranspileOptions {
+                                unsupported_level: level,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        output[0],
+                        format!("SELECT STRFTIME({target_argument}, '{format}') AS answer"),
+                        "{read:?}/{level:?}: {sql}"
+                    );
+                    if level == UnsupportedLevel::Ignore {
+                        assert_duckdb_value(&output[0], expected_value);
+                    }
+                }
+            }
+        }
+        // DATE has no session-dependent timestamp behavior in Presto either.
+        let output = Dialect::get(DialectType::Presto)
+            .transpile_with(
+                "SELECT TO_ISO8601(DATE '2026-05-26')",
+                DialectType::DuckDB,
+                TranspileOptions::strict(),
+            )
+            .unwrap();
+        assert_duckdb_value(&output[0], "2026-05-26");
+        assert_eq!(
+            output[0],
+            "SELECT STRFTIME(CAST('2026-05-26' AS DATE), '%Y-%m-%d')"
+        );
+    }
+
+    #[test]
+    fn test_athena_to_iso8601_permissive_translation() {
+        use crate::dialects::TranspileOptions;
+        use crate::generator::UnsupportedLevel;
+
+        for read in [DialectType::Athena, DialectType::Presto, DialectType::Trino] {
+            let mut cases = vec![
+                ("TIMESTAMP '2026-05-26 02:08:02.93'", "CAST('2026-05-26 02:08:02.93' AS TIMESTAMP(3))", false, "2026-05-26T02:08:02.930000000"),
+                ("TIMESTAMP '2026-05-26 02:08:02.930 +02:00'", "CAST(CAST('2026-05-26 02:08:02.930+02:00' AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(3))", true, "2026-05-26T00:08:02.930000000Z"),
+                ("TIMESTAMP '2026-05-26 02:08:02.930 Z'", "CAST(CAST('2026-05-26 02:08:02.930Z' AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(3))", true, "2026-05-26T02:08:02.930000000Z"),
+                ("TIMESTAMP '2026-05-26 02:08:02.930 America/New_York'", "CAST(CAST('2026-05-26 02:08:02.930 America/New_York' AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(3))", true, "2026-05-26T06:08:02.930000000Z"),
+                ("CAST(NULL AS TIMESTAMP WITH TIME ZONE)", "CAST(CAST(NULL AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(3))", true, "NULL"),
+                ("TRY_CAST('invalid' AS TIMESTAMP WITH TIME ZONE)", "CAST(TRY_CAST('invalid' AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(3))", true, "NULL"),
+            ];
+            if read == DialectType::Presto {
+                cases.push((
+                    "TIMESTAMP '2026-05-26 02:08:02.930'",
+                    "CAST('2026-05-26 02:08:02.930' AS TIMESTAMP(3))",
+                    false,
+                    "2026-05-26T02:08:02.930000000",
+                ));
+            } else {
+                cases.extend([
+                    ("TIMESTAMP '2026-05-26 02:08:02.1234567'", "CAST('2026-05-26 02:08:02.1234567' AS TIMESTAMP(9))", false, "2026-05-26T02:08:02.123456700"),
+                    ("TIMESTAMP '1969-12-31 23:59:59.123456 -02:00'", "CAST(CAST('1969-12-31 23:59:59.123456-02:00' AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP(6))", true, "1970-01-01T01:59:59.123456000Z"),
+                ]);
+            }
+            for (argument, target_argument, timezone, expected_value) in cases {
+                let sql = format!("SELECT TO_ISO8601({argument}) AS answer");
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    let result = Dialect::get(read).transpile_with(
+                        &sql,
+                        DialectType::DuckDB,
+                        TranspileOptions {
+                            unsupported_level: level,
+                            ..Default::default()
+                        },
+                    );
+                    if matches!(level, UnsupportedLevel::Raise | UnsupportedLevel::Immediate) {
+                        assert!(
+                            matches!(result, Err(crate::error::Error::Unsupported { .. })),
+                            "{read:?}/{level:?}: {sql}: {result:?}"
+                        );
+                    } else {
+                        let output = result.unwrap();
+                        let suffix = if timezone { " || 'Z'" } else { "" };
+                        assert_eq!(output[0], format!("SELECT STRFTIME({target_argument}, '%Y-%m-%dT%H:%M:%S.%n'){suffix} AS answer"), "{read:?}/{level:?}: {sql}");
+                        if level == UnsupportedLevel::Ignore {
+                            assert_duckdb_value(&output[0], expected_value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_athena_to_iso8601_rejects_unverified_conversions() {
+        use crate::dialects::TranspileOptions;
+        use crate::generator::UnsupportedLevel;
+
         for read in [DialectType::Athena, DialectType::Presto, DialectType::Trino] {
             let dialect = Dialect::get(read);
             for argument in [
-                "TIMESTAMP '2026-05-26 02:08:02.930'",
-                "TIMESTAMP '2026-05-26 02:08:02.123456789'",
-                "TIMESTAMP '2026-05-26 02:08:02.930 +02:00'",
-                "DATE '2026-05-26'",
-                "CAST(value AS TIMESTAMP(3))",
-                "CAST(value AS TIMESTAMP WITH TIME ZONE)",
                 "value",
+                "NULL",
+                "'2026-05-26'",
+                "42",
+                "CAST(value AS VARCHAR)",
+                "TIMESTAMP '2026-05-26 02:08:02.123456789123'",
+                "TIMESTAMP '2026-05-26 02:08:02.123456789 +02:00'",
+                "CAST(value AS TIMESTAMP(2))",
+                "CAST(value AS TIMESTAMP(12))",
+                "CAST(TIMESTAMP '2026-05-26 02:08:02.123456789' AS TIMESTAMP(6))",
+                "CAST('2026-05-26 02:08:02.930999' AS TIMESTAMP(3))",
+                "CAST(TIMESTAMP '2026-05-26 00:08:02.930 +02:00' AS DATE)",
+                "CAST(TIMESTAMP '2026-05-26 00:08:02.930 +02:00' AS TIMESTAMP(3))",
+                "DISTINCT DATE '2026-05-26'",
+                "DATE '2026-05-26', DATE '2026-05-27'",
+                "",
             ] {
                 let sql = format!("SELECT TO_ISO8601({argument}) AS answer FROM t");
-                for options in [
-                    crate::dialects::TranspileOptions::default(),
-                    crate::dialects::TranspileOptions::strict(),
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
                 ] {
                     let error = dialect
-                        .transpile_with(&sql, DialectType::DuckDB, options)
+                        .transpile_with(
+                            &sql,
+                            DialectType::DuckDB,
+                            TranspileOptions {
+                                unsupported_level: level,
+                                ..Default::default()
+                            },
+                        )
                         .expect_err("unsupported TO_ISO8601 must not emit invalid DuckDB SQL");
-                    assert!(matches!(error, crate::error::Error::Unsupported { .. }));
+                    assert!(
+                        matches!(error, crate::error::Error::Unsupported { .. }),
+                        "{read:?}/{level:?}: {sql}: {error}"
+                    );
                     assert!(error.to_string().contains("TO_ISO8601"));
-                    assert!(error.to_string().contains("precision and time zone"));
                 }
             }
 
@@ -7722,7 +8314,86 @@ mod tests {
                     .unwrap()[0],
                 "SELECT TO_ISO8601(value) FROM t"
             );
+            assert_eq!(
+                dialect
+                    .transpile_with(
+                        "SELECT custom.TO_ISO8601(value) FROM t",
+                        DialectType::DuckDB,
+                        TranspileOptions::strict()
+                    )
+                    .unwrap()[0],
+                "SELECT custom.TO_ISO8601(value) FROM t"
+            );
         }
+    }
+
+    #[test]
+    fn test_athena_to_iso8601_annotated_argument() {
+        for (data_type, format) in [
+            (DataType::Date, "%Y-%m-%d"),
+            (
+                DataType::Timestamp {
+                    precision: Some(6),
+                    timezone: false,
+                },
+                "%Y-%m-%dT%H:%M:%S.%f",
+            ),
+        ] {
+            let mut argument = Expression::column("value");
+            argument.set_inferred_type(data_type);
+            let expression = Expression::Function(Box::new(Function::new(
+                "TO_ISO8601".to_string(),
+                vec![argument],
+            )));
+            let normalized = crate::dialects::normalization::normalize(
+                expression,
+                DialectType::Trino,
+                DialectType::DuckDB,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                Dialect::get(DialectType::DuckDB)
+                    .generate(&normalized)
+                    .unwrap(),
+                format!("STRFTIME(value, '{format}')")
+            );
+        }
+        let mut argument = Expression::column("value");
+        argument.set_inferred_type(DataType::Timestamp {
+            precision: None,
+            timezone: false,
+        });
+        for strict in [false, true] {
+            let expression = Expression::Function(Box::new(Function::new(
+                "TO_ISO8601".to_string(),
+                vec![argument.clone()],
+            )));
+            assert!(crate::dialects::normalization::normalize(
+                expression,
+                DialectType::Trino,
+                DialectType::DuckDB,
+                strict
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn test_athena_to_iso8601_evaluates_argument_once() {
+        let output = Dialect::get(DialectType::Athena).transpile_with(
+            "SELECT TO_ISO8601(CAST(CASE WHEN NEXTVAL('calls') = 1 THEN '2026-05-26 02:08:02.930' ELSE '2000-01-01 00:00:00.000' END AS TIMESTAMP(3)))",
+            DialectType::DuckDB,
+            crate::dialects::TranspileOptions::strict(),
+        ).unwrap();
+        assert_eq!(output[0].matches("NEXTVAL").count(), 1);
+        assert_duckdb_value(
+            &format!(
+                "CREATE SEQUENCE calls; {}; SELECT CURRVAL('calls');",
+                output[0]
+            ),
+            "2026-05-26T02:08:02.930\n1",
+        );
     }
 
     #[test]

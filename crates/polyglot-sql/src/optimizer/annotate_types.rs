@@ -2480,12 +2480,26 @@ fn annotate_with(
     outer: Option<&dyn Schema>,
 ) {
     if let Some(with) = with {
+        // Standard WITH leaves a same-named physical table visible inside the
+        // CTE body. These dialects also permit recursion without RECURSIVE.
+        let recursive = with.recursive
+            || matches!(
+                dialect,
+                Some(
+                    DialectType::Snowflake
+                        | DialectType::TSQL
+                        | DialectType::Oracle
+                        | DialectType::SQLite
+                )
+            );
         for cte in &mut with.ctes {
             let name = crate::binding::identifier_name(&cte.alias);
             // Bind the anchor before visiting a recursive arm. Only stable
             // output types are retained; widening through recursion is not a
             // regular UNION and needs engine-specific recursive-CTE validation.
-            let recursive_anchor = if let Expression::Union(union) = &mut cte.this {
+            let recursive_anchor = if !recursive {
+                None
+            } else if let Expression::Union(union) = &mut cte.this {
                 let references_self = union.right.contains(|node| matches!(node,
                     Expression::Table(table) if table.schema.is_none() && table.catalog.is_none()
                         && normalize_name(&crate::binding::identifier_name(&table.name), dialect, false, true)
@@ -2985,6 +2999,55 @@ mod tests {
 
     fn make_bool_literal(val: bool) -> Expression {
         Expression::Boolean(BooleanLiteral { value: val })
+    }
+
+    #[test]
+    fn test_cte_recursive_anchor_visibility_473() {
+        for dialect in [DialectType::DuckDB, DialectType::PostgreSQL] {
+            let mut schema = MappingSchema::with_dialect(dialect);
+            schema
+                .add_table(
+                    "orders",
+                    &[("id".into(), DataType::BigInt { length: None })],
+                    None,
+                )
+                .unwrap();
+            for (sql, recursive) in [
+                ("WITH orders AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id FROM orders) SELECT id FROM orders", false),
+                ("WITH orders(out_id) AS (SELECT CAST(1 AS INT) AS id UNION SELECT id FROM orders) SELECT out_id FROM orders", false),
+                ("WITH RECURSIVE orders(id) AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id + 1 FROM orders WHERE id < 3) SELECT id FROM orders", true),
+            ] {
+                let mut expression = parse_one(sql, dialect).unwrap();
+                annotate_types(&mut expression, Some(&schema), Some(dialect));
+                let Expression::Select(select) = expression else { panic!("select") };
+                let actual = select.expressions[0].inferred_type();
+                assert!(if recursive { matches!(actual, Some(DataType::Int { .. })) }
+                    else { matches!(actual, Some(DataType::BigInt { .. })) }, "{dialect}: {sql}: {actual:?}");
+            }
+        }
+        for dialect in [
+            DialectType::Snowflake,
+            DialectType::TSQL,
+            DialectType::Oracle,
+            DialectType::SQLite,
+        ] {
+            let mut expression = parse_one(
+                "WITH orders(id) AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id + 1 FROM orders WHERE id < 3) SELECT id FROM orders",
+                dialect,
+            ).unwrap();
+            annotate_types(&mut expression, None, Some(dialect));
+            let Expression::Select(select) = expression else {
+                panic!("select")
+            };
+            assert!(
+                matches!(
+                    select.expressions[0].inferred_type(),
+                    Some(DataType::Int { .. })
+                ),
+                "{dialect}: {:?}",
+                select.expressions[0].inferred_type()
+            );
+        }
     }
 
     #[test]

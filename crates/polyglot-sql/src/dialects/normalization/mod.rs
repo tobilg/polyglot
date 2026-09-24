@@ -1406,6 +1406,18 @@ pub(super) fn normalize(
                             timezone: false,
                         },
                     };
+                    // Preserve the source literal's type for enclosing temporal
+                    // functions before the target CAST erases its precision.
+                    let inferred_type = if target == DialectType::DuckDB
+                        && matches!(
+                            source,
+                            DialectType::Athena | DialectType::Presto | DialectType::Trino
+                        )
+                    {
+                        Some(temporal::timestamp_literal_type(&s).unwrap_or(DataType::Unknown))
+                    } else {
+                        None
+                    };
                     return Ok(Expression::Cast(Box::new(Cast {
                         this: Expression::Literal(Box::new(Literal::String(s))),
                         to: dt,
@@ -1413,7 +1425,7 @@ pub(super) fn normalize(
                         double_colon_syntax: false,
                         format: None,
                         default: None,
-                        inferred_type: None,
+                        inferred_type,
                     })));
                 }
             }
@@ -1689,19 +1701,15 @@ pub(super) fn normalize(
                 Expression::Function(f) => {
                     let name = f.name.to_ascii_uppercase();
                     if name == "TO_ISO8601"
-                        && matches!(source, DialectType::Athena | DialectType::Presto | DialectType::Trino)
+                        && !f.quoted
+                        && matches!(
+                            source,
+                            DialectType::Athena | DialectType::Presto | DialectType::Trino
+                        )
                         && matches!(target, DialectType::DuckDB)
                     {
-                        // DuckDB has no native equivalent. A generic STRFTIME
-                        // rewrite loses source precision and per-value time zones.
-                        return Err(crate::error::Error::unsupported(
-                            "TO_ISO8601 translation preserving source precision and time zone",
-                            target.to_string(),
-                        ));
-                    }
-                    // DuckDB json(x) is a synonym for CAST(x AS JSON) — parses a string.
-                    // Map to JSON_PARSE(x) for Trino/Presto/Athena to preserve semantics.
-                    if matches!(source, DialectType::PostgreSQL)
+                        Action::Temporal(temporal::Action::ToIso8601DuckDB)
+                    } else if matches!(source, DialectType::PostgreSQL)
                         && matches!(target, DialectType::TSQL | DialectType::Fabric)
                         && temporal::is_postgres_date_part_function(&e)
                     {
@@ -1903,6 +1911,8 @@ pub(super) fn normalize(
                     {
                         // BigQuery-specific functions that need to be converted to standard forms
                         match name.as_str() {
+                            "DATE" if target == DialectType::DuckDB && f.args.len() == 2
+                                => Action::Scalar(scalar::Action::BigQueryFunctionNormalize),
                             "TIMESTAMP_DIFF" | "DATETIME_DIFF" | "TIME_DIFF"
                             | "DATE_DIFF"
                             | "TIMESTAMP_ADD" | "TIMESTAMP_SUB"

@@ -976,10 +976,9 @@ impl BigQueryDialect {
             DataType::Blob => DataType::Custom {
                 name: "BYTES".to_string(),
             },
-            // DECIMAL -> NUMERIC (BigQuery strips precision in CAST context)
-            DataType::Decimal { .. } => DataType::Custom {
-                name: "NUMERIC".to_string(),
-            },
+            // Preserve decimal parameters for cross-dialect conversion. The
+            // generator handles BigQuery's NUMERIC spelling and CAST restrictions.
+            decimal @ DataType::Decimal { .. } => decimal,
             // For BigQuery identity: preserve TIMESTAMP/DATETIME as Custom types
             // This avoids the issue where parsed TIMESTAMP (timezone: false) would
             // be converted to DATETIME by the generator
@@ -1648,6 +1647,94 @@ mod tests {
         let transformed = dialect.transform(ast[0].clone()).expect("Transform failed");
         let result = dialect.generate(&transformed).expect("Generate failed");
         assert_eq!(result, expected, "SQL: {}", sql);
+    }
+
+    #[test]
+    fn test_numeric_parameters_survive_transformation_479() {
+        use crate::expressions::DataType;
+        use crate::traversal::ExpressionWalk;
+
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let ast = parse_one(
+            "SELECT CAST(1.005 AS NUMERIC(10, 2))",
+            DialectType::BigQuery,
+        )
+        .unwrap();
+        let transformed = dialect.transform(ast).unwrap();
+        assert!(transformed.dfs().any(|node| matches!(node,
+            Expression::Cast(cast) if matches!(cast.to, DataType::Decimal { precision: Some(10), scale: Some(2) })
+        )));
+        assert_eq!(
+            dialect.generate(&transformed).unwrap(),
+            "SELECT CAST(1.005 AS NUMERIC)"
+        );
+        for (sql, expected) in [
+            (
+                "SELECT SAFE_CAST(1 AS NUMERIC(10, 2))",
+                "SELECT SAFE_CAST(1 AS NUMERIC)",
+            ),
+            (
+                "SELECT CAST(a AS ARRAY<NUMERIC(10, 2)>)",
+                "SELECT CAST(a AS ARRAY<NUMERIC>)",
+            ),
+            (
+                "CREATE TABLE t (a NUMERIC(10, 2), b NUMERIC)",
+                "CREATE TABLE t (a NUMERIC(10, 2), b NUMERIC)",
+            ),
+        ] {
+            bigquery_identity(sql, expected);
+        }
+    }
+
+    #[test]
+    fn test_named_query_parameters_478() {
+        use crate::expressions::ParameterStyle;
+        use crate::traversal::ExpressionWalk;
+
+        for (sql, name, quoted) in [
+            ("SELECT @sites", "sites", false),
+            ("SELECT @Sites_1", "Sites_1", false),
+            ("SELECT @select", "select", false),
+            ("SELECT @`a b`", "a b", true),
+            ("SELECT @param.dataField", "param", false),
+            ("SELECT @ids[OFFSET(0)]", "ids", false),
+            ("SELECT @sites + 1", "sites", false),
+        ] {
+            let ast = parse_one(sql, DialectType::BigQuery).unwrap();
+            let parameters: Vec<_> = ast
+                .dfs()
+                .filter_map(|node| match node {
+                    Expression::Parameter(parameter) => Some(parameter),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(parameters.len(), 1, "{sql}");
+            assert_eq!(parameters[0].name.as_deref(), Some(name), "{sql}");
+            assert_eq!(parameters[0].style, ParameterStyle::At, "{sql}");
+            assert_eq!(parameters[0].quoted, quoted, "{sql}");
+            assert!(
+                !ast.dfs().any(|node| match node {
+                    Expression::Abs(_) => true,
+                    Expression::Column(column) => column.name.name.starts_with('@'),
+                    _ => false,
+                }),
+                "{sql}"
+            );
+            bigquery_identity(sql, sql);
+        }
+        bigquery_identity("SELECT @ sites", "SELECT @sites");
+        bigquery_identity("SELECT @@time_zone", "SELECT @@time_zone");
+        bigquery_identity("SELECT ?", "SELECT ?");
+        for sql in [
+            "SELECT @",
+            "SELECT @1",
+            "SELECT @-1",
+            "SELECT @(1)",
+            "SELECT @'name'",
+            "SELECT @foo$bar",
+        ] {
+            assert!(parse_one(sql, DialectType::BigQuery).is_err(), "{sql}");
+        }
     }
 
     #[test]

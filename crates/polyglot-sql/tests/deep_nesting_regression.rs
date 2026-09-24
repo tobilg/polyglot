@@ -576,3 +576,32 @@ fn iterative_array_types_preserve_delimiters_and_suffixes() {
         assert!(parse(sql).is_err(), "{sql}");
     }
 }
+
+#[test]
+fn complete_transform_handles_deep_typed_function_chains() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            use polyglot_sql::{expressions::UnaryFunc, transform_all};
+            let mut expression = Expression::column("c");
+            for _ in 0..20_000 {
+                expression = Expression::Year(Box::new(UnaryFunc::new(expression)));
+            }
+            let visits = std::cell::Cell::new(0);
+            // Collapse each parent after visiting its child, also avoiding recursive
+            // destruction of the output tree on this deliberately small thread stack.
+            let output = transform_all(expression, &|node| {
+                visits.set(visits.get() + 1);
+                Ok(match node {
+                    Expression::Year(year) => year.this,
+                    other => other,
+                })
+            })
+            .unwrap();
+            assert_eq!(visits.get(), 20_001);
+            assert!(matches!(output, Expression::Column(_)));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

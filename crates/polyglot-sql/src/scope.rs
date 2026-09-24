@@ -172,6 +172,9 @@ pub struct Scope {
     /// (true for subqueries and UDTFs)
     pub can_be_correlated: bool,
 
+    /// Whether this derived table sees only preceding FROM/JOIN sources.
+    pub is_lateral: bool,
+
     /// Child subquery scopes
     pub subquery_scopes: Vec<Scope>,
 
@@ -208,6 +211,7 @@ impl Scope {
             cte_sources: HashMap::new(),
             outer_columns: Vec::new(),
             can_be_correlated: false,
+            is_lateral: false,
             subquery_scopes: Vec::new(),
             derived_table_scopes: Vec::new(),
             cte_scopes: Vec::new(),
@@ -245,6 +249,7 @@ impl Scope {
             cte_sources: self.cte_sources.clone(),
             outer_columns: outer_columns.unwrap_or_default(),
             can_be_correlated,
+            is_lateral: false,
             subquery_scopes: Vec::new(),
             derived_table_scopes: Vec::new(),
             cte_scopes: Vec::new(),
@@ -672,16 +677,18 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
                 process_ctes(with, current_scope);
             }
 
-            // Process FROM clause
-            if let Some(from) = &select.from {
-                for table in &from.expressions {
-                    add_table_to_scope(table, current_scope);
+            // Register relations in order. CTE declarations are available for
+            // FROM lookup, but only selected preceding bindings are lateral inputs.
+            let mut preceding_sources = HashSet::new();
+            for table in select
+                .from
+                .iter()
+                .flat_map(|from| &from.expressions)
+                .chain(select.joins.iter().map(|join| &join.this))
+            {
+                if let Some(name) = add_table_to_scope(table, current_scope, &preceding_sources) {
+                    preceding_sources.insert(name);
                 }
-            }
-
-            // Process JOINs
-            for join in &select.joins {
-                add_table_to_scope(&join.this, current_scope);
             }
 
             // Process table-generating lateral views (Hive/Spark style UDTFs).
@@ -787,7 +794,11 @@ fn cte_body_self_references(cte: &crate::expressions::Cte) -> bool {
         .is_empty()
 }
 
-fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
+fn add_table_to_scope(
+    expr: &Expression,
+    scope: &mut Scope,
+    preceding_sources: &HashSet<String>,
+) -> Option<String> {
     match expr {
         Expression::Table(table) => {
             let name = table
@@ -808,14 +819,15 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
             };
 
             if let Some(source) = cte_source {
-                scope.add_source_info(name, source.clone());
+                scope.add_source_info(name.clone(), source.clone());
             } else {
                 let mut source = SourceInfo::new(expr.clone(), false, SourceKind::Table);
                 if let Some(alias) = &table.alias {
                     source = source.with_alias(alias.name.clone());
                 }
-                scope.add_source_info(name, source);
+                scope.add_source_info(name.clone(), source);
             }
+            Some(name)
         }
         Expression::Subquery(subquery) => {
             let name = subquery
@@ -825,18 +837,43 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
                 .unwrap_or_default();
 
             let mut derived_scope = scope.branch(subquery.this.clone(), ScopeType::DerivedTable);
+            if subquery.lateral {
+                derived_scope.is_lateral = true;
+                derived_scope.can_be_correlated = true;
+                derived_scope.lateral_sources = preceding_sources
+                    .iter()
+                    .filter_map(|name| {
+                        scope
+                            .sources
+                            .get(name)
+                            .map(|source| (name.clone(), source.clone()))
+                    })
+                    .collect();
+            }
             build_scope_impl(&subquery.this, &mut derived_scope);
 
             scope.add_source(name.clone(), expr.clone(), true);
             scope.derived_table_scopes.push(derived_scope);
+            Some(name)
         }
         Expression::Unnest(unnest) => {
             if let Some(alias) = &unnest.alias {
                 scope.add_virtual_source(alias.name.clone(), expr.clone());
             }
+            unnest.alias.as_ref().map(|alias| alias.name.clone())
+        }
+        Expression::Values(values) => {
+            let name = values
+                .alias
+                .as_ref()
+                .map(|alias| alias.name.clone())
+                .unwrap_or_default();
+            scope.add_virtual_source(name.clone(), expr.clone());
+            Some(name)
         }
         Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
             scope.add_virtual_source(alias.alias.name.clone(), expr.clone());
+            Some(alias.alias.name.clone())
         }
         Expression::Alias(alias) if is_query_like_relation(&alias.this) => {
             let outer_columns = alias
@@ -855,23 +892,31 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
 
             scope.add_source(alias.alias.name.clone(), expr.clone(), true);
             scope.derived_table_scopes.push(derived_scope);
+            Some(alias.alias.name.clone())
         }
         Expression::Lateral(lateral) => {
             if let Some(alias) = &lateral.alias {
                 scope.add_virtual_source(alias.clone(), expr.clone());
             }
+            lateral.alias.clone()
         }
         Expression::LateralView(lateral_view) => {
             add_lateral_view_to_scope(lateral_view, scope);
+            lateral_view
+                .table_alias
+                .as_ref()
+                .or_else(|| lateral_view.column_aliases.first())
+                .map(|alias| alias.name.clone())
         }
         Expression::Pivot(pivot) => {
             let name =
                 pivot_source_name(&pivot.this, pivot.alias.as_ref().map(|a| a.name.as_str()));
             scope.add_source_info(
-                name,
+                name.clone(),
                 SourceInfo::new(expr.clone(), false, SourceKind::DerivedTable),
             );
             add_pivot_inner_scope(&pivot.this, scope);
+            Some(name)
         }
         Expression::Unpivot(unpivot) => {
             let name = pivot_source_name(
@@ -879,21 +924,21 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
                 unpivot.alias.as_ref().map(|a| a.name.as_str()),
             );
             scope.add_source_info(
-                name,
+                name.clone(),
                 SourceInfo::new(expr.clone(), false, SourceKind::DerivedTable),
             );
             add_pivot_inner_scope(&unpivot.this, scope);
+            Some(name)
         }
-        Expression::Paren(paren) => {
-            add_table_to_scope(&paren.this, scope);
-        }
-        _ => {}
+        Expression::Paren(paren) => add_table_to_scope(&paren.this, scope, preceding_sources),
+        _ => None,
     }
 }
 
 fn is_query_like_relation(expr: &Expression) -> bool {
     match expr {
         Expression::Select(_)
+        | Expression::Values(_)
         | Expression::Subquery(_)
         | Expression::Union(_)
         | Expression::Intersect(_)
@@ -1386,6 +1431,22 @@ mod tests {
         let derived = &mut scope.derived_table_scopes[0];
         assert!(derived.is_derived_table());
         assert!(derived.sources.contains_key("t"));
+    }
+
+    #[test]
+    fn test_lateral_preceding_sources_472() {
+        let scope = parse_and_build_scope(
+            "WITH c AS (SELECT a FROM t) SELECT n.a FROM t, LATERAL (SELECT t.a) n, c",
+        );
+        let lateral = &scope.derived_table_scopes[0];
+        assert!(lateral.is_lateral);
+        assert!(lateral.can_be_correlated);
+        assert_eq!(lateral.lateral_sources.len(), 1);
+        assert!(lateral.lateral_sources.contains_key("t"));
+        assert!(!lateral.sources.contains_key("t"));
+        let scope = parse_and_build_scope("SELECT n.a FROM t, (SELECT t.a) n");
+        assert!(!scope.derived_table_scopes[0].is_lateral);
+        assert!(scope.derived_table_scopes[0].lateral_sources.is_empty());
     }
 
     #[test]

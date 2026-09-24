@@ -2,11 +2,167 @@ use super::*;
 use crate::function_catalog::{FunctionNameCase, FunctionSignature, HashMapFunctionCatalog};
 use std::sync::Arc;
 
+#[test]
+fn values_source_columns_471() {
+    let schema = review_schema();
+    let options = SchemaValidationOptions {
+        check_references: true,
+        ..Default::default()
+    };
+    for sql in [
+        "WITH inventory AS (SELECT column1 AS product_id FROM VALUES (1)) SELECT product_id FROM inventory",
+        "SELECT inventory_rows.product_id FROM VALUES (1) AS inventory_rows(product_id)",
+        "SELECT inventory_rows.product_id FROM (VALUES (1)) AS inventory_rows(product_id)",
+        "SELECT column1, column2 FROM VALUES (1, 'a'), (2, 'b')",
+        "SELECT v.column1, v.column2 FROM (VALUES (1, 'a'), (2, 'b')) v",
+        "WITH v AS (VALUES (1, 2)) SELECT column1, column2 FROM v",
+        "WITH v(a, b) AS (VALUES (1, 2)) SELECT a, b FROM v",
+        "SELECT v.id, items.quantity FROM VALUES (1) v(id) JOIN items ON v.id = items.quantity",
+        "SELECT v.\"Product\" FROM VALUES (1) v(\"Product\")",
+        "SELECT v.\"Product\" FROM (VALUES (1)) v(\"Product\")",
+        "SELECT v.\"Product\" FROM (VALUES (1)) AS v(\"Product\")",
+        "SELECT \"COLUMN1\" FROM VALUES (1)",
+    ] {
+        let result = validate_with_schema(sql, DialectType::Snowflake, &schema, &options);
+        assert!(result.valid, "{sql}: {:?}", result.errors);
+    }
+    for (sql, code) in [
+        ("SELECT column2 FROM VALUES (1)", "E201"),
+        ("SELECT missing FROM (VALUES (1)) v(id)", "E201"),
+        ("SELECT v.missing FROM VALUES (1) v(id)", "E201"),
+        ("SELECT v.column1 FROM VALUES (1) v(id)", "E201"),
+        ("SELECT absent.id FROM VALUES (1) v(id)", "E222"),
+        ("SELECT v.product FROM VALUES (1) v(\"Product\")", "E201"),
+        ("SELECT v.product FROM (VALUES (1)) v(\"Product\")", "E201"),
+        ("SELECT \"column1\" FROM VALUES (1)", "E201"),
+        (
+            "SELECT id FROM VALUES (1) a(id) JOIN (VALUES (2)) b(id) ON a.id = b.id",
+            "E221",
+        ),
+        ("WITH v AS (VALUES (1)) SELECT column2 FROM v", "E201"),
+    ] {
+        let result = validate_with_schema(sql, DialectType::Snowflake, &schema, &options);
+        assert!(
+            !result.valid && result.errors.iter().any(|error| error.code == code),
+            "{sql}: {:?}",
+            result.errors
+        );
+    }
+    for sql in [
+        "SELECT v.column1 FROM (VALUES (1)) v",
+        "SELECT v.id FROM (VALUES (1)) v(id)",
+    ] {
+        let result = validate_with_schema(sql, DialectType::PostgreSQL, &schema, &options);
+        assert!(result.valid, "{sql}: {:?}", result.errors);
+    }
+}
+
 fn review_schema() -> ValidationSchema {
     serde_json::from_value(serde_json::json!({"tables": [
         {"name": "items", "columns": [{"name":"quantity","type":"INTEGER"},{"name":"active","type":"BOOLEAN"}]},
         {"name": "other", "columns": [{"name":"quantity","type":"BOOLEAN"},{"name":"active","type":"INTEGER"}]}
     ]})).unwrap()
+}
+
+#[test]
+fn lateral_source_visibility_472() {
+    let schema = review_schema();
+    for dialect in [DialectType::Snowflake, DialectType::PostgreSQL] {
+        for check_types in [false, true] {
+            let options = SchemaValidationOptions {
+                check_types,
+                check_references: true,
+                ..Default::default()
+            };
+            for sql in [
+                "SELECT n.value FROM items i, LATERAL (SELECT i.quantity AS value) n",
+                "SELECT n.value FROM items i CROSS JOIN LATERAL (SELECT i.quantity AS value) n",
+                "SELECT n.value FROM items i LEFT JOIN LATERAL (SELECT i.quantity AS value) n ON TRUE",
+                "SELECT b.value FROM items i, LATERAL (SELECT i.quantity AS value) a, LATERAL (SELECT a.value + 1 AS value) b",
+                "WITH c AS (SELECT quantity FROM items) SELECT n.value FROM c i, LATERAL (SELECT i.quantity AS value) n",
+                "SELECT n.value FROM items i, LATERAL (SELECT (SELECT i.quantity) AS value) n",
+                "SELECT n.value FROM items i, LATERAL (SELECT i.active AS value FROM other i) n",
+                "SELECT n.value FROM items i, LATERAL (SELECT quantity AS value) n",
+                "SELECT n.value FROM items i, LATERAL (SELECT i.quantity AS value UNION ALL SELECT i.quantity) n",
+            ] {
+                let result = validate_with_schema(sql, dialect, &schema, &options);
+                assert!(result.valid, "{dialect}, types={check_types}, {sql}: {:?}", result.errors);
+            }
+            for (sql, code) in [
+                ("SELECT n.value FROM items i, (SELECT i.quantity AS value) n", "E222"),
+                ("SELECT n.value FROM LATERAL (SELECT i.quantity AS value) n, items i", "E222"),
+                ("SELECT n.value FROM items i, LATERAL (SELECT j.quantity AS value) n, items j", "E222"),
+                ("SELECT n.value FROM items i, LATERAL (SELECT n.value AS value) n", "E222"),
+                ("SELECT n.value FROM items i, LATERAL (SELECT i.missing AS value) n", "E201"),
+                ("WITH c AS (SELECT quantity FROM items) SELECT n.value FROM LATERAL (SELECT c.quantity AS value) n, c", "E222"),
+                ("SELECT n.value FROM LATERAL (SELECT quantity AS value) n, items i", "E201"),
+                ("SELECT n.value FROM items i, other j, LATERAL (SELECT quantity AS value) n", "E221"),
+            ] {
+                let result = validate_with_schema(sql, dialect, &schema, &options);
+                assert!(!result.valid && result.errors.iter().any(|error| error.code == code),
+                    "{dialect}, types={check_types}, {sql}: {:?}", result.errors);
+            }
+        }
+    }
+}
+
+#[test]
+fn insert_source_query_validation_474() {
+    let schema = review_schema();
+    for check_types in [false, true] {
+        for check_references in [false, true] {
+            for strict in [false, true] {
+                let options = SchemaValidationOptions {
+                    check_types,
+                    check_references,
+                    strict: Some(strict),
+                    ..Default::default()
+                };
+                for sql in [
+                    "INSERT INTO items(quantity) SELECT active FROM other",
+                    "WITH q AS (SELECT active AS n FROM other) INSERT INTO items(quantity) SELECT n FROM q",
+                    "WITH q AS (SELECT active AS n FROM other) INSERT INTO items(quantity) WITH q AS (SELECT quantity AS m FROM items) SELECT m FROM q",
+                    "INSERT INTO items(quantity) SELECT active FROM other UNION ALL SELECT quantity FROM items",
+                    "INSERT INTO items(quantity) SELECT (SELECT active FROM other)",
+                    "INSERT INTO items(quantity) SELECT 1 AS n RETURNING quantity",
+                ] {
+                    let result = validate_with_schema(sql, DialectType::PostgreSQL, &schema, &options);
+                    assert!(result.valid, "{sql}: {:?}", result.errors);
+                }
+                for (sql, code, name) in [
+                    ("INSERT INTO items(quantity) SELECT missing FROM other", "E201", "missing"),
+                    ("INSERT INTO items(quantity) SELECT active FROM absent", "E200", "absent"),
+                    ("INSERT INTO items(quantity) SELECT active FROM other UNION ALL SELECT missing FROM other", "E201", "missing"),
+                    ("INSERT INTO items(quantity) SELECT (SELECT missing FROM other)", "E201", "missing"),
+                    ("INSERT INTO items(quantity) SELECT items.quantity FROM other", "E222", "items"),
+                    ("INSERT INTO items(quantity) SELECT quantity", "E201", "quantity"),
+                    ("WITH q AS (SELECT active AS n FROM other) INSERT INTO items(quantity) SELECT missing FROM q", "E201", "missing"),
+                    ("WITH q AS (SELECT active AS n FROM other) INSERT INTO items(quantity) WITH q AS (SELECT quantity AS m FROM items) SELECT n FROM q", "E201", "n"),
+                    ("INSERT INTO items(quantity) SELECT active FROM other RETURNING other.active", "E222", "other"),
+                ] {
+                    let result = validate_with_schema(sql, DialectType::PostgreSQL, &schema, &options);
+                    assert_eq!(result.valid, !strict, "{sql}: {:?}", result.errors);
+                    assert!(result.errors.iter().any(|error| error.code == code && error.message.contains(name)),
+                        "{sql}: {:?}", result.errors);
+                }
+            }
+        }
+    }
+    let sql =
+        "WITH q(n) AS (SELECT missing FROM other) INSERT INTO items(quantity) SELECT n FROM q";
+    let result = validate_with_schema(
+        sql,
+        DialectType::PostgreSQL,
+        &schema,
+        &SchemaValidationOptions::default(),
+    );
+    let errors: Vec<_> = result
+        .errors
+        .iter()
+        .filter(|error| error.code == "E201" && error.message.contains("missing"))
+        .collect();
+    assert_eq!(errors.len(), 1, "{sql}: {:?}", result.errors);
+    assert_eq!(errors[0].start, Some(sql.find("missing").unwrap()));
 }
 
 #[test]

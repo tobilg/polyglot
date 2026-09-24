@@ -239,8 +239,12 @@ impl<'a> Resolver<'a> {
             }
             Expression::Subquery(subquery) => {
                 // For subqueries, get named_selects from the inner query
-                self.get_named_selects(&subquery.this)
+                apply_alias_columns(
+                    self.get_named_selects(&subquery.this),
+                    &subquery.column_aliases,
+                )
             }
+            Expression::Values(values) => self.get_values_column_names(values),
             Expression::Select(select) => {
                 // For derived tables that are SELECT expressions
                 self.get_select_column_names(select)
@@ -299,7 +303,13 @@ impl<'a> Resolver<'a> {
             }
             Expression::Intersect(intersect) => self.get_named_selects(&intersect.left),
             Expression::Except(except) => self.get_named_selects(&except.left),
-            Expression::Subquery(subquery) => self.get_named_selects(&subquery.this),
+            Expression::Subquery(subquery) => {
+                apply_alias_columns(
+                    self.get_named_selects(&subquery.this),
+                    &subquery.column_aliases,
+                )
+            }
+            Expression::Values(values) => self.get_values_column_names(values),
             Expression::Alias(alias) => {
                 let columns = self.get_named_selects(&alias.this);
                 apply_alias_columns(columns, &alias.column_aliases)
@@ -316,6 +326,32 @@ impl<'a> Resolver<'a> {
             .iter()
             .filter_map(|expr| self.get_expression_alias(expr))
             .collect()
+    }
+
+    fn get_values_column_names(&self, values: &crate::expressions::Values) -> Vec<String> {
+        let width = values
+            .expressions
+            .first()
+            .map_or(0, |row| row.expressions.len());
+        let prefix = match self.dialect {
+            Some(DialectType::Snowflake) => "COLUMN",
+            Some(DialectType::PostgreSQL) => "column",
+            // Default VALUES names are not standardized. Preserve explicit
+            // aliases without inventing names for other dialects.
+            _ => {
+                return values
+                    .column_aliases
+                    .iter()
+                    .map(|alias| alias.name.clone())
+                    .collect()
+            }
+        };
+        apply_alias_columns(
+            (1..=width)
+                .map(|ordinal| format!("{prefix}{ordinal}"))
+                .collect(),
+            &values.column_aliases,
+        )
     }
 
     /// Get the alias or name for a select expression
@@ -423,7 +459,13 @@ impl<'a> Resolver<'a> {
                 let table_name = qualified_table_name(table);
                 self.schema.column_names(&table_name).unwrap_or_default()
             }
-            Expression::Subquery(subquery) => self.get_named_selects(&subquery.this),
+            Expression::Subquery(subquery) => {
+                apply_alias_columns(
+                    self.get_named_selects(&subquery.this),
+                    &subquery.column_aliases,
+                )
+            }
+            Expression::Values(values) => self.get_values_column_names(values),
             Expression::Select(select) => self.get_select_column_names(select),
             Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_) => self
                 .get_source_columns_from_set_op(source)

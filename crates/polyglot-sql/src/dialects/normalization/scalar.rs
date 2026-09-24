@@ -12765,6 +12765,12 @@ pub(super) fn normalize_bigquery_function(
     }
 
     match name.as_str() {
+        "DATE" if target == DialectType::DuckDB && args.len() == 2 => {
+            let value = args.remove(0);
+            let zone = args.remove(0);
+            temporal::bigquery_date_to_duckdb(value, zone)
+        }
+
         // TIMESTAMP_DIFF(date1, date2, unit) -> TIMESTAMPDIFF(unit, date2, date1)
         // (BigQuery: result = date1 - date2, Standard: result = end - start)
         "TIMESTAMP_DIFF" | "DATETIME_DIFF" | "TIME_DIFF" if args.len() == 3 => {

@@ -5,6 +5,26 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn analyze_query_non_recursive_cte_table_shadowing_473() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{"name": "orders", "columns": [{"name": "id", "type": "BIGINT"}]}]
+    }))
+    .unwrap();
+    for dialect in [DialectType::DuckDB, DialectType::PostgreSQL] {
+        for (sql, expected) in [
+            ("WITH orders AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id FROM orders) SELECT id FROM orders", "BIGINT"),
+            ("WITH orders(out_id) AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id FROM orders) SELECT out_id FROM orders", "BIGINT"),
+            ("WITH RECURSIVE orders(id) AS (SELECT CAST(1 AS INT) AS id UNION ALL SELECT id + 1 FROM orders WHERE id < 3) SELECT id FROM orders", "INT"),
+        ] {
+            let analysis = analyze_query(sql, AnalyzeQueryOptions {
+                dialect, schema: Some(schema.clone()), ..Default::default()
+            }).unwrap();
+            assert_eq!(analysis.projections[0].type_hint.as_deref(), Some(expected), "{dialect}: {sql}");
+        }
+    }
+}
+
+#[test]
 fn analyze_query_set_operation_types_454() {
     let schema: ValidationSchema = serde_json::from_value(json!({
         "tables": [{"name": "orders", "columns": [{"name": "amount", "type": "VARCHAR", "nullable": true}]}]
@@ -2757,4 +2777,67 @@ fn analyze_query_resolves_pivot_alias_columns_and_generated_outputs() {
     assert!(pivot_value.upstream.iter().any(|reference| {
         reference.table.as_deref() == Some("sales") && reference.column == "amt"
     }));
+}
+
+#[test]
+fn analyze_query_pivot_cte_does_not_reenter_its_source_470() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{"name": "staged_orders", "columns": [
+            {"name": "customer_id", "type": "INT"},
+            {"name": "category", "type": "VARCHAR"},
+            {"name": "amount", "type": "INT"}
+        ]}]
+    }))
+    .unwrap();
+    for pivot_values in ["'books', 'games'", "ANY ORDER BY category"] {
+        for (source, output) in [
+            ("pivot_input", "customer_id"),
+            ("pivot_input AS i", "i.customer_id"),
+            ("pivot_input", "p.customer_id"),
+        ] {
+            let alias = if output.starts_with("p.") {
+                " AS p"
+            } else {
+                ""
+            };
+            for projection in ["*", output] {
+                let sql = format!("WITH pivot_input AS (SELECT customer_id, category, amount FROM staged_orders) SELECT {projection} FROM {source} PIVOT(MAX(amount) FOR category IN ({pivot_values})){alias}");
+                for with_schema in [false, true] {
+                    let analysis = analyze_query(
+                        &sql,
+                        AnalyzeQueryOptions {
+                            dialect: DialectType::Snowflake,
+                            schema: with_schema.then(|| schema.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_or_else(|error| panic!("{sql}: {error}"));
+                    assert!(!analysis.projections.is_empty(), "{sql}");
+                    if projection != "*" {
+                        assert!(
+                            analysis.projections[0]
+                                .upstream
+                                .iter()
+                                .any(|reference| reference.table.as_deref().is_some_and(|table| {
+                                    table.eq_ignore_ascii_case("staged_orders")
+                                }) && reference
+                                    .column
+                                    .eq_ignore_ascii_case("customer_id")),
+                            "{sql}: {:?}",
+                            analysis.projections[0].upstream
+                        );
+                    } else {
+                        assert!(
+                            !analysis.projections.iter().any(|projection| projection
+                                .name
+                                .as_deref()
+                                .is_some_and(|name| name.eq_ignore_ascii_case("category")
+                                    || name.eq_ignore_ascii_case("amount"))),
+                            "pivot input columns are not pivot output columns: {sql}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

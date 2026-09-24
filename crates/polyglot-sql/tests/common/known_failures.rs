@@ -212,6 +212,19 @@ pub fn dialect_identity_known_failures(_dialect: &str) -> HashSet<String> {
 pub fn transpilation_known_failures(source: &str, target: &str) -> HashSet<String> {
     let mut failures = HashSet::new();
 
+    if source == "bigquery" && target == "duckdb" {
+        // Issue #479: SQLGlot 30.14.0 emits bare DECIMAL for BigQuery NUMERIC,
+        // narrowing (38, 9) to DuckDB's (18, 3). Verified in DuckDB 1.5.5:
+        // CAST('0.1249' AS DECIMAL) yields 0.125; ROUND(..., 2) yields 0.13.
+        // The two ROUND fixtures use 2.25, which hides the value error, but their
+        // expected CAST still has the wrong precision/scale. ROUND_EVEN also
+        // changes 0.1349 to 0.14 instead of 0.13 after that premature rounding.
+        // Keep other targets active; existing DuckDB unit tests cover both modes.
+        for index in [86, 253, 254] {
+            failures.insert(format!("bigquery->duckdb:{index}"));
+        }
+    }
+
     if source == "presto" && target == "duckdb" {
         // Issue #463: SQLGlot 30.14.0 maps two-argument MAX_BY to ARG_MAX,
         // which drops NULL winning values. Verified by executing its output

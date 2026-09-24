@@ -54,6 +54,8 @@ pub struct Generator {
     /// Athena dialect: true when generating Hive-style DDL (uses backticks)
     /// false when generating Trino-style DML/CREATE VIEW (uses double quotes)
     athena_hive_context: bool,
+    /// BigQuery omits decimal parameters while rendering CAST/SAFE_CAST types.
+    in_cast_type: bool,
     /// SQLite: column names that should have PRIMARY KEY inlined (from single-column table constraints)
     sqlite_inline_pk_columns: std::collections::HashSet<String>,
     /// MERGE: table name/alias qualifiers to strip from UPDATE SET left side (for PostgreSQL)
@@ -2240,6 +2242,7 @@ impl Generator {
             unsupported_messages: Vec::new(),
             indent_level: 0,
             athena_hive_context: false,
+            in_cast_type: false,
             sqlite_inline_pk_columns: std::collections::HashSet::new(),
             merge_strip_qualifiers: Vec::new(),
             clickhouse_nullable_depth: 0,
@@ -18707,6 +18710,14 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_cast_data_type(&mut self, data_type: &DataType) -> Result<()> {
+        let previous = self.in_cast_type;
+        self.in_cast_type = true;
+        let result = self.generate_data_type(data_type);
+        self.in_cast_type = previous;
+        result
+    }
+
     fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
         self.validate_cast_to_hana(cast)?;
         if self.config.dialect == Some(DialectType::Vertica) {
@@ -18743,7 +18754,7 @@ impl Generator {
         if matches!(self.config.dialect, Some(DialectType::SingleStore)) {
             self.generate_expression(&cast.this)?;
             self.write(" :> ");
-            self.generate_data_type(&cast.to)?;
+            self.generate_cast_data_type(&cast.to)?;
             return Ok(());
         }
 
@@ -18818,7 +18829,7 @@ impl Generator {
         // This preserves sqlglot's typed inline array literal output.
         if matches!(self.config.dialect, Some(DialectType::BigQuery)) {
             if let Expression::Array(arr) = &cast.this {
-                self.generate_data_type(&cast.to)?;
+                self.generate_cast_data_type(&cast.to)?;
                 // Output just the bracket content [values] without the ARRAY prefix
                 self.write("[");
                 for (i, expr) in arr.expressions.iter().enumerate() {
@@ -18831,7 +18842,7 @@ impl Generator {
                 return Ok(());
             }
             if matches!(&cast.this, Expression::ArrayFunc(_)) {
-                self.generate_data_type(&cast.to)?;
+                self.generate_cast_data_type(&cast.to)?;
                 self.generate_expression(&cast.this)?;
                 return Ok(());
             }
@@ -18852,7 +18863,7 @@ impl Generator {
                     self.write_space();
                     self.write_keyword("AS");
                     self.write_space();
-                    self.generate_data_type(&cast.to)?;
+                    self.generate_cast_data_type(&cast.to)?;
                     self.write(")");
                     return Ok(());
                 }
@@ -18867,7 +18878,7 @@ impl Generator {
             // PostgreSQL :: syntax: expr::type
             self.generate_expression(&cast.this)?;
             self.write("::");
-            self.generate_data_type(&cast.to)?;
+            self.generate_cast_data_type(&cast.to)?;
         } else {
             // Standard CAST() syntax
             self.write_keyword("CAST");
@@ -18893,7 +18904,7 @@ impl Generator {
                         {
                             self.write_keyword("CHAR");
                         } else {
-                            self.generate_data_type(&cast.to)?;
+                            self.generate_cast_data_type(&cast.to)?;
                         }
                     }
                     DataType::VarChar { length, .. } => {
@@ -18918,7 +18929,7 @@ impl Generator {
                         }
                     }
                     _ => {
-                        self.generate_data_type(&cast.to)?;
+                        self.generate_cast_data_type(&cast.to)?;
                     }
                 }
             } else if matches!(self.config.dialect, Some(DialectType::Snowflake)) {
@@ -18931,7 +18942,7 @@ impl Generator {
                         }
                     }
                     _ => {
-                        self.generate_data_type(&cast.to)?;
+                        self.generate_cast_data_type(&cast.to)?;
                     }
                 }
             } else if matches!(self.config.dialect, Some(DialectType::Oracle)) {
@@ -18944,10 +18955,24 @@ impl Generator {
                     DataType::Oracle {
                         oracle_type: OracleDataType::BinaryDouble,
                     } => self.write_keyword("DOUBLE PRECISION"),
-                    _ => self.generate_data_type(&cast.to)?,
+                    _ => self.generate_cast_data_type(&cast.to)?,
                 }
+            } else if self.config.dialect == Some(DialectType::DuckDB)
+                && self.config.source_dialect != Some(DialectType::BigQuery)
+                && matches!(
+                    cast.to,
+                    DataType::Decimal {
+                        precision: None,
+                        ..
+                    }
+                )
+                && !matches!(cast.this, Expression::IntDiv(_))
+            {
+                // Preserve DuckDB's existing CAST default and integer-division
+                // exception. BigQuery defaults are resolved in generate_data_type.
+                self.write_keyword("DECIMAL(18, 3)");
             } else {
-                self.generate_data_type(&cast.to)?;
+                self.generate_cast_data_type(&cast.to)?;
             }
 
             // Output DEFAULT ... ON CONVERSION ERROR clause if present (Oracle)
@@ -21531,21 +21556,25 @@ impl Generator {
             if !skip_interval_keyword {
                 self.write_space();
             }
-            // If the value is a complex expression (not a literal/column/function call)
-            // and there's a unit, wrap it in parentheses
-            // e.g., INTERVAL (2 * 2) MONTH, INTERVAL (DAYOFMONTH(dt) - 1) DAY
-            let needs_parens = interval.unit.is_some()
-                && matches!(
-                    value,
-                    Expression::Add(_)
-                        | Expression::Sub(_)
-                        | Expression::Mul(_)
-                        | Expression::Div(_)
-                        | Expression::Mod(_)
-                        | Expression::BitwiseAnd(_)
-                        | Expression::BitwiseOr(_)
-                        | Expression::BitwiseXor(_)
-                );
+            // DuckDB requires parentheses for every non-literal interval value,
+            // including columns, function calls, CASE, and unary expressions.
+            // Respect existing parentheses and other dialects' expression rules.
+            let needs_parens = if self.config.dialect == Some(DialectType::DuckDB) {
+                !matches!(value, Expression::Literal(_) | Expression::Paren(_))
+            } else {
+                interval.unit.is_some()
+                    && matches!(
+                        value,
+                        Expression::Add(_)
+                            | Expression::Sub(_)
+                            | Expression::Mul(_)
+                            | Expression::Div(_)
+                            | Expression::Mod(_)
+                            | Expression::BitwiseAnd(_)
+                            | Expression::BitwiseOr(_)
+                            | Expression::BitwiseXor(_)
+                    )
+            };
             if needs_parens {
                 self.write("(");
             }
@@ -25279,7 +25308,18 @@ impl Generator {
     }
 
     fn generate_parameter(&mut self, f: &Parameter) -> Result<()> {
-        match f.style {
+        // Parameter spelling is a rendering concern. Use the source dialect so
+        // MySQL/TSQL @variables retain their meaning, and render nested BigQuery
+        // parameters even in nodes outside the legacy dialect transform coverage.
+        let style = if self.config.source_dialect == Some(DialectType::BigQuery)
+            && self.config.dialect == Some(DialectType::DuckDB)
+            && f.style == ParameterStyle::At
+        {
+            ParameterStyle::Dollar
+        } else {
+            f.style
+        };
+        match style {
             ParameterStyle::Question => self.write("?"),
             ParameterStyle::Dollar => {
                 if let Some(idx) = f.index {
@@ -25297,7 +25337,11 @@ impl Generator {
                     self.write("$");
                     if let Some(ref name) = f.name {
                         // Session variable like $x or $query_id
-                        self.write(name);
+                        if f.quoted {
+                            self.generate_identifier(&Identifier::quoted(name))?;
+                        } else {
+                            self.write(name);
+                        }
                     }
                 }
             }
@@ -25328,6 +25372,8 @@ impl Generator {
                         self.write("'");
                         self.write(name);
                         self.write("'");
+                    } else if f.quoted && self.config.dialect == Some(DialectType::BigQuery) {
+                        self.generate_identifier(&Identifier::quoted(name))?;
                     } else if f.quoted {
                         self.write("\"");
                         self.write(name);
@@ -25516,7 +25562,7 @@ impl Generator {
         if matches!(self.config.dialect, Some(DialectType::SingleStore)) {
             self.generate_expression(&cast.this)?;
             self.write(" !:> ");
-            self.generate_data_type(&cast.to)?;
+            self.generate_cast_data_type(&cast.to)?;
             return Ok(());
         }
 
@@ -25528,7 +25574,7 @@ impl Generator {
             self.write_space();
             self.write_keyword("AS");
             self.write_space();
-            self.generate_data_type(&cast.to)?;
+            self.generate_cast_data_type(&cast.to)?;
             self.write(")");
             return Ok(());
         }
@@ -25557,7 +25603,7 @@ impl Generator {
         self.write_space();
         self.write_keyword("AS");
         self.write_space();
-        self.generate_data_type(&cast.to)?;
+        self.generate_cast_data_type(&cast.to)?;
 
         // Output FORMAT clause if present
         if let Some(format) = &cast.format {
@@ -25585,7 +25631,7 @@ impl Generator {
         self.write_space();
         self.write_keyword("AS");
         self.write_space();
-        self.generate_data_type(&cast.to)?;
+        self.generate_cast_data_type(&cast.to)?;
 
         // Output FORMAT clause if present
         if let Some(format) = &cast.format {
@@ -28078,11 +28124,21 @@ impl Generator {
                 }
             }
             DataType::Decimal { precision, scale } => {
+                if self.config.dialect == Some(DialectType::BigQuery) && self.in_cast_type {
+                    self.write_keyword("NUMERIC");
+                    return Ok(());
+                }
                 // Vertica's omitted scale is 15, unlike the standard zero used
                 // by PostgreSQL and DuckDB. Native Vertica types already carry
                 // their defaults in the AST; make foreign defaults explicit for
                 // casts, column definitions, and nested types alike.
-                let (precision, scale) = if self.config.dialect == Some(DialectType::Vertica) {
+                let (precision, scale) = if self.config.dialect == Some(DialectType::DuckDB)
+                    && self.config.source_dialect == Some(DialectType::BigQuery)
+                    && precision.is_none()
+                    && scale.is_none()
+                {
+                    (Some(38), Some(9))
+                } else if self.config.dialect == Some(DialectType::Vertica) {
                     match (*precision, *scale) {
                         (Some(p), s) => (Some(p), Some(s.unwrap_or(0))),
                         (None, None) if self.config.source_dialect == Some(DialectType::DuckDB) => {

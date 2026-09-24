@@ -493,3 +493,215 @@ fn transform_recursive_visits_generated_child_metadata() {
         Some(Expression::Literal(literal)) if literal.is_string() && literal.value_str() == "#"
     ));
 }
+
+// Issue #475: complete AST rewrites must reach typed function arguments.
+#[test]
+fn complete_transforms_visit_typed_function_children() {
+    use polyglot_sql::{qualify_columns, rename_columns, replace_nodes, transform_all};
+    for (dialect, sql) in [
+        (DialectType::Oracle, "SELECT UPPER(t.c) FROM t"),
+        (DialectType::Oracle, "SELECT INSTR(t.c, 'x') FROM t"),
+        (DialectType::Oracle, "SELECT NVL2(t.c, 1, 0) FROM t"),
+        (DialectType::Oracle, "SELECT LAST_DAY(t.c) FROM t"),
+        (DialectType::Oracle, "SELECT NEXT_DAY(t.c, 'MONDAY') FROM t"),
+        (DialectType::Oracle, "SELECT ADD_MONTHS(t.c, 1) FROM t"),
+        (
+            DialectType::Oracle,
+            "SELECT MONTHS_BETWEEN(t.c, t.d) FROM t",
+        ),
+        (DialectType::Oracle, "SELECT TO_NUMBER(t.c) FROM t"),
+        (DialectType::Oracle, "SELECT INITCAP(t.c) FROM t"),
+        (
+            DialectType::Oracle,
+            "SELECT FIRST_VALUE(t.c) OVER (ORDER BY t.d) FROM t",
+        ),
+        (DialectType::Oracle, "SELECT JSON_VALUE(t.c, '$.a') FROM t"),
+        (
+            DialectType::Snowflake,
+            "SELECT YEAR(t.c), CONTAINS(t.c, 'x'), ENDSWITH(t.c, 'x') FROM t",
+        ),
+        (
+            DialectType::BigQuery,
+            "SELECT STARTS_WITH(t.c, 'a'), ENDS_WITH(t.c, 'z'), ARRAY_LENGTH(t.c) FROM t",
+        ),
+        (
+            DialectType::PostgreSQL,
+            "SELECT t.c ~ 'x', t.c IS DISTINCT FROM t.d FROM t",
+        ),
+        (DialectType::ClickHouse, "SELECT quantile(0.5)(t.c) FROM t"),
+        (
+            DialectType::Oracle,
+            "SELECT NVL2(INSTR(t.c, t.d), LAST_DAY(t.c), NEXT_DAY(t.d, 'MONDAY')) FROM t",
+        ),
+    ] {
+        let expression = parse_one_dialect(sql, dialect);
+        let columns = expression
+            .find_all(|node| matches!(node, Expression::Column(_)))
+            .len();
+        assert!(columns > 0, "{sql}");
+        let expected_nodes = expression.dfs().fold(HashMap::new(), |mut counts, node| {
+            *counts.entry(node.variant_name()).or_insert(0) += 1;
+            counts
+        });
+        let visited = RefCell::new(HashMap::new());
+        let identity = transform_all(expression.clone(), &|node| {
+            *visited.borrow_mut().entry(node.variant_name()).or_insert(0) += 1;
+            Ok(node)
+        })
+        .unwrap();
+        assert_eq!(visited.into_inner(), expected_nodes, "{sql}");
+        assert_eq!(identity, expression, "identity rewrite changed {sql}");
+
+        // A second visit would rewrite renamed to twice; assert exact-once behavior.
+        let mapping = HashMap::from([
+            ("c".to_string(), "renamed".to_string()),
+            ("d".to_string(), "renamed".to_string()),
+            ("renamed".to_string(), "twice".to_string()),
+        ]);
+        let renamed = rename_columns(expression.clone(), &mapping);
+        assert_eq!(
+            renamed
+                .find_all(|node| matches!(node, Expression::Column(c) if c.name.name == "renamed"))
+                .len(),
+            columns,
+            "{sql}"
+        );
+        assert!(
+            generate_with_dialect(&renamed, dialect).contains("t.renamed"),
+            "{sql}"
+        );
+
+        let unqualified = transform_all(expression.clone(), &|node| {
+            Ok(match node {
+                Expression::Column(mut column) => {
+                    column.table = None;
+                    Expression::Column(column)
+                }
+                other => other,
+            })
+        })
+        .unwrap();
+        let qualified = qualify_columns(unqualified, "source");
+        assert_eq!(qualified.find_all(|node| matches!(node, Expression::Column(c) if c.table.as_ref().is_some_and(|t| t.name == "source"))).len(), columns, "{sql}");
+        let replaced = replace_nodes(
+            expression,
+            |node| matches!(node, Expression::Column(_)),
+            Expression::column("replacement"),
+        );
+        assert_eq!(
+            replaced
+                .find_all(
+                    |node| matches!(node, Expression::Column(c) if c.name.name == "replacement")
+                )
+                .len(),
+            columns,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn complete_transform_visits_clauses_and_propagates_errors() {
+    use polyglot_sql::transform_all;
+    for sql in [
+        "WITH x AS (SELECT c FROM t) SELECT c FROM x ORDER BY c",
+        "SELECT FIRST_VALUE(c) OVER w FROM t WINDOW w AS (PARTITION BY d ORDER BY e ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+        "SELECT SUM(c) FILTER (WHERE d > 0) FROM t",
+        "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY c) FROM t",
+        "UPDATE t SET c = YEAR(d) WHERE e = 1 RETURNING c",
+    ] {
+        let original = parse_one(sql);
+        let count = original.dfs().count();
+        let visits = std::cell::Cell::new(0);
+        let rewritten = transform_all(original.clone(), &|node| {
+            visits.set(visits.get() + 1);
+            Ok(node)
+        }).unwrap();
+        assert_eq!(visits.get(), count, "{sql}");
+        assert_eq!(rewritten, original, "{sql}");
+        let error = transform_all(original, &|node| match node {
+            Expression::Column(_) => Err(polyglot_sql::Error::Internal("column failure".into())),
+            other => Ok(other),
+        }).unwrap_err();
+        assert!(error.to_string().contains("column failure"), "{sql}: {error}");
+    }
+}
+
+#[test]
+fn complete_transform_is_bottom_up_and_does_not_revisit_replacements() {
+    use polyglot_sql::{expressions::UnaryFunc, transform_all};
+    let visits = RefCell::new(Vec::new());
+    let expression = Expression::Year(Box::new(UnaryFunc::new(Expression::column("c"))));
+    let result = transform_all(expression, &|node| {
+        visits.borrow_mut().push(node.variant_name());
+        Ok(match node {
+            Expression::Column(_) => {
+                Expression::Upper(Box::new(UnaryFunc::new(Expression::column("new"))))
+            }
+            Expression::Year(year) => {
+                assert!(matches!(year.this, Expression::Upper(_)));
+                Expression::Year(year)
+            }
+            other => other,
+        })
+    })
+    .unwrap();
+    assert_eq!(*visits.borrow(), vec!["column", "year"]);
+    assert_eq!(result.dfs().count(), 3);
+}
+
+#[test]
+fn ast_helpers_preserve_embedded_wrapper_callbacks() {
+    let expr = parse_one("SELECT CAST(c AS INT) FROM a JOIN b ON a.id = b.id ORDER BY c");
+    let transformed = replace_by_type(
+        expr,
+        |_| true,
+        |node| match node {
+            Expression::Join(mut join) => {
+                join.kind = JoinKind::Left;
+                Expression::Join(join)
+            }
+            Expression::Ordered(mut ordered) => {
+                ordered.desc = true;
+                Expression::Ordered(ordered)
+            }
+            Expression::DataType(DataType::Int { .. }) => {
+                Expression::DataType(DataType::BigInt { length: None })
+            }
+            other => other,
+        },
+    );
+    let sql = transformed.sql();
+    assert!(sql.contains("LEFT JOIN"), "{sql}");
+    assert!(sql.contains("BIGINT"), "{sql}");
+    assert!(sql.contains("c DESC"), "{sql}");
+}
+
+#[test]
+fn dialect_transforms_visit_interval_children_before_wrapper_477() {
+    let expr = parse_one_dialect("SELECT INTERVAL ABS(n) MONTH", DialectType::BigQuery);
+    let visits = RefCell::new(Vec::new());
+    let result = transform_recursive(expr, &|node| {
+        visits.borrow_mut().push(node.variant_name().to_string());
+        Ok(match node {
+            Expression::Column(mut column) if column.name.name == "n" => {
+                column.name.name = "months".to_string();
+                Expression::Column(column)
+            }
+            other => other,
+        })
+    })
+    .unwrap();
+    let visits = visits.into_inner();
+    assert!(first_index(&visits, "column") < first_index(&visits, "interval"));
+    assert_eq!(visits.iter().filter(|name| *name == "column").count(), 1);
+    assert_eq!(
+        generate_with_dialect(&result, DialectType::DuckDB),
+        "SELECT INTERVAL (ABS(months)) MONTH"
+    );
+    // MySQL permits bare columns and calls in its interval expression syntax.
+    assert_eq!(
+        generate_with_dialect(&result, DialectType::MySQL),
+        "SELECT INTERVAL ABS(months) MONTH"
+    );
+}

@@ -25,12 +25,12 @@ By default, `polyglot-sql` enables the full public API. Parser-only consumers ca
 disable default features and opt into only the dialect parsers they need:
 
 ```toml
-polyglot-sql = { version = "0.12.1", default-features = false }
+polyglot-sql = { version = "0.13.0", default-features = false }
 ```
 
 ```toml
 polyglot-sql = {
-    version = "0.12.1",
+    version = "0.13.0",
     default-features = false,
     features = ["dialect-clickhouse"],
 }
@@ -44,14 +44,14 @@ Examples:
 ```toml
 # Parse and generate SQL for one dialect.
 polyglot-sql = {
-    version = "0.12.1",
+    version = "0.13.0",
     default-features = false,
     features = ["generate", "dialect-clickhouse"],
 }
 
 # Cross-dialect transpilation.
 polyglot-sql = {
-    version = "0.12.1",
+    version = "0.13.0",
     default-features = false,
     features = ["transpile", "dialect-clickhouse", "dialect-postgresql"],
 }

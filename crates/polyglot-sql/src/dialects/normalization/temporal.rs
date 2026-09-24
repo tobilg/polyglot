@@ -1,3 +1,4 @@
+use super::operators::cast_expr;
 use super::postgres_interval::{
     self, DecomposeOutcome, ParsedInterval, MICROS_PER_DAY, MICROS_PER_HOUR, MICROS_PER_MINUTE,
     MICROS_PER_SECOND,
@@ -10,6 +11,7 @@ use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
+    ToIso8601DuckDB,
     PostgresDatePartForTsql,
     SnowflakeCurrentToClickHouse,
     ConvertTimezoneToExpr,
@@ -57,6 +59,7 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::ToIso8601DuckDB => rewrite_to_iso8601_duckdb(e, context),
             Action::PostgresDatePartForTsql => rewrite_postgres_date_part_for_tsql(e),
             Action::SnowflakeCurrentToClickHouse => rewrite_snowflake_current_to_clickhouse(e),
             Action::ConvertTimezoneToExpr => {
@@ -2716,6 +2719,323 @@ pub(super) fn rewrite(
     Ok(RewriteOutcome::Rewritten(expression))
 }
 
+fn iso8601_unsupported(reason: &str) -> Error {
+    Error::unsupported(format!("TO_ISO8601: {reason}"), "duckdb")
+}
+
+// Keep the source precision and zone before DuckDB's timestamp literal renderer
+// can turn a nanosecond or zoned literal into a plain microsecond TIMESTAMP.
+pub(super) fn timestamp_literal_type(value: &str) -> Option<DataType> {
+    let (date, time) = value.trim().split_once([' ', 'T'])?;
+    let date = date.as_bytes();
+    if date.len() != 10
+        || date[4] != b'-'
+        || date[7] != b'-'
+        || !date
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+        || &date[..4] == b"0000"
+    {
+        return None;
+    }
+    let time = time.trim_start().as_bytes();
+    if time.len() < 8
+        || time[2] != b':'
+        || time[5] != b':'
+        || !time[..8]
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 2 || i == 5 || b.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut rest = &time[8..];
+    let precision = if rest.first() == Some(&b'.') {
+        rest = &rest[1..];
+        let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        rest = &rest[digits..];
+        digits as u32
+    } else {
+        0
+    };
+    Some(DataType::Timestamp {
+        precision: Some(precision),
+        timezone: rest.iter().any(|b| !b.is_ascii_whitespace()),
+    })
+}
+
+fn iso8601_input_type(expression: &Expression) -> Option<DataType> {
+    match expression {
+        Expression::Literal(literal) => match literal.as_ref() {
+            Literal::Date(_) => Some(DataType::Date),
+            Literal::Timestamp(value) => timestamp_literal_type(value),
+            _ => None,
+        },
+        Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+            if let Some(data_type) = &cast.inferred_type {
+                return Some(data_type.clone());
+            }
+            match &cast.to {
+                DataType::Date => Some(DataType::Date),
+                DataType::Timestamp {
+                    precision,
+                    timezone,
+                } => Some(DataType::Timestamp {
+                    precision: Some(precision.unwrap_or(3)),
+                    timezone: *timezone,
+                }),
+                _ => None,
+            }
+        }
+        Expression::Paren(paren) => iso8601_input_type(&paren.this),
+        Expression::CurrentDate(_) => Some(DataType::Date),
+        other => other.inferred_type().cloned(),
+    }
+}
+
+fn prepare_iso8601_argument(expression: Expression) -> Result<Expression> {
+    // Preserve literals inside compound inputs too (for example CASE branches).
+    // This visits only the argument and never duplicates its evaluation.
+    crate::dialects::transform_recursive(expression, &prepare_iso8601_node)
+}
+
+fn prepare_iso8601_node(expression: Expression) -> Result<Expression> {
+    let wrap_cast: fn(Box<Cast>) -> Expression = match &expression {
+        Expression::TryCast(_) => Expression::TryCast,
+        Expression::SafeCast(_) => Expression::SafeCast,
+        _ => Expression::Cast,
+    };
+    match expression {
+        Expression::Literal(ref literal) if matches!(literal.as_ref(), Literal::Timestamp(_)) => {
+            let Literal::Timestamp(value) = literal.as_ref() else {
+                unreachable!()
+            };
+            let Some(DataType::Timestamp {
+                precision: Some(p),
+                timezone,
+            }) = timestamp_literal_type(value)
+            else {
+                return Err(iso8601_unsupported(
+                    "unverified timestamp literal precision or format",
+                ));
+            };
+            if p > 9 || (timezone && p > 6) {
+                return Err(iso8601_unsupported(
+                    "timestamp precision exceeds DuckDB's representation",
+                ));
+            }
+            // Physical DuckDB types support 0, 3, 6, or 9 digits. Widening a
+            // literal's storage precision retains its value, including zeros.
+            let precision = match p {
+                0 => 0,
+                1..=3 => 3,
+                4..=6 => 6,
+                _ => 9,
+            };
+            prepare_iso8601_node(cast_expr(
+                Expression::string(value),
+                DataType::Timestamp {
+                    precision: Some(precision),
+                    timezone,
+                },
+            ))
+        }
+        Expression::Cast(mut cast)
+        | Expression::TryCast(mut cast)
+        | Expression::SafeCast(mut cast) => {
+            if cast.format.is_some() || cast.default.is_some() {
+                return Err(iso8601_unsupported(
+                    "unverified CAST format or error default",
+                ));
+            }
+            if let Some(DataType::Timestamp {
+                precision: Some(p),
+                timezone,
+            }) = cast.inferred_type
+            {
+                if p > 9 || (timezone && p > 6) {
+                    return Err(iso8601_unsupported(
+                        "timestamp precision exceeds DuckDB's representation",
+                    ));
+                }
+                // The general normalization pass retains a timestamp literal's
+                // source type here while leaving its ordinary rendering intact.
+                // TO_ISO8601 needs storage that preserves all of those digits.
+                let precision = match p {
+                    0 => 0,
+                    1..=3 => 3,
+                    4..=6 => 6,
+                    _ => 9,
+                };
+                cast.to = DataType::Timestamp {
+                    precision: Some(precision),
+                    timezone,
+                };
+            }
+            let input = match &cast.this {
+                Expression::Literal(literal) => match literal.as_ref() {
+                    Literal::String(value) => timestamp_literal_type(value),
+                    _ => iso8601_input_type(&cast.this),
+                },
+                _ => iso8601_input_type(&cast.this),
+            };
+            if matches!(input, Some(DataType::Timestamp { timezone: true, .. }))
+                && matches!(
+                    cast.to,
+                    DataType::Date
+                        | DataType::Timestamp {
+                            timezone: false,
+                            ..
+                        }
+                )
+            {
+                return Err(iso8601_unsupported(
+                    "zoned timestamp CAST requires source time-zone semantics",
+                ));
+            }
+            if let DataType::Timestamp {
+                precision,
+                timezone,
+            } = &mut cast.to
+            {
+                let p = *precision.get_or_insert(3);
+                if !matches!(p, 0 | 3 | 6 | 9) || (*timezone && p > 6) {
+                    return Err(iso8601_unsupported("unsupported timestamp CAST precision"));
+                }
+                if matches!(input, Some(DataType::Timestamp { precision: Some(input_p), .. }) if input_p > p)
+                {
+                    return Err(iso8601_unsupported(
+                        "precision-reducing CAST requires a verified source rounding conversion",
+                    ));
+                }
+                if *timezone {
+                    if let Expression::Literal(literal) = &mut cast.this {
+                        if let Literal::String(value) = literal.as_mut() {
+                            // Trino accepts a space before a UTC offset or Z;
+                            // DuckDB interprets that spelling as an IANA zone.
+                            // Keep the space before named zones such as UTC.
+                            if let Some(offset) = value.rfind(['+', '-', 'Z']) {
+                                if value[..offset].contains(':')
+                                    && value[offset + 1..]
+                                        .bytes()
+                                        .all(|b| b.is_ascii_digit() || b == b':')
+                                {
+                                    let end = value[..offset].trim_end().len();
+                                    value.drain(end..offset);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(wrap_cast(cast))
+        }
+        other => Ok(other),
+    }
+}
+
+fn rewrite_to_iso8601_duckdb(
+    expression: Expression,
+    context: &NormalizationContext,
+) -> Result<Expression> {
+    let Expression::Function(mut function) = expression else {
+        return Ok(expression);
+    };
+    if function.args.len() != 1 || function.distinct {
+        return Err(iso8601_unsupported(
+            "expected one date or timestamp argument",
+        ));
+    }
+    let argument = function.args.remove(0);
+    let data_type = iso8601_input_type(&argument)
+        .ok_or_else(|| iso8601_unsupported("unresolved argument type or timestamp precision"))?;
+    let (format, timezone, precision) = match data_type {
+        DataType::Date => ("%Y-%m-%d", false, None),
+        DataType::Timestamp {
+            precision,
+            timezone,
+        } => {
+            if precision.is_none() {
+                return Err(iso8601_unsupported("unresolved timestamp precision"));
+            }
+            if precision.is_some_and(|p| p > 9 || (timezone && p > 6)) {
+                return Err(iso8601_unsupported(
+                    "timestamp precision exceeds DuckDB's representation",
+                ));
+            }
+            // Presto's legacy timestamp mode also depends on the source session
+            // zone. Without that session metadata, only normalized output is safe
+            // to offer in permissive mode, even for an unzoned timestamp.
+            if context.source == DialectType::Presto && precision.is_some_and(|p| p > 3) {
+                return Err(iso8601_unsupported(
+                    "Presto timestamp precision above milliseconds",
+                ));
+            }
+            let exact_format = if !timezone && context.source != DialectType::Presto {
+                match precision {
+                    Some(0) => Some("%Y-%m-%dT%H:%M:%S"),
+                    Some(3) => Some("%Y-%m-%dT%H:%M:%S.%g"),
+                    Some(6) => Some("%Y-%m-%dT%H:%M:%S.%f"),
+                    Some(9) => Some("%Y-%m-%dT%H:%M:%S.%n"),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let format = match exact_format {
+                Some(format) => format,
+                None if !context.strict => "%Y-%m-%dT%H:%M:%S.%n",
+                None => {
+                    return Err(iso8601_unsupported(
+                        "exact source precision and time zone cannot be preserved",
+                    ))
+                }
+            };
+            (format, timezone, precision)
+        }
+        _ => return Err(iso8601_unsupported("expected a date or timestamp type")),
+    };
+    let mut argument = prepare_iso8601_argument(argument)?;
+    if timezone {
+        argument = Expression::AtTimeZone(Box::new(AtTimeZone {
+            this: argument,
+            zone: Expression::string("UTC"),
+        }));
+        // DuckDB ignores TIMESTAMPTZ(p). Apply the source's precision to the UTC
+        // timestamp so permissive formatting does not invent extra value digits.
+        if let Some(p @ (0 | 3 | 6)) = precision {
+            argument = cast_expr(
+                argument,
+                DataType::Timestamp {
+                    precision: Some(p),
+                    timezone: false,
+                },
+            );
+        }
+    }
+    let formatted = Expression::TimeToStr(Box::new(TimeToStr {
+        this: Box::new(argument),
+        format: format.to_string(),
+        culture: None,
+        zone: None,
+    }));
+    if timezone {
+        // Keep %n last: DuckDB 1.5.5 corrupts a literal suffix inside "%nZ".
+        // || also preserves NULL, unlike DuckDB's CONCAT function.
+        Ok(Expression::DPipe(Box::new(DPipe {
+            this: Box::new(formatted),
+            expression: Box::new(Expression::string("Z")),
+            safe: None,
+        })))
+    } else {
+        Ok(formatted)
+    }
+}
+
 fn rewrite_snowflake_current_to_clickhouse(expression: Expression) -> Result<Expression> {
     fn default_precision() -> Expression {
         Expression::number(9)
@@ -4082,6 +4402,116 @@ pub(super) fn force_cast_timestamp(expr: Expression) -> Expression {
         default: None,
         inferred_type: None,
     }))
+}
+
+/// BigQuery DATE(timestamp, zone) extracts a calendar date from an instant.
+/// Keep the source instant zoned until the final conversion to local wall time.
+pub(super) fn bigquery_date_to_duckdb(value: Expression, zone: Expression) -> Result<Expression> {
+    fn at_zone(value: Expression, zone: Expression) -> Expression {
+        Expression::AtTimeZone(Box::new(AtTimeZone { this: value, zone }))
+    }
+    fn timestamp_type(data_type: &DataType) -> bool {
+        matches!(data_type, DataType::Timestamp { .. })
+            || matches!(data_type, DataType::Custom { name } if name.eq_ignore_ascii_case("TIMESTAMPTZ"))
+    }
+    fn timestamp_literal_has_zone(value: &str) -> bool {
+        // Ignore the date's '-' separators and the ISO 'T' separator. A zone
+        // suffix is an offset, Z, or a name; a bare date/time defaults to UTC.
+        value.trim().find([' ', 'T', 't']).is_some_and(|start| {
+            value.trim()[start + 1..]
+                .chars()
+                .any(|c| c == '+' || c == '-' || c.is_ascii_alphabetic())
+        })
+    }
+    fn offset_minutes(zone: &Expression) -> Option<i64> {
+        let Expression::Literal(literal) = zone else {
+            return None;
+        };
+        let Literal::String(zone) = literal.as_ref() else {
+            return None;
+        };
+        let sign = match zone.as_bytes().first()? {
+            b'+' => 1,
+            b'-' => -1,
+            _ => return None,
+        };
+        let (hours, minutes) = zone[1..].split_once(':').unwrap_or((&zone[1..], "0"));
+        if hours.is_empty()
+            || hours.len() > 2
+            || minutes.len() > 2
+            || !hours.bytes().all(|b| b.is_ascii_digit())
+            || !minutes.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let hours: i64 = hours.parse().ok()?;
+        let minutes: i64 = minutes.parse().ok()?;
+        (hours <= 14 && minutes < 60).then_some(sign * (hours * 60 + minutes))
+    }
+
+    // Literal normalization has already produced casts, including those nested
+    // in COALESCE/CASE. Interpret unzoned BigQuery literals at UTC, never in the
+    // DuckDB session zone. Explicit offsets and named zones retain their instant.
+    let value = crate::traversal::transform_all(ensure_cast_timestamptz(value), &|node| {
+        Ok(match node {
+            Expression::Cast(mut cast)
+                if timestamp_type(&cast.to) && cast.format.is_none() && cast.default.is_none() =>
+            {
+                if let Expression::Literal(literal) = &cast.this {
+                    if let Literal::String(value) = literal.as_ref() {
+                        let zoned = timestamp_literal_has_zone(value);
+                        cast.to = DataType::Timestamp {
+                            precision: None,
+                            timezone: zoned,
+                        };
+                        let value = Expression::Cast(cast);
+                        return Ok(if zoned {
+                            value
+                        } else {
+                            at_zone(value, Expression::string("UTC"))
+                        });
+                    }
+                }
+                Expression::Cast(cast)
+            }
+            // DuckDB's EPOCH_MS/MAKE_TIMESTAMP return naive UTC timestamps.
+            Expression::UnixToTime(unix) if matches!(unix.scale, Some(3 | 6)) => {
+                at_zone(Expression::UnixToTime(unix), Expression::string("UTC"))
+            }
+            other => other,
+        })
+    })?;
+    let instant = match &value {
+        Expression::Cast(cast) if matches!(cast.to, DataType::Timestamp { timezone: true, .. }) => {
+            value
+        }
+        Expression::AtTimeZone(_) | Expression::CurrentTimestamp(_) | Expression::UnixToTime(_) => {
+            value
+        }
+        _ => cast_expr(
+            value,
+            DataType::Timestamp {
+                precision: None,
+                timezone: true,
+            },
+        ),
+    };
+    let local = if let Some(minutes) = offset_minutes(&zone) {
+        // DuckDB accepts named zones but not BigQuery's numeric zone strings.
+        Expression::Add(Box::new(BinaryOp::new(
+            at_zone(instant, Expression::string("UTC")),
+            Expression::Interval(Box::new(Interval {
+                this: Some(Expression::string(minutes.to_string())),
+                unit: Some(IntervalUnitSpec::Simple {
+                    unit: IntervalUnit::Minute,
+                    use_plural: false,
+                }),
+            })),
+        )))
+    } else {
+        at_zone(instant, zone)
+    };
+    Ok(cast_expr(local, DataType::Date))
 }
 
 pub(super) fn ensure_cast_timestamptz(expr: Expression) -> Expression {

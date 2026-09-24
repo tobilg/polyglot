@@ -219,11 +219,12 @@ pub(super) fn rewrite(
                             Ok(Expression::DataType(DataType::VarBinary { length: None }))
                         }
                         DataType::Custom { ref name } if name.eq_ignore_ascii_case("NUMERIC") => {
-                            // For DuckDB target, use Custom("DECIMAL") to avoid DuckDB's
-                            // default precision (18, 3) being added to bare DECIMAL
+                            // BigQuery NUMERIC has fixed (38, 9) semantics, unlike
+                            // DuckDB's bare DECIMAL, which defaults to (18, 3).
                             if matches!(target, DialectType::DuckDB) {
-                                Ok(Expression::DataType(DataType::Custom {
-                                    name: "DECIMAL".to_string(),
+                                Ok(Expression::DataType(DataType::Decimal {
+                                    precision: Some(38),
+                                    scale: Some(9),
                                 }))
                             } else {
                                 Ok(Expression::DataType(DataType::Decimal {
