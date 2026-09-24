@@ -303,12 +303,10 @@ impl<'a> Resolver<'a> {
             }
             Expression::Intersect(intersect) => self.get_named_selects(&intersect.left),
             Expression::Except(except) => self.get_named_selects(&except.left),
-            Expression::Subquery(subquery) => {
-                apply_alias_columns(
-                    self.get_named_selects(&subquery.this),
-                    &subquery.column_aliases,
-                )
-            }
+            Expression::Subquery(subquery) => apply_alias_columns(
+                self.get_named_selects(&subquery.this),
+                &subquery.column_aliases,
+            ),
             Expression::Values(values) => self.get_values_column_names(values),
             Expression::Alias(alias) => {
                 let columns = self.get_named_selects(&alias.this);
@@ -459,12 +457,10 @@ impl<'a> Resolver<'a> {
                 let table_name = qualified_table_name(table);
                 self.schema.column_names(&table_name).unwrap_or_default()
             }
-            Expression::Subquery(subquery) => {
-                apply_alias_columns(
-                    self.get_named_selects(&subquery.this),
-                    &subquery.column_aliases,
-                )
-            }
+            Expression::Subquery(subquery) => apply_alias_columns(
+                self.get_named_selects(&subquery.this),
+                &subquery.column_aliases,
+            ),
             Expression::Values(values) => self.get_values_column_names(values),
             Expression::Select(select) => self.get_select_column_names(select),
             Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_) => self

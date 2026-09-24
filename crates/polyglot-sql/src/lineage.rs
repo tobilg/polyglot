@@ -7536,7 +7536,8 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
             for values in ["'books' AS books", "ANY ORDER BY category"] {
                 let sql = format!("WITH src AS (SELECT customer_id, category, amount FROM staged_orders) SELECT customer_id FROM {source} PIVOT(MAX(amount) FOR category IN ({values}))");
                 let expr = parse_dialect(&sql, DialectType::Snowflake);
-                let node = lineage("customer_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+                let node =
+                    lineage("customer_id", &expr, Some(DialectType::Snowflake), false).unwrap();
                 assert_lineage_contains(&node, "staged_orders.customer_id");
             }
         }

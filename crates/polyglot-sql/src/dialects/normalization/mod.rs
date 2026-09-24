@@ -1412,8 +1412,7 @@ pub(super) fn normalize(
                         && matches!(
                             source,
                             DialectType::Athena | DialectType::Presto | DialectType::Trino
-                        )
-                    {
+                        ) {
                         Some(temporal::timestamp_literal_type(&s).unwrap_or(DataType::Unknown))
                     } else {
                         None

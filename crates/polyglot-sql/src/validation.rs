@@ -3261,7 +3261,10 @@ fn source_output_identifier<'a>(
         return columns.iter().find(|column| column.name == name);
     }
     match scope_query(expression) {
-        Expression::Values(values) => values.column_aliases.iter().find(|column| column.name == name),
+        Expression::Values(values) => values
+            .column_aliases
+            .iter()
+            .find(|column| column.name == name),
         Expression::Select(select) => select.expressions.iter().find_map(|projection| {
             let identifier = match projection {
                 Expression::Alias(alias) => &alias.alias,
