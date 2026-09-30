@@ -1501,6 +1501,8 @@ mod reserved_keywords {
         set.remove("range");
         set.remove("row");
         set.remove("values");
+        // ORDER BY ALL needs ALL unquoted (inherited from POSTGRES_RESERVED)
+        set.remove("all");
         set
     });
 
