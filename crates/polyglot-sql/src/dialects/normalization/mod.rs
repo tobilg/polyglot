@@ -8,6 +8,7 @@ use super::*;
 
 mod aggregates;
 mod collections;
+pub(in crate::dialects) mod duckdb;
 mod hana;
 mod json;
 mod operators;

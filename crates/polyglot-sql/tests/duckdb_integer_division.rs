@@ -1,10 +1,8 @@
 //! DuckDB `//` integer division: tokenizes to a single operator (so `7 / / 2`
 //! and separated/commented slashes are rejected, matching DuckDB), parses to
 //! `IntDiv` with correct precedence, and round-trips or lowers per target --
-//! reporting unsupported rather than silently changing results when a
-//! float operand or a literal-zero divisor means the target's truncating
-//! `DIV` can't reproduce DuckDB's actual behavior.
-use polyglot_sql::{parse_one, transpile, DialectType};
+//! preserving fractional operands, exact integer arithmetic, and NULL on zero.
+use polyglot_sql::{parse_one, transpile, transpile_with_by_name, DialectType, TranspileOptions};
 
 #[test]
 fn duckdb_int_div_round_trips() {
@@ -19,10 +17,14 @@ fn duckdb_int_div_round_trips() {
 
 #[test]
 fn duckdb_int_div_transpiles_like_other_integer_division() {
-    // Same lowering the existing MySQL `DIV` operator gets for these targets.
+    // Preserve DuckDB's NULL-on-zero semantics as well as truncation.
     for target in [DialectType::PostgreSQL, DialectType::BigQuery] {
         let out = transpile("SELECT 7 // 2 AS v", DialectType::DuckDB, target).unwrap();
-        assert_eq!(out, vec!["SELECT DIV(7, 2) AS v"], "target {target:?}");
+        assert_eq!(
+            out,
+            vec!["SELECT DIV(7, NULLIF(2, 0)) AS v"],
+            "target {target:?}"
+        );
     }
 }
 
@@ -35,10 +37,7 @@ fn duckdb_int_div_emulated_for_sqlite() {
         DialectType::SQLite,
     )
     .unwrap();
-    assert_eq!(
-        out,
-        vec!["SELECT CAST(CAST(7 AS REAL) / 2 AS INTEGER) AS v"]
-    );
+    assert_eq!(out, vec!["SELECT CAST(7 / NULLIF(2, 0) AS INTEGER) AS v"]);
 }
 
 #[test]
@@ -108,7 +107,18 @@ fn duckdb_int_div_on_float_operand_lowers_to_float_division() {
             "SELECT (7.0) // 2 AS v",
             "SELECT 7e0 // 2 AS v",
             "SELECT 7 // 2.0 AS v",
+            "SELECT CAST(7 AS DOUBLE) // 2 AS v",
+            "SELECT CAST(7 AS FLOAT) // 2 AS v",
+            "SELECT CAST(7 AS DECIMAL(10, 1)) // 2 AS v",
+            "SELECT (7.0 + 0) // 2 AS v",
+            "SELECT (7 // 2.0) // 2 AS v",
         ] {
+            if target == DialectType::Vertica && sql == "SELECT CAST(7 AS FLOAT) // 2 AS v" {
+                // Vertica rejects narrowing numeric casts independently of //.
+                let error = transpile(sql, DialectType::DuckDB, target).unwrap_err();
+                assert!(error.to_string().contains("Narrow numeric CAST"));
+                continue;
+            }
             let out = transpile(sql, DialectType::DuckDB, target)
                 .unwrap_or_else(|e| panic!("{sql} -> {target:?}: {e}"))
                 .remove(0);
@@ -129,24 +139,192 @@ fn duckdb_int_div_on_float_operand_lowers_to_float_division() {
             DialectType::Vertica
         )
         .unwrap(),
-        vec!["SELECT 7 // 2 AS v"]
+        vec!["SELECT 7 // NULLIF(2, 0) AS v"]
     );
 }
 
 #[test]
-fn duckdb_int_div_by_literal_zero_is_unsupported() {
-    // DuckDB's 7 // 0 returns NULL; PostgreSQL's DIV(7, 0), BigQuery's
-    // DIV(7, 0), and ClickHouse's intDiv(7, 0) all raise an error.
+fn duckdb_int_div_protects_zero_divisors() {
     for target in [
         DialectType::PostgreSQL,
         DialectType::BigQuery,
         DialectType::ClickHouse,
+        DialectType::SQLite,
     ] {
-        let err = transpile("SELECT 7 // 0 AS v", DialectType::DuckDB, target).unwrap_err();
-        assert!(
-            err.to_string().contains("zero"),
-            "target {target:?}: got {err}"
-        );
+        for divisor in [
+            "0",
+            "(0)",
+            "-0",
+            "CAST(0 AS INTEGER)",
+            "(1 - 1)",
+            "CAST(z AS INTEGER)",
+        ] {
+            let sql = format!("SELECT 7 // {divisor} AS v FROM t");
+            let out = transpile(&sql, DialectType::DuckDB, target).unwrap();
+            assert!(out[0].contains("NULLIF("), "{sql} -> {target:?}: {out:?}");
+        }
+    }
+}
+
+#[test]
+fn duckdb_int_div_rejects_unresolved_types_in_every_mode() {
+    for options in [TranspileOptions::default(), TranspileOptions::strict()] {
+        for target in ["postgresql", "bigquery", "clickhouse", "sqlite"] {
+            for sql in [
+                "SELECT x // 2 FROM t",
+                "SELECT x // 2 FROM (SELECT 7.0 AS x) t",
+                "SELECT 7.0 // x FROM t",
+                "SELECT (x + 7.0) // 2 FROM t",
+            ] {
+                let error = transpile_with_by_name(sql, "duckdb", target, &options).unwrap_err();
+                assert!(
+                    error.to_string().contains("unresolved operand types"),
+                    "{sql}: {error}"
+                );
+            }
+        }
+    }
+    // Explicitly typed columns remain usable without requiring a schema.
+    let out = transpile_with_by_name(
+        "SELECT CAST(x AS DOUBLE) // CAST(y AS INTEGER) FROM t",
+        "duckdb",
+        "sqlite",
+        &TranspileOptions::strict(),
+    )
+    .unwrap();
+    assert!(!out[0].starts_with("SELECT CAST(CAST("), "{out:?}");
+    assert!(out[0].contains("NULLIF("), "{out:?}");
+}
+
+#[test]
+fn duckdb_int_div_preserves_nested_operators_and_large_integer_sql() {
+    for sql in [
+        "SELECT 8 // 2 // 2 AS v",
+        "SELECT 8 // (4 // 2) AS v",
+        "SELECT ROUND(8 // 2 // 2, 0) AS v",
+        "SELECT 9007199254740995 // 2 AS v",
+        "SELECT -9007199254740995 // 2 AS v",
+    ] {
+        let out =
+            transpile_with_by_name(sql, "duckdb", "sqlite", &TranspileOptions::strict()).unwrap();
+        assert!(!out[0].contains("DIV("), "{sql}: {out:?}");
+        assert!(!out[0].contains("AS REAL"), "{sql}: {out:?}");
+        parse_one(&out[0], DialectType::SQLite).unwrap();
+    }
+    let out = transpile_with_by_name(
+        "SELECT 8 // (4 // 0) AS v",
+        "duckdb",
+        "postgresql",
+        &TranspileOptions::strict(),
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        ["SELECT DIV(8, NULLIF((DIV(4, NULLIF(0, 0))), 0)) AS v"]
+    );
+}
+
+#[test]
+fn duckdb_fractional_int_div_protects_zero_for_clickhouse() {
+    for sql in [
+        "SELECT 7.0 // 0",
+        "SELECT 7 // 0.0",
+        "SELECT 7e0 // -0",
+        "SELECT CAST(7 AS DOUBLE) // CAST(z AS DOUBLE) FROM t",
+    ] {
+        let out = transpile_with_by_name(sql, "duckdb", "clickhouse", &TranspileOptions::strict())
+            .unwrap();
+        assert!(out[0].contains(" / NULLIF("), "{sql}: {out:?}");
+        assert!(!out[0].contains("intDiv"), "{sql}: {out:?}");
+    }
+}
+
+#[test]
+fn duckdb_integer_division_rejects_targets_without_a_lowering() {
+    for target in [
+        DialectType::MySQL,
+        DialectType::DataFusion,
+        DialectType::Snowflake,
+    ] {
+        assert!(transpile("SELECT 7 // 2", DialectType::DuckDB, target).is_err());
+    }
+}
+
+#[test]
+#[ignore = "requires POLYGLOT_DUCKDB and POLYGLOT_SQLITE CLI paths"]
+fn duckdb_integer_division_sqlite_execution() {
+    use std::process::Command;
+    let duckdb = std::env::var("POLYGLOT_DUCKDB").expect("set POLYGLOT_DUCKDB");
+    let sqlite = std::env::var("POLYGLOT_SQLITE").expect("set POLYGLOT_SQLITE");
+    for (sql, expected) in [
+        ("SELECT 7 // 2 AS v", "3"),
+        ("SELECT CAST(7 AS DOUBLE) // 2 AS v", "3.5"),
+        ("SELECT CAST(7 AS DECIMAL(10, 1)) // 2 AS v", "3.5"),
+        ("SELECT (7.0 + 0) // 2 AS v", "3.5"),
+        ("SELECT (7 // 2.0) // 2 AS v", "1.75"),
+        (
+            "SELECT CAST(x AS DOUBLE) // 2 AS v FROM (SELECT 7.0 AS x) t",
+            "3.5",
+        ),
+        ("SELECT 8 // 2 // 2 AS v", "2"),
+        ("SELECT 8 // (4 // 2) AS v", "4"),
+        ("SELECT 9007199254740995 // 2 AS v", "4503599627370497"),
+        ("SELECT -9007199254740995 // 2 AS v", "-4503599627370497"),
+        (
+            "SELECT 9223372036854775807 // 2 AS v",
+            "4611686018427387903",
+        ),
+        (
+            "SELECT -9223372036854775808 // 2 AS v",
+            "-4611686018427387904",
+        ),
+        ("SELECT 7 // 0 AS v", "NULL"),
+        ("SELECT 7 // (0) AS v", "NULL"),
+        ("SELECT 7 // -0 AS v", "NULL"),
+        ("SELECT 7 // CAST(0 AS INTEGER) AS v", "NULL"),
+        ("SELECT 7 // (1 - 1) AS v", "NULL"),
+        ("SELECT 7.0 // 0 AS v", "NULL"),
+        ("SELECT 7 // 0.0 AS v", "NULL"),
+        ("SELECT 8 // (4 // 0) AS v", "NULL"),
+        (
+            "SELECT 7 // CAST(z AS INTEGER) AS v FROM (SELECT 0 AS z) t",
+            "NULL",
+        ),
+    ] {
+        let generated =
+            transpile_with_by_name(sql, "duckdb", "sqlite", &TranspileOptions::strict()).unwrap();
+        for (engine, query, args) in [
+            (
+                &duckdb,
+                sql,
+                vec![
+                    "-init",
+                    "/dev/null",
+                    "-noheader",
+                    "-csv",
+                    "-nullvalue",
+                    "NULL",
+                    ":memory:",
+                ],
+            ),
+            (
+                &sqlite,
+                generated[0].as_str(),
+                vec!["-noheader", "-csv", "-nullvalue", "NULL", ":memory:"],
+            ),
+        ] {
+            let result = Command::new(engine).args(args).arg(query).output().unwrap();
+            assert!(
+                result.status.success(),
+                "{query}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&result.stdout).trim(),
+                expected,
+                "{engine}: {query}"
+            );
+        }
     }
 }
 

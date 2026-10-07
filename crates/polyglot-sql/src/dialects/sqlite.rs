@@ -216,37 +216,6 @@ impl DialectImpl for SQLiteDialect {
                 Ok(Expression::Div(op))
             }
 
-            // IntDiv: SQLite has no DIV function, so emulate truncating
-            // integer division as CAST(CAST(x AS REAL) / y AS INTEGER).
-            Expression::IntDiv(f) => {
-                let cast_x = Expression::Cast(Box::new(Cast {
-                    this: f.this,
-                    to: DataType::Float {
-                        precision: None,
-                        scale: None,
-                        real_spelling: true,
-                    },
-                    trailing_comments: Vec::new(),
-                    double_colon_syntax: false,
-                    format: None,
-                    default: None,
-                    inferred_type: None,
-                }));
-                let div_expr = Expression::Div(Box::new(BinaryOp::new(cast_x, f.expression)));
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: div_expr,
-                    to: DataType::Int {
-                        length: None,
-                        integer_spelling: true,
-                    },
-                    trailing_comments: Vec::new(),
-                    double_colon_syntax: false,
-                    format: None,
-                    default: None,
-                    inferred_type: None,
-                })))
-            }
-
             // Pass through everything else
             _ => Ok(expr),
         }

@@ -648,34 +648,6 @@ fn is_default_presto_date_format(fmt: &str) -> bool {
     fmt == "%Y-%m-%d" || fmt == "%F"
 }
 
-/// Whether `e` is syntactically a float literal (e.g. `7.0`, `3.14`), as a
-/// cheap, annotation-free signal that an integer-truncating operation (like
-/// `DIV`) would behave differently than source dialects (DuckDB's `//`)
-/// that fall back to ordinary float division on non-integer operands.
-#[cfg(feature = "transpile")]
-pub(crate) fn is_float_literal_operand(e: &Expression) -> bool {
-    match e {
-        Expression::Neg(n) => is_float_literal_operand(&n.this),
-        Expression::Paren(p) => is_float_literal_operand(&p.this),
-        Expression::Literal(lit) => matches!(
-            lit.as_ref(),
-            crate::expressions::Literal::Number(n) if n.contains(['.', 'e', 'E'])
-        ),
-        _ => false,
-    }
-}
-
-/// Whether `e` is the integer literal `0` — used to detect integer division
-/// by a literal zero, which some targets (BigQuery's `DIV`) raise a hard
-/// error on, unlike DuckDB's `//`, which returns `NULL`.
-#[cfg(feature = "transpile")]
-pub(crate) fn is_literal_zero(e: &Expression) -> bool {
-    matches!(
-        e,
-        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n.parse::<f64>() == Ok(0.0))
-    )
-}
-
 /// Applies a dialect transform bottom-up through selected syntax children.
 ///
 /// The public entrypoint uses an explicit task stack for the recursion-heavy shapes
@@ -764,6 +736,7 @@ where
             | Expression::Sub(_)
             | Expression::Mul(_)
             | Expression::Div(_)
+            | Expression::IntDiv(_)
             | Expression::Eq(_)
             | Expression::NullSafeEq(_)
             | Expression::NullSafeNeq(_)
@@ -3543,6 +3516,11 @@ impl Dialect {
                 let expr =
                     normalization::vertica::prepare_conversion(expr, self.dialect_type, target)?;
                 normalization::vertica::validate_conversion(&expr, self.dialect_type, target)?;
+                let expr = normalization::duckdb::prepare_integer_division(
+                    expr,
+                    self.dialect_type,
+                    target,
+                )?;
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.
@@ -3553,28 +3531,6 @@ impl Dialect {
                             Ok(Expression::DataType(DT::Text))
                         }
                         Expression::DataType(DT::Char { .. }) => Ok(Expression::DataType(DT::Text)),
-                        // DuckDB's `//` only truncates when both operands are
-                        // integers; with a float operand it is ordinary float
-                        // division (`7.0 // 2` is 3.5), so that case lowers to
-                        // `/` exactly. It also returns NULL on a zero divisor,
-                        // where every other target's integer division raises, so
-                        // report that rather than emit SQL with a different result.
-                        Expression::IntDiv(f) if target != DialectType::DuckDB => {
-                            if is_float_literal_operand(&f.this)
-                                || is_float_literal_operand(&f.expression)
-                            {
-                                return Ok(Expression::Div(Box::new(
-                                    crate::expressions::BinaryOp::new(f.this, f.expression),
-                                )));
-                            }
-                            if is_literal_zero(&f.expression) {
-                                return Err(crate::error::Error::unsupported(
-                                    "DuckDB's // by a literal zero (returns NULL; integer division elsewhere raises an error)",
-                                    target.to_string(),
-                                ));
-                            }
-                            Ok(Expression::IntDiv(f))
-                        }
                         _ => Ok(e),
                     })?
                 } else {
