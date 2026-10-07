@@ -1674,7 +1674,9 @@ pub fn eliminate_distinct_on_for_dialect(
         _ => DistinctOnNullsMode::NullsFirst,
     };
 
-    transform_recursive(expr, &|expr| eliminate_distinct_on_select(expr, nulls_mode))
+    transform_recursive(expr, &|expr| {
+        eliminate_distinct_on_select(expr, nulls_mode, target)
+    })
 }
 
 /// Resolve positional `ORDER BY <n>` references against `select_exprs`,
@@ -1683,7 +1685,8 @@ pub fn eliminate_distinct_on_for_dialect(
 fn resolve_positional_order_by(
     exprs: Vec<crate::expressions::Ordered>,
     select_exprs: &[Expression],
-) -> Vec<crate::expressions::Ordered> {
+    target: Option<DialectType>,
+) -> Result<Vec<crate::expressions::Ordered>> {
     exprs
         .into_iter()
         .map(|mut ord| {
@@ -1699,7 +1702,13 @@ fn resolve_positional_order_by(
                     }
                 }
             }
-            ord
+            if crate::dialects::contains_in_projection(&ord.this, |e| matches!(e, Expression::WindowFunction(_))) {
+                return Err(Error::unsupported(
+                    "DISTINCT ON ordering by a window expression requires an additional query layer",
+                    format!("{target:?}"),
+                ));
+            }
+            Ok(ord)
         })
         .collect()
 }
@@ -1707,6 +1716,7 @@ fn resolve_positional_order_by(
 fn eliminate_distinct_on_select(
     expr: Expression,
     nulls_mode: DistinctOnNullsMode,
+    target: Option<DialectType>,
 ) -> Result<Expression> {
     use crate::expressions::Case;
 
@@ -1727,7 +1737,8 @@ fn eliminate_distinct_on_select(
                         let mut exprs = resolve_positional_order_by(
                             order_by.expressions.clone(),
                             &select.expressions,
-                        );
+                            target,
+                        )?;
                         // Add NULL ordering based on target dialect
                         match nulls_mode {
                             DistinctOnNullsMode::NullsFirst => {

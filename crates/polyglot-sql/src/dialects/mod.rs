@@ -309,6 +309,7 @@ impl DialectType {
                 | DialectType::Snowflake
                 | DialectType::ClickHouse
                 | DialectType::Databricks
+                | DialectType::Spark
         )
     }
 }
@@ -661,18 +662,17 @@ fn is_default_presto_date_format(fmt: &str) -> bool {
     fmt == "%Y-%m-%d" || fmt == "%F"
 }
 
-/// Whether `e` is a lone, unquoted, unqualified `ALL` — how DuckDB's
-/// `ORDER BY ALL` keyword is parsed (as a column/identifier/var, not a keyword).
-#[cfg(feature = "transpile")]
+/// The parser marks the ORDER BY ALL keyword as a Var, never an identifier.
+#[cfg(feature = "generate")]
 pub(crate) fn is_order_by_all_marker(e: &Expression) -> bool {
-    match e {
-        Expression::Column(c) => {
-            c.table.is_none() && !c.name.quoted && c.name.name.eq_ignore_ascii_case("all")
-        }
-        Expression::Identifier(i) => !i.quoted && i.name.eq_ignore_ascii_case("all"),
-        Expression::Var(v) => v.this.eq_ignore_ascii_case("all"),
-        _ => false,
-    }
+    matches!(e, Expression::Var(v) if v.this.eq_ignore_ascii_case("all"))
+}
+
+#[cfg(feature = "transpile")]
+fn is_order_by_all(order_by: &Option<crate::expressions::OrderBy>) -> bool {
+    order_by.as_ref().is_some_and(|ob| {
+        ob.expressions.len() == 1 && is_order_by_all_marker(&ob.expressions[0].this)
+    })
 }
 
 /// Whether `e` is a projection item that can produce more or fewer than one
@@ -681,18 +681,48 @@ pub(crate) fn is_order_by_all_marker(e: &Expression) -> bool {
 #[cfg(feature = "transpile")]
 fn has_unknown_column_count(e: &Expression) -> bool {
     use crate::expressions::Expression as E;
-    let inner = match e {
-        E::Alias(a) => &a.this,
-        other => other,
-    };
-    match inner {
-        E::Star(_) | E::Columns(_) => true,
-        // DuckDB's `COLUMNS(...)` star-expansion macro parses as a plain
-        // function call by name in ordinary SELECT-list position.
-        E::Function(f) => f.name.eq_ignore_ascii_case("COLUMNS"),
+    let mut inner = e;
+    loop {
+        inner = match inner {
+            E::Alias(a) => &a.this,
+            E::Paren(p) => &p.this,
+            _ => break,
+        };
+    }
+    if matches!(inner, E::Star(_)) {
+        return true;
+    }
+    // COLUMNS still expands inside arithmetic, casts and aggregate/function
+    // arguments. COUNT(*) and scalar subqueries, however, produce one column.
+    contains_in_projection(inner, |node| match node {
+        E::Columns(_) => true,
+        E::Function(f) => {
+            !f.quoted && f.qualified_name.is_empty() && f.name.eq_ignore_ascii_case("COLUMNS")
+        }
         E::MethodCall(m) => m.method.name.eq_ignore_ascii_case("COLUMNS"),
         _ => false,
+    })
+}
+
+#[cfg(feature = "transpile")]
+pub(crate) fn contains_in_projection(
+    e: &Expression,
+    predicate: impl Fn(&Expression) -> bool,
+) -> bool {
+    let mut pending = vec![e];
+    while let Some(node) = pending.pop() {
+        if matches!(
+            node,
+            Expression::Subquery(_) | Expression::Select(_) | Expression::Exists(_)
+        ) {
+            continue;
+        }
+        if predicate(node) {
+            return true;
+        }
+        crate::ast_children::for_each_child_untracked(node, |child| pending.push(child));
     }
+    false
 }
 
 /// The number of columns a query block projects, when that count is known
@@ -712,7 +742,7 @@ fn query_output_width(e: &Expression) -> Option<usize> {
         }
         E::Paren(p) => query_output_width(&p.this),
         E::Subquery(s) => query_output_width(&s.this),
-        E::Union(u) => query_output_width(&u.left),
+        E::Union(u) if !u.by_name => query_output_width(&u.left),
         E::Intersect(i) => query_output_width(&i.left),
         E::Except(ex) => query_output_width(&ex.left),
         _ => None,
@@ -728,8 +758,7 @@ fn query_output_width(e: &Expression) -> Option<usize> {
 /// positional entry unchanged; the later cross-dialect NULL-ordering pass
 /// fills in the source dialect's implied default where the target's differs.
 /// MySQL is the exception: it has no NULLS FIRST/LAST syntax and is skipped by
-/// that pass, so DuckDB's NULLs-last-in-both-directions default is checked
-/// against MySQL's own default here.
+/// that pass, so compare every supported source's default against MySQL here.
 #[cfg(feature = "transpile")]
 fn expand_order_by_all(
     order_by: &mut Option<crate::expressions::OrderBy>,
@@ -737,31 +766,31 @@ fn expand_order_by_all(
     source: DialectType,
     target: DialectType,
 ) -> Result<()> {
-    use crate::expressions::{Expression as E, Ordered};
-    let is_marker = order_by.as_ref().is_some_and(|ob| {
-        ob.expressions.len() == 1 && is_order_by_all_marker(&ob.expressions[0].this)
-    });
-    if !is_marker {
+    use crate::expressions::Expression as E;
+    if !is_order_by_all(order_by) {
         return Ok(());
     }
     let Some(n) = width else {
         return Err(crate::error::Error::unsupported(
-            "ORDER BY ALL over a projection with an unknown column count (* or COLUMNS(...)) cannot be expanded to positional ORDER BY",
+            "ORDER BY ALL over a projection with an unknown column count (*, COLUMNS(...), or UNION BY NAME) cannot be expanded to positional ORDER BY",
             target.to_string(),
         ));
     };
     let ob = order_by.as_mut().unwrap();
     let (desc, nulls_first) = (ob.expressions[0].desc, ob.expressions[0].nulls_first);
 
-    // MySQL sorts NULL as the smallest value (ASC -> NULLs first, DESC ->
-    // NULLs last) and can't be told otherwise. DuckDB's ALL sorts NULLs last
-    // in both directions, so only the DESC case lines up; report the rest
-    // rather than silently emitting SQL whose LIMIT results differ.
-    if matches!(target, DialectType::MySQL) && matches!(source, DialectType::DuckDB) {
-        let required_nulls_last = nulls_first.map(|nf| !nf).unwrap_or(true);
-        if desc != required_nulls_last {
+    // An ordinal cannot be used inside a CASE expression to emulate NULL
+    // placement: it would become a constant instead of a column reference.
+    if matches!(target, DialectType::MySQL) {
+        let required_nulls_first = nulls_first.unwrap_or(match source {
+            DialectType::DuckDB | DialectType::ClickHouse => false,
+            DialectType::Snowflake => desc,
+            DialectType::Spark | DialectType::Databricks => !desc,
+            _ => unreachable!("ORDER BY ALL source capability must be checked"),
+        });
+        if required_nulls_first != !desc {
             return Err(crate::error::Error::unsupported(
-                "ORDER BY ALL's NULLS LAST semantics (MySQL has no NULLS FIRST/LAST syntax, and its own default NULL placement doesn't match here)",
+                "ORDER BY ALL's NULL ordering (MySQL's default NULL placement does not match and cannot be emulated with positional ordering)",
                 target.to_string(),
             ));
         }
@@ -769,23 +798,43 @@ fn expand_order_by_all(
 
     ob.expressions = (1..=n as i64)
         .map(|i| {
-            let mut o = Ordered::asc(E::number(i));
-            o.desc = desc;
-            o.nulls_first = nulls_first;
+            let mut o = ob.expressions[0].clone();
+            o.this = E::number(i);
+            if target == DialectType::MySQL {
+                // Matching explicit NULL placement is redundant and MySQL
+                // cannot print the NULLS FIRST/LAST syntax.
+                o.nulls_first = None;
+            }
             o
         })
         .collect();
     Ok(())
 }
 
-/// Expand DuckDB `ORDER BY ALL` into positional `ORDER BY 1..n` over the
-/// projection list, for targets without native `ORDER BY ALL` support.
+/// Expand when the target lacks ALL, or when a native target cannot use it
+/// for this query (aggregate projections in Snowflake, DISTINCT ON emulation).
 #[cfg(feature = "transpile")]
-fn expand_duckdb_order_by_all(
+fn expand_select_order_by_all(
     mut sel: Box<crate::expressions::Select>,
     source: DialectType,
     target: DialectType,
 ) -> Result<Box<crate::expressions::Select>> {
+    if !is_order_by_all(&sel.order_by) {
+        return Ok(sel);
+    }
+    let emulate_distinct = sel
+        .distinct_on
+        .as_ref()
+        .is_some_and(|cols| !cols.is_empty())
+        && !Dialect::target_supports_distinct_on(target);
+    let snowflake_aggregate = target == DialectType::Snowflake
+        && sel
+            .expressions
+            .iter()
+            .any(|e| contains_in_projection(e, crate::traversal::is_aggregate));
+    if target.supports_order_by_all() && !emulate_distinct && !snowflake_aggregate {
+        return Ok(sel);
+    }
     let width =
         if sel.expressions.is_empty() || sel.expressions.iter().any(has_unknown_column_count) {
             None
@@ -856,6 +905,7 @@ where
             Expression::Union(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Intersect(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Except(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
+            Expression::Subquery(subquery) => subquery.order_by.is_none(),
             Expression::Vertica(_)
             | Expression::Literal(_)
             | Expression::Boolean(_)
@@ -873,7 +923,6 @@ where
             | Expression::IsNull(_)
             | Expression::IsTrue(_)
             | Expression::IsFalse(_)
-            | Expression::Subquery(_)
             | Expression::Exists(_)
             | Expression::Any(_)
             | Expression::All(_)
@@ -1744,6 +1793,9 @@ where
         // ===== Subquery expressions =====
         Expression::Subquery(mut s) => {
             s.this = transform_recursive(s.this, transform_fn)?;
+            if let Some(order_by) = s.order_by.take() {
+                s.order_by = Some(transform_order_by_recursive(order_by, transform_fn)?);
+            }
             Expression::Subquery(s)
         }
         Expression::Exists(mut e) => {
@@ -3673,7 +3725,7 @@ impl Dialect {
                 let source = self.dialect_type;
                 let is_duckdb = matches!(source, DialectType::DuckDB);
                 let expand_all = source.supports_order_by_all() && !target.supports_order_by_all();
-                let expr = if is_duckdb || expand_all {
+                let expr = if source.supports_order_by_all() {
                     use crate::expressions::DataType as DT;
                     transform_recursive(expr, &|e| match e {
                         Expression::DataType(DT::VarChar { .. }) if is_duckdb => {
@@ -3682,11 +3734,20 @@ impl Dialect {
                         Expression::DataType(DT::Char { .. }) if is_duckdb => {
                             Ok(Expression::DataType(DT::Text))
                         }
-                        Expression::Select(sel) if expand_all => {
-                            expand_duckdb_order_by_all(sel, source, target).map(Expression::Select)
+                        Expression::Select(sel) => {
+                            expand_select_order_by_all(sel, source, target).map(Expression::Select)
+                        }
+                        Expression::Subquery(mut subquery) if expand_all => {
+                            let width = query_output_width(&subquery.this);
+                            expand_order_by_all(&mut subquery.order_by, width, source, target)?;
+                            Ok(Expression::Subquery(subquery))
                         }
                         Expression::Union(mut u) if expand_all => {
-                            let width = query_output_width(&u.left);
+                            let width = if u.by_name {
+                                None
+                            } else {
+                                query_output_width(&u.left)
+                            };
                             expand_order_by_all(&mut u.order_by, width, source, target)?;
                             Ok(Expression::Union(u))
                         }

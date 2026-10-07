@@ -37,6 +37,7 @@ fn order_by_all_passes_through_for_native_targets() {
         (DialectType::Snowflake, "ALL", "ALL DESC NULLS LAST"),
         (DialectType::ClickHouse, "ALL", "ALL DESC"),
         (DialectType::Databricks, "ALL NULLS LAST", "ALL DESC"),
+        (DialectType::Spark, "ALL NULLS LAST", "ALL DESC"),
     ];
     for (target, asc, desc) in cases {
         assert_eq!(
@@ -76,6 +77,7 @@ fn order_by_all_expands_from_any_native_source() {
         (DialectType::Snowflake, "1, 2"),
         (DialectType::ClickHouse, "1, 2"),
         (DialectType::Databricks, "1 NULLS FIRST, 2 NULLS FIRST"),
+        (DialectType::Spark, "1 NULLS FIRST, 2 NULLS FIRST"),
     ];
     for (source, expected) in cases {
         assert_eq!(
@@ -275,4 +277,241 @@ fn order_by_all_survives_distinct_on_rewrite() {
     assert!(!out.contains("ORDER BY 1"), "got: {out}");
     assert!(out.contains("PARTITION BY a"), "got: {out}");
     assert!(out.contains("ORDER BY a"), "got: {out}");
+}
+
+fn strict_transpile(
+    sql: &str,
+    source: DialectType,
+    target: DialectType,
+) -> polyglot_sql::Result<Vec<String>> {
+    polyglot_sql::Dialect::get(source).transpile_with(
+        sql,
+        &polyglot_sql::Dialect::get(target),
+        polyglot_sql::TranspileOptions::strict(),
+    )
+}
+
+#[test]
+fn renaming_an_ordered_column_to_all_does_not_change_the_sort_keys() {
+    use std::collections::HashMap;
+    let mapping = HashMap::from([("x".to_string(), "all".to_string())]);
+    for sql in [
+        "SELECT b, x FROM t ORDER BY x",
+        "SELECT b, x, ROW_NUMBER() OVER (ORDER BY x) AS n FROM t ORDER BY x",
+    ] {
+        let expr = parse_one(sql, DialectType::DuckDB).unwrap();
+        let renamed = rename_columns(expr, &mapping);
+        let output = generate(&renamed, DialectType::DuckDB).unwrap();
+        assert!(output.contains("ORDER BY \"all\""), "{output}");
+        assert!(!output.contains("ORDER BY ALL"), "{output}");
+    }
+}
+
+#[test]
+fn keyword_survives_serialization_renaming_and_identifier_quoting() {
+    use std::collections::HashMap;
+    let expr = parse_one("SELECT a, b FROM t ORDER BY ALL", DialectType::DuckDB).unwrap();
+    let json = serde_json::to_string(&expr).unwrap();
+    let expr = serde_json::from_str(&json).unwrap();
+    let mapping = HashMap::from([("ALL".to_string(), "different".to_string())]);
+    let renamed = rename_columns(expr, &mapping);
+    let out = polyglot_sql::Dialect::get(DialectType::DuckDB)
+        .generate_with_identify(&renamed)
+        .unwrap();
+    assert_eq!(out, "SELECT \"a\", \"b\" FROM \"t\" ORDER BY ALL");
+}
+
+#[test]
+fn qualified_and_quoted_all_columns_remain_columns() {
+    for column in ["t.all", "\"all\""] {
+        let sql = format!("SELECT a, b FROM t ORDER BY {column}");
+        for target in [
+            DialectType::DuckDB,
+            DialectType::PostgreSQL,
+            DialectType::Snowflake,
+        ] {
+            let out = strict_transpile(&sql, DialectType::DuckDB, target)
+                .unwrap()
+                .remove(0);
+            assert!(!out.contains("ORDER BY ALL"), "{out}");
+            assert!(!out.contains("ORDER BY 1"), "{out}");
+        }
+    }
+}
+
+#[test]
+fn mysql_null_ordering_is_checked_for_every_native_source() {
+    let modifiers = [
+        "",
+        "DESC",
+        "NULLS FIRST",
+        "NULLS LAST",
+        "DESC NULLS FIRST",
+        "DESC NULLS LAST",
+    ];
+    for source in [
+        DialectType::DuckDB,
+        DialectType::ClickHouse,
+        DialectType::Snowflake,
+        DialectType::Spark,
+        DialectType::Databricks,
+    ] {
+        for modifier in modifiers {
+            let desc = modifier.starts_with("DESC");
+            let nulls_first = if modifier.contains("NULLS FIRST") {
+                true
+            } else if modifier.contains("NULLS LAST") {
+                false
+            } else {
+                match source {
+                    DialectType::Snowflake => desc,
+                    DialectType::Spark | DialectType::Databricks => !desc,
+                    _ => false,
+                }
+            };
+            let sql = format!("SELECT a FROM t ORDER BY ALL {modifier} LIMIT 1");
+            let result = strict_transpile(&sql, source, DialectType::MySQL);
+            if nulls_first == !desc {
+                let out = result.unwrap().remove(0);
+                let direction = if desc { " DESC" } else { "" };
+                assert_eq!(
+                    out,
+                    format!("SELECT a FROM t ORDER BY 1{direction} LIMIT 1"),
+                    "source {source:?}, modifier {modifier}"
+                );
+            } else {
+                let err = result.unwrap_err().to_string();
+                assert!(err.contains("NULL"), "{source:?} {modifier}: {err}");
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_column_expansions_are_rejected() {
+    for projection in [
+        "COLUMNS('a|b') + 1",
+        "ABS(COLUMNS('a|b'))",
+        "CAST(COLUMNS('a|b') AS INT)",
+        "MIN(COLUMNS('a|b'))",
+        "(COLUMNS('a|b')) AS n",
+        "t.*",
+    ] {
+        let sql = format!("SELECT {projection} FROM t ORDER BY ALL");
+        let err = strict_transpile(&sql, DialectType::DuckDB, DialectType::PostgreSQL)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown column count"), "{sql}: {err}");
+    }
+}
+
+#[test]
+fn count_star_and_scalar_subqueries_have_known_width() {
+    for sql in [
+        "SELECT COUNT(*) FROM t ORDER BY ALL",
+        "SELECT (SELECT COUNT(*) FROM u) AS n, a FROM t ORDER BY ALL",
+    ] {
+        let out = strict_transpile(sql, DialectType::DuckDB, DialectType::PostgreSQL)
+            .unwrap()
+            .remove(0);
+        assert!(out.contains("ORDER BY 1"), "{out}");
+    }
+}
+
+#[test]
+fn outer_parenthesized_query_ordering_is_expanded() {
+    for query in [
+        "(SELECT a, b FROM t)",
+        "(SELECT a, b FROM t UNION ALL SELECT a, b FROM u)",
+    ] {
+        let sql = format!("{query} ORDER BY ALL DESC LIMIT 1");
+        let out = strict_transpile(&sql, DialectType::DuckDB, DialectType::PostgreSQL)
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            out,
+            format!("{query} ORDER BY 1 DESC NULLS LAST, 2 DESC NULLS LAST LIMIT 1")
+        );
+    }
+}
+
+#[test]
+fn outer_parenthesized_star_and_union_by_name_are_rejected() {
+    for sql in [
+        "(SELECT * FROM t) ORDER BY ALL",
+        "SELECT 1 AS a UNION ALL BY NAME SELECT 2 AS b ORDER BY ALL",
+        "(SELECT 1 AS a UNION ALL BY NAME SELECT 2 AS b) ORDER BY ALL",
+    ] {
+        let err = strict_transpile(sql, DialectType::DuckDB, DialectType::PostgreSQL)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown column count"), "{sql}: {err}");
+    }
+}
+
+#[test]
+fn snowflake_aggregate_projections_require_expansion() {
+    for projection in ["SUM(b)", "SUM(b) + 1", "COUNT(*)"] {
+        let sql = format!("SELECT a, {projection} FROM t GROUP BY a ORDER BY ALL");
+        let out = strict_transpile(&sql, DialectType::DuckDB, DialectType::Snowflake)
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            out,
+            format!("SELECT a, {projection} FROM t GROUP BY a ORDER BY 1, 2")
+        );
+    }
+}
+
+#[test]
+fn native_all_targets_resolve_sort_keys_before_distinct_on_emulation() {
+    let sql = "SELECT DISTINCT ON (a) a, b FROM t ORDER BY ALL";
+    for target in [
+        DialectType::Snowflake,
+        DialectType::Databricks,
+        DialectType::Spark,
+        DialectType::ClickHouse,
+    ] {
+        let out = strict_transpile(sql, DialectType::DuckDB, target)
+            .unwrap()
+            .remove(0);
+        assert!(!out.contains("ORDER BY ALL"), "{target:?}: {out}");
+        assert!(!out.contains("ORDER BY 1"), "{target:?}: {out}");
+        assert!(
+            out.contains("PARTITION BY a ORDER BY a"),
+            "{target:?}: {out}"
+        );
+    }
+}
+
+#[test]
+fn distinct_on_window_sort_keys_fail_explicitly_instead_of_nesting_windows() {
+    for order in ["ALL", "1, 2"] {
+        let sql = format!(
+            "SELECT DISTINCT ON (a) a, ROW_NUMBER() OVER (ORDER BY b) AS n FROM t ORDER BY {order}"
+        );
+        for target in [
+            DialectType::SQLite,
+            DialectType::Snowflake,
+            DialectType::Spark,
+        ] {
+            let err = strict_transpile(&sql, DialectType::DuckDB, target)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("window expression"), "{target:?}: {err}");
+        }
+        assert!(strict_transpile(&sql, DialectType::DuckDB, DialectType::DuckDB).is_ok());
+    }
+}
+
+#[test]
+fn expansion_preserves_explicit_ascending_direction() {
+    assert_eq!(
+        transpile(
+            "SELECT a, b FROM t ORDER BY ALL ASC NULLS LAST",
+            DialectType::DuckDB,
+            DialectType::PostgreSQL
+        ),
+        "SELECT a, b FROM t ORDER BY 1 ASC, 2 ASC"
+    );
 }

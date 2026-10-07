@@ -27212,16 +27212,18 @@ impl Generator {
             }
         }
 
-        // `ORDER BY ALL` (DuckDB/Snowflake/ClickHouse/Databricks): the bare
-        // `ALL` keyword parses as an ordinary unquoted identifier/var, which
-        // would otherwise get quoted like any other identifier named "all".
-        // Render it as the keyword when this dialect actually supports it.
-        if self
-            .config
-            .dialect
-            .is_some_and(|d| d.supports_order_by_all())
-            && crate::dialects::is_order_by_all_marker(&ordered.this)
-        {
+        // Only a parser-marked keyword bypasses ordinary identifier quoting.
+        if crate::dialects::is_order_by_all_marker(&ordered.this) {
+            if !self
+                .config
+                .dialect
+                .is_some_and(|d| d.supports_order_by_all())
+            {
+                return Err(crate::error::Error::unsupported(
+                    "ORDER BY ALL must be expanded before generation",
+                    format!("{:?}", self.config.dialect),
+                ));
+            }
             self.write_keyword("ALL");
         } else {
             self.generate_expression(&ordered.this)?;

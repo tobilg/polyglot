@@ -9002,11 +9002,32 @@ impl Parser {
             }
         }
 
+        self.mark_order_by_all(&mut expressions);
         Ok(OrderBy {
             expressions,
             siblings,
             comments: Vec::new(),
         })
+    }
+
+    /// Keep the query-level ALL keyword separate from identifiers, including
+    /// columns subsequently created by builders or rename_columns. Var is the
+    /// AST's unquoted keyword representation (also used for LIMIT ALL).
+    fn mark_order_by_all(&self, expressions: &mut [Ordered]) {
+        if !self
+            .config
+            .dialect
+            .is_some_and(|d| d.supports_order_by_all())
+        {
+            return;
+        }
+        if let [ordered] = expressions {
+            if matches!(&ordered.this, Expression::Column(c)
+                if c.table.is_none() && !c.name.quoted && c.name.name.eq_ignore_ascii_case("all"))
+            {
+                ordered.this = Expression::Var(Box::new(Var { this: "ALL".into() }));
+            }
+        }
     }
 
     /// Parse query modifiers (ORDER BY, LIMIT, OFFSET, DISTRIBUTE BY, SORT BY, CLUSTER BY) for parenthesized queries
@@ -58396,6 +58417,7 @@ impl Parser {
             }
         }
 
+        self.mark_order_by_all(&mut expressions);
         Ok(Some(Expression::OrderBy(Box::new(OrderBy {
             expressions,
             siblings: false,
