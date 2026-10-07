@@ -3935,7 +3935,8 @@ pub struct Union {
     pub with: Option<With>,
     /// ORDER BY applied to entire UNION result
     pub order_by: Option<OrderBy>,
-    /// LIMIT applied to entire UNION result
+    /// Row limit applied to the entire UNION result: a legacy count expression,
+    /// or a complete `Expression::Limit` / `Expression::Fetch` with clause options.
     pub limit: Option<Box<Expression>>,
     /// OFFSET applied to entire UNION result
     pub offset: Option<Box<Expression>>,
@@ -4004,7 +4005,8 @@ pub struct Intersect {
     pub with: Option<With>,
     /// ORDER BY applied to entire INTERSECT result
     pub order_by: Option<OrderBy>,
-    /// LIMIT applied to entire INTERSECT result
+    /// Row limit applied to the entire INTERSECT result: a legacy count expression,
+    /// or a complete `Expression::Limit` / `Expression::Fetch` with clause options.
     pub limit: Option<Box<Expression>>,
     /// OFFSET applied to entire INTERSECT result
     pub offset: Option<Box<Expression>>,
@@ -4071,7 +4073,8 @@ pub struct Except {
     pub with: Option<With>,
     /// ORDER BY applied to entire EXCEPT result
     pub order_by: Option<OrderBy>,
-    /// LIMIT applied to entire EXCEPT result
+    /// Row limit applied to the entire EXCEPT result: a legacy count expression,
+    /// or a complete `Expression::Limit` / `Expression::Fetch` with clause options.
     pub limit: Option<Box<Expression>>,
     /// OFFSET applied to entire EXCEPT result
     pub offset: Option<Box<Expression>>,
@@ -5805,6 +5808,35 @@ pub struct Limit {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
+}
+
+impl Limit {
+    /// Preserve the legacy count-only set-operation AST when no metadata is needed.
+    pub(crate) fn into_set_limit(self) -> Box<Expression> {
+        if self.percent || !self.comments.is_empty() {
+            Box::new(Expression::Limit(Box::new(self)))
+        } else {
+            Box::new(self.this)
+        }
+    }
+}
+
+/// Move a compound query's row limit onto a SELECT without losing clause options.
+/// Bare expressions remain supported for existing builders and serialized ASTs.
+pub(crate) fn split_set_limit(limit: Option<Box<Expression>>) -> (Option<Limit>, Option<Fetch>) {
+    match limit.map(|limit| *limit) {
+        Some(Expression::Limit(limit)) => (Some(*limit), None),
+        Some(Expression::Fetch(fetch)) => (None, Some(*fetch)),
+        Some(this) => (
+            Some(Limit {
+                this,
+                percent: false,
+                comments: Vec::new(),
+            }),
+            None,
+        ),
+        None => (None, None),
+    }
 }
 
 /// OFFSET clause

@@ -21,7 +21,7 @@ go get github.com/tobilg/polyglot/packages/go
 ```
 
 Go module releases use nested tags that match the root Polyglot release, for
-example `packages/go/v0.13.0`.
+example `packages/go/v0.13.1`.
 
 ## Native Library Setup
 

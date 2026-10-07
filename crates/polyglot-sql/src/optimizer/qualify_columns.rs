@@ -2216,6 +2216,12 @@ fn quote_identifiers_recursive(expr: &mut Expression, reserved_words: &HashSet<&
                     quote_identifiers_recursive(&mut o.this, reserved_words);
                 }
             }
+            if let Some(limit) = &mut i.limit {
+                quote_identifiers_recursive(limit, reserved_words);
+            }
+            if let Some(offset) = &mut i.offset {
+                quote_identifiers_recursive(offset, reserved_words);
+            }
         }
         Expression::Except(e) => {
             quote_identifiers_recursive(&mut e.left, reserved_words);
@@ -2227,6 +2233,12 @@ fn quote_identifiers_recursive(expr: &mut Expression, reserved_words: &HashSet<&
                 for o in &mut ob.expressions {
                     quote_identifiers_recursive(&mut o.this, reserved_words);
                 }
+            }
+            if let Some(limit) = &mut e.limit {
+                quote_identifiers_recursive(limit, reserved_words);
+            }
+            if let Some(offset) = &mut e.offset {
+                quote_identifiers_recursive(offset, reserved_words);
             }
         }
 
@@ -2536,6 +2548,11 @@ fn quote_identifiers_recursive(expr: &mut Expression, reserved_words: &HashSet<&
 
         Expression::Offset(off) => {
             quote_identifiers_recursive(&mut off.this, reserved_words);
+        }
+        Expression::Fetch(fetch) => {
+            if let Some(count) = &mut fetch.count {
+                quote_identifiers_recursive(count, reserved_words);
+            }
         }
 
         Expression::Qualify(q) => {

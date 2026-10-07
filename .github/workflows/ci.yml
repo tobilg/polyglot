@@ -331,12 +331,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache failures must not interrupt the multi-interpreter wheel build.
+      - name: Cache macOS Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+        with:
+          key: python-wheels-macos-${{ matrix.target }}
+          cache-workspace-crates: true
+
       - name: Build Python wheels (macOS ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
-          sccache: true
+          # sccache's remote-cache startup errors do not fall back to rustc.
+          sccache: false
 
       - name: Smoke test built wheel (macOS)
         run: |

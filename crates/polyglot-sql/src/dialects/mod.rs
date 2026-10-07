@@ -933,6 +933,7 @@ where
             | Expression::Sub(_)
             | Expression::Mul(_)
             | Expression::Div(_)
+            | Expression::IntDiv(_)
             | Expression::Eq(_)
             | Expression::NullSafeEq(_)
             | Expression::NullSafeNeq(_)
@@ -3715,6 +3716,11 @@ impl Dialect {
                 let expr =
                     normalization::vertica::prepare_conversion(expr, self.dialect_type, target)?;
                 normalization::vertica::validate_conversion(&expr, self.dialect_type, target)?;
+                let expr = normalization::duckdb::prepare_integer_division(
+                    expr,
+                    self.dialect_type,
+                    target,
+                )?;
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.

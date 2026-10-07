@@ -167,10 +167,54 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_compound_row_limits(c: &mut Criterion) {
+    use polyglot_sql::dialects::Dialect;
+    use std::time::Duration;
+
+    let mut group = c.benchmark_group("compound_row_limits");
+    group.sample_size(30);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
+    for branches in [1, 10, 100] {
+        let body = vec!["SELECT a FROM t"; branches].join(" UNION ALL ");
+        for (name, source, target, tail) in [
+            (
+                "count",
+                DialectType::PostgreSQL,
+                DialectType::Oracle,
+                "LIMIT 5 OFFSET 2",
+            ),
+            (
+                "percent",
+                DialectType::DuckDB,
+                DialectType::Oracle,
+                "LIMIT 10 PERCENT",
+            ),
+            (
+                "fetch",
+                DialectType::Oracle,
+                DialectType::DuckDB,
+                "OFFSET 2 ROWS FETCH NEXT 5 ROWS ONLY",
+            ),
+        ] {
+            let sql = format!("{body} ORDER BY a {tail}");
+            let dialect = Dialect::get(source);
+            group.bench_function(format!("parse/{name}/{branches}"), |b| {
+                b.iter(|| dialect.parse(black_box(&sql)).unwrap())
+            });
+            group.bench_function(format!("transpile/{name}/{branches}"), |b| {
+                b.iter(|| transpile(black_box(&sql), source, target).unwrap())
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_transpile_by_query_size,
     bench_transpile_dialect_pairs,
-    bench_roundtrip
+    bench_roundtrip,
+    bench_compound_row_limits
 );
 criterion_main!(benches);

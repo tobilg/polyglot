@@ -103,6 +103,8 @@ impl DialectImpl for DuckDBDialect {
         config.nested_comments = true;
         // DuckDB allows underscores as digit separators in numeric literals
         config.numbers_can_be_underscore_separated = true;
+        // `//` is integer division (same tokenizer-level recognition as Vertica)
+        config.double_slash_int_div = true;
         config
     }
 

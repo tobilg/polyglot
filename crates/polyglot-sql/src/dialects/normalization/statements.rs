@@ -119,30 +119,8 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
         expr
     };
 
-    // Oracle: LIMIT -> FETCH FIRST, OFFSET -> OFFSET ROWS
-    let expr = if matches!(target, DialectType::Oracle) {
-        if let Expression::Select(mut select) = expr {
-            if let Some(limit) = select.limit.take() {
-                // Convert LIMIT to FETCH FIRST n ROWS ONLY
-                select.fetch = Some(crate::expressions::Fetch {
-                    direction: "FIRST".to_string(),
-                    count: Some(limit.this),
-                    percent: false,
-                    rows: true,
-                    with_ties: false,
-                });
-            }
-            // Add ROWS to OFFSET if present
-            if let Some(ref mut offset) = select.offset {
-                offset.rows = Some(true);
-            }
-            Expression::Select(select)
-        } else {
-            expr
-        }
-    } else {
-        expr
-    };
+    // Oracle LIMIT/OFFSET -> OFFSET n ROWS FETCH FIRST m ROWS ONLY is rendered by the
+    // generator (`LimitFetchStyle::FetchFirst`), so it also applies to nested queries.
 
     // Handle CreateTable WITH properties transformation before recursive transforms
     let expr = if let Expression::CreateTable(mut ct) = expr {

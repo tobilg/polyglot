@@ -56,6 +56,8 @@ impl DialectImpl for OracleDialect {
             tz_to_with_time_zone: true,
             // Oracle UNPIVOT aliases retain literal aliases as literals.
             unpivot_aliases_are_identifiers: false,
+            // Oracle has no LIMIT: use OFFSET n ROWS FETCH FIRST m ROWS ONLY
+            limit_fetch_style: crate::generator::LimitFetchStyle::FetchFirst,
             ..Default::default()
         }
     }

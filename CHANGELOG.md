@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.13.1] - 2026-09-30
+
+### Fixed
+
+- Compound queries now attach trailing `FETCH FIRST/NEXT` to the complete
+  `UNION`, `INTERSECT`, or `EXCEPT` result and preserve `PERCENT`, `WITH TIES`,
+  offsets, and branch-local limits through parsing and generation. Percentage
+  limits also survive set-operation wrapping for T-SQL. Existing bare-count
+  AST fields and JSON remain unchanged; metadata-bearing compound limits use
+  the existing `Limit` and `Fetch` expression variants. Unsupported percentage
+  and ties conversions are reported through the configured unsupported policy.
+
+- Oracle: `LIMIT` is now rendered as `[OFFSET n ROWS] FETCH FIRST m ROWS ONLY`
+  by the generator itself, driven by `GeneratorConfig::limit_fetch_style`
+  (Oracle now defaults to `LimitFetchStyle::FetchFirst`). This covers ASTs built
+  with the builder or generated without `transpile`, as well as subqueries, CTEs,
+  `INSERT ... SELECT`, and set operations that previously kept `LIMIT`.
+  `LIMIT ALL` / `LIMIT NULL` are dropped instead of becoming `FETCH FIRST ALL`,
+  and T-SQL `TOP n [PERCENT] [WITH TIES]` maps to the equivalent `FETCH FIRST`.
+  T-SQL's `limit_fetch_style` is now `Top`, matching its existing output.
+  An explicit `FetchFirst` config takes precedence over dialect-specific
+  LIMIT/OFFSET rendering (e.g. Presto/Trino `OFFSET n LIMIT m`), except on
+  T-SQL/Fabric, which keep their TOP / `OFFSET ... FETCH NEXT` output.
+  ([#480](https://github.com/tobilg/polyglot/issues/480))
+- Set operations: a branch-local row limit that renders as a trailing clause
+  (e.g. T-SQL `SELECT TOP 5 ...` in a `UNION` branch transpiled to `LIMIT` or
+  `FETCH FIRST`) is now parenthesized, so it no longer limits the whole set
+  operation. SQLite, which rejects parenthesized operands, gets
+  `SELECT * FROM (...)` instead. Operands wrapped in comments (e.g. a comment
+  before `UNION ALL`) are grouped the same way, with the comment kept outside
+  the parentheses.
+
 ## [0.13.0] - 2026-09-24
 
 ### Added
@@ -1995,11 +2027,44 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.13.1]: https://github.com/tobilg/polyglot/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/tobilg/polyglot/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/tobilg/polyglot/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/tobilg/polyglot/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/tobilg/polyglot/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/tobilg/polyglot/compare/v0.9.2...v0.10.0
+[0.9.2]: https://github.com/tobilg/polyglot/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/tobilg/polyglot/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/tobilg/polyglot/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/tobilg/polyglot/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/tobilg/polyglot/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/tobilg/polyglot/compare/v0.6.3...v0.7.0
+[0.6.3]: https://github.com/tobilg/polyglot/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/tobilg/polyglot/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/tobilg/polyglot/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/tobilg/polyglot/compare/v0.5.16...v0.6.0
+[0.5.16]: https://github.com/tobilg/polyglot/compare/v0.5.15...v0.5.16
+[0.5.15]: https://github.com/tobilg/polyglot/compare/v0.5.14...v0.5.15
+[0.5.14]: https://github.com/tobilg/polyglot/compare/v0.5.13...v0.5.14
+[0.5.13]: https://github.com/tobilg/polyglot/compare/v0.5.12...v0.5.13
+[0.5.12]: https://github.com/tobilg/polyglot/compare/v0.5.11...v0.5.12
+[0.5.11]: https://github.com/tobilg/polyglot/compare/v0.5.10...v0.5.11
+[0.5.10]: https://github.com/tobilg/polyglot/compare/v0.5.9...v0.5.10
+[0.5.9]: https://github.com/tobilg/polyglot/compare/v0.5.8...v0.5.9
+[0.5.8]: https://github.com/tobilg/polyglot/compare/v0.5.7...v0.5.8
+[0.5.7]: https://github.com/tobilg/polyglot/compare/v0.5.6...v0.5.7
+[0.5.6]: https://github.com/tobilg/polyglot/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/tobilg/polyglot/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/tobilg/polyglot/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/tobilg/polyglot/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/tobilg/polyglot/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/tobilg/polyglot/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/tobilg/polyglot/compare/v0.4.4...v0.5.0
+[0.4.4]: https://github.com/tobilg/polyglot/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/tobilg/polyglot/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/tobilg/polyglot/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/tobilg/polyglot/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/tobilg/polyglot/compare/v0.3.12...v0.4.0
+[0.4.0]: https://github.com/tobilg/polyglot/compare/v0.3.11...v0.4.0
 [0.3.12]: https://github.com/tobilg/polyglot/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/tobilg/polyglot/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/tobilg/polyglot/compare/v0.3.9...v0.3.10
@@ -2012,7 +2077,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 [0.3.3]: https://github.com/tobilg/polyglot/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/tobilg/polyglot/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/tobilg/polyglot/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/tobilg/polyglot/compare/v0.1.9...v0.3.0
+[0.3.0]: https://github.com/tobilg/polyglot/compare/v0.2.3...v0.3.0
 [0.1.9]: https://github.com/tobilg/polyglot/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/tobilg/polyglot/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/tobilg/polyglot/compare/v0.1.6...v0.1.7

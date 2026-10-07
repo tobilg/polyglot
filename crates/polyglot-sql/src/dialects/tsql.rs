@@ -62,8 +62,8 @@ impl DialectImpl for TSQLDialect {
             identifier_quote_style: IdentifierQuoteStyle::BRACKET,
             dialect: Some(DialectType::TSQL),
             // T-SQL specific settings from Python sqlglot
-            // SQL Server uses TOP/FETCH instead of LIMIT
-            limit_fetch_style: crate::generator::LimitFetchStyle::FetchFirst,
+            // SQL Server uses TOP (or OFFSET/FETCH, handled by the generator) instead of LIMIT
+            limit_fetch_style: crate::generator::LimitFetchStyle::Top,
             // NULLS FIRST/LAST not supported in SQL Server
             null_ordering_supported: false,
             // SQL Server does not support SQL:2003 aggregate FILTER clauses.

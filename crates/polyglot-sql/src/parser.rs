@@ -2901,50 +2901,7 @@ impl Parser {
                     Self::clear_rightmost_trailing_comments(&mut w.this);
                 }
             }
-            // First try parse_unary to check for PERCENT/% modifier.
-            // This avoids parse_expression consuming % as the modulo operator.
-            // Both "PERCENT" and "%" tokens have TokenType::Percent, but we need to
-            // distinguish PERCENT-as-modifier from %-as-modulo. "%" is PERCENT when
-            // followed by a clause boundary (OFFSET, end, semicolon, etc.).
-            let saved_pos = self.current;
-            let (first_expr, has_percent) = {
-                let unary_result = self.parse_unary();
-                match unary_result {
-                    Ok(expr) => {
-                        if self.check(TokenType::Percent) && self.is_percent_modifier() {
-                            // Found PERCENT keyword or % symbol used as PERCENT modifier
-                            self.skip();
-                            (expr, true)
-                        } else {
-                            // No PERCENT - backtrack and use full parse_expression
-                            self.current = saved_pos;
-                            let full_expr = self.parse_expression()?;
-                            // Check again for PERCENT keyword (e.g., after complex expression)
-                            let has_pct =
-                                if self.check(TokenType::Percent) && self.is_percent_modifier() {
-                                    self.skip();
-                                    true
-                                } else {
-                                    false
-                                };
-                            (full_expr, has_pct)
-                        }
-                    }
-                    Err(_) => {
-                        // Unary parsing failed - backtrack and use parse_expression
-                        self.current = saved_pos;
-                        let full_expr = self.parse_expression()?;
-                        let has_pct =
-                            if self.check(TokenType::Percent) && self.is_percent_modifier() {
-                                self.skip();
-                                true
-                            } else {
-                                false
-                            };
-                        (full_expr, has_pct)
-                    }
-                }
-            };
+            let (first_expr, has_percent) = self.parse_limit_value()?;
             // MySQL syntax: LIMIT offset, count
             if self.match_token(TokenType::Comma) {
                 let second_expr = self.parse_expression()?;
@@ -3002,10 +2959,10 @@ impl Parser {
 
             // Check for LIMIT after OFFSET (Presto/Trino syntax: OFFSET n LIMIT m)
             let limit = if limit.is_none() && self.match_token(TokenType::Limit) {
-                let limit_expr = self.parse_expression()?;
+                let (this, percent) = self.parse_limit_value()?;
                 Some(Limit {
-                    this: limit_expr,
-                    percent: false,
+                    this,
+                    percent,
                     comments: Vec::new(),
                 })
             } else {
@@ -3075,6 +3032,9 @@ impl Parser {
         } else {
             None
         };
+        if limit.is_some() && fetch.is_some() {
+            return Err(self.parse_error("LIMIT and FETCH cannot be combined in the same query"));
+        }
 
         // Parse SAMPLE / TABLESAMPLE clause
         let sample = self.parse_sample_clause()?;
@@ -9030,9 +8990,71 @@ impl Parser {
         }
     }
 
-    /// Parse query modifiers (ORDER BY, LIMIT, OFFSET, DISTRIBUTE BY, SORT BY, CLUSTER BY) for parenthesized queries
-    /// e.g., (SELECT 1) ORDER BY x LIMIT 1 OFFSET 1
-    /// e.g., (SELECT 1 UNION SELECT 2) DISTRIBUTE BY z SORT BY x
+    /// Parse a LIMIT count without mistaking a trailing percent sign for modulo.
+    fn parse_limit_value(&mut self) -> Result<(Expression, bool)> {
+        let saved_pos = self.current;
+        if let Ok(expr) = self.parse_unary() {
+            if self.check(TokenType::Percent) && self.is_percent_modifier() {
+                self.skip();
+                return Ok((expr, true));
+            }
+        }
+        self.current = saved_pos;
+        let expr = self.parse_expression()?;
+        let percent = self.check(TokenType::Percent) && self.is_percent_modifier();
+        if percent {
+            self.skip();
+        }
+        Ok((expr, percent))
+    }
+
+    /// Parse a query-level LIMIT/OFFSET/FETCH tail. The count parser is shared
+    /// with SELECT, including percentage and MySQL comma syntax.
+    fn parse_row_limit_modifiers(
+        &mut self,
+    ) -> Result<(Option<Limit>, Option<Offset>, Option<Fetch>)> {
+        let (mut limit, mut offset, mut fetch) = (None, None, None);
+        loop {
+            if self.check(TokenType::Limit) {
+                if limit.is_some() || fetch.is_some() {
+                    return Err(self.parse_error("Multiple LIMIT/FETCH clauses in the same query"));
+                }
+                let comments = self.current_leading_comments().to_vec();
+                self.skip();
+                let (mut this, percent) = self.parse_limit_value()?;
+                if self.match_token(TokenType::Comma) {
+                    if offset.is_some() || percent {
+                        return Err(self.parse_error("Invalid LIMIT offset/count combination"));
+                    }
+                    offset = Some(Offset { this, rows: None });
+                    this = self.parse_expression()?;
+                }
+                limit = Some(Limit {
+                    this,
+                    percent,
+                    comments,
+                });
+            } else if self.match_token(TokenType::Offset) {
+                if offset.is_some() {
+                    return Err(self.parse_error("Multiple OFFSET clauses in the same query"));
+                }
+                let this = self.parse_expression()?;
+                let rows = (self.match_token(TokenType::Row) || self.match_token(TokenType::Rows))
+                    .then_some(true);
+                offset = Some(Offset { this, rows });
+            } else if self.match_token(TokenType::Fetch) {
+                if limit.is_some() || fetch.is_some() {
+                    return Err(self.parse_error("Multiple LIMIT/FETCH clauses in the same query"));
+                }
+                fetch = Some(self.parse_fetch()?);
+            } else {
+                break;
+            }
+        }
+        Ok((limit, offset, fetch))
+    }
+
+    /// Parse modifiers following a parenthesized query without changing its inner scope.
     fn parse_query_modifiers(&mut self, inner: Expression) -> Result<Expression> {
         // Parse DISTRIBUTE BY (Hive/Spark)
         let distribute_by = if self.match_keywords(&[TokenType::Distribute, TokenType::By]) {
@@ -9092,26 +9114,45 @@ impl Parser {
             None
         };
 
-        // Parse LIMIT
-        let limit = if self.match_token(TokenType::Limit) {
-            Some(Limit {
-                this: self.parse_expression()?,
-                percent: false,
-                comments: Vec::new(),
-            })
-        } else {
-            None
-        };
-
-        // Parse OFFSET
-        let offset = if self.match_token(TokenType::Offset) {
-            Some(Offset {
-                this: self.parse_expression()?,
-                rows: None,
-            })
-        } else {
-            None
-        };
+        let (limit, offset, fetch) = self.parse_row_limit_modifiers()?;
+        if fetch.is_some() || limit.as_ref().is_some_and(|limit| limit.percent) {
+            let mut subquery = match inner {
+                Expression::Subquery(subquery) => *subquery,
+                this => Subquery {
+                    this,
+                    alias: None,
+                    column_aliases: Vec::new(),
+                    alias_explicit_as: false,
+                    alias_keyword: None,
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    lateral: false,
+                    modifiers_inside: false,
+                    trailing_comments: Vec::new(),
+                    inferred_type: None,
+                },
+            };
+            subquery
+                .alias
+                .get_or_insert_with(|| Identifier::new("_l_0"));
+            let mut select = Select::new();
+            select.expressions = vec![Expression::star()];
+            select.from = Some(From {
+                expressions: vec![Expression::Subquery(Box::new(subquery))],
+            });
+            select.order_by = order_by;
+            select.offset = offset;
+            select.limit = limit;
+            select.fetch = fetch;
+            select.distribute_by = distribute_by;
+            select.sort_by = sort_by;
+            select.cluster_by = cluster_by;
+            return Ok(Expression::Select(Box::new(select)));
+        }
 
         // If we have any modifiers, wrap in a Subquery with the modifiers
         if order_by.is_some()
@@ -11726,7 +11767,7 @@ impl Parser {
 
                 let mut right = self.parse_select_or_paren_select()?;
                 let (order_by, limit, offset) =
-                    Self::detach_unparenthesized_set_operation_modifiers(&mut right);
+                    self.detach_unparenthesized_set_operation_modifiers(&mut right);
                 result = Expression::Union(Box::new(Union {
                     left: Self::wrap_values_set_operand(left),
                     right: Self::wrap_values_set_operand(right),
@@ -11767,7 +11808,7 @@ impl Parser {
 
                 let mut right = self.parse_select_or_paren_select()?;
                 let (order_by, limit, offset) =
-                    Self::detach_unparenthesized_set_operation_modifiers(&mut right);
+                    self.detach_unparenthesized_set_operation_modifiers(&mut right);
                 result = Expression::Intersect(Box::new(Intersect {
                     left: Self::wrap_values_set_operand(left),
                     right: Self::wrap_values_set_operand(right),
@@ -11808,7 +11849,7 @@ impl Parser {
 
                 let mut right = self.parse_select_or_paren_select()?;
                 let (order_by, limit, offset) =
-                    Self::detach_unparenthesized_set_operation_modifiers(&mut right);
+                    self.detach_unparenthesized_set_operation_modifiers(&mut right);
                 result = Expression::Except(Box::new(Except {
                     left: Self::wrap_values_set_operand(left),
                     right: Self::wrap_values_set_operand(right),
@@ -11872,19 +11913,35 @@ impl Parser {
     }
 
     fn detach_unparenthesized_set_operation_modifiers(
+        &self,
         expr: &mut Expression,
     ) -> (
         Option<OrderBy>,
         Option<Box<Expression>>,
         Option<Box<Expression>>,
     ) {
-        if let Expression::Select(select) = expr {
-            let order_by = select.order_by.take();
-            let limit = select.limit.take().map(|limit| Box::new(limit.this));
-            let offset = select.offset.take().map(|offset| Box::new(offset.this));
-            (order_by, limit, offset)
-        } else {
-            (None, None, None)
+        match expr {
+            Expression::Annotated(annotated) => {
+                self.detach_unparenthesized_set_operation_modifiers(&mut annotated.this)
+            }
+            Expression::Select(select) => {
+                // ClickHouse row-limiting clauses belong to individual UNION operands.
+                if self.config.dialect == Some(crate::dialects::DialectType::ClickHouse)
+                    && select.fetch.is_some()
+                {
+                    return (None, None, None);
+                }
+                let order_by = select.order_by.take();
+                let limit = select.limit.take().map(Limit::into_set_limit).or_else(|| {
+                    select
+                        .fetch
+                        .take()
+                        .map(|fetch| Box::new(Expression::Fetch(Box::new(fetch))))
+                });
+                let offset = select.offset.take().map(|offset| Box::new(offset.this));
+                (order_by, limit, offset)
+            }
+            _ => (None, None, None),
         }
     }
 
@@ -12006,19 +12063,24 @@ impl Parser {
             None
         };
 
-        // Parse LIMIT
-        let limit = if self.match_token(TokenType::Limit) {
-            Some(Box::new(self.parse_expression()?))
-        } else {
-            None
+        let (limit, offset, fetch) = self.parse_row_limit_modifiers()?;
+        let limit = limit
+            .map(Limit::into_set_limit)
+            .or_else(|| fetch.map(|fetch| Box::new(Expression::Fetch(Box::new(fetch)))));
+        let offset = offset.map(|offset| Box::new(offset.this));
+        let mut expr = expr;
+        while let Expression::Annotated(annotated) = expr {
+            expr = &mut annotated.this;
+        }
+        let existing_limit = match &*expr {
+            Expression::Union(set) => set.limit.is_some(),
+            Expression::Intersect(set) => set.limit.is_some(),
+            Expression::Except(set) => set.limit.is_some(),
+            _ => false,
         };
-
-        // Parse OFFSET
-        let offset = if self.match_token(TokenType::Offset) {
-            Some(Box::new(self.parse_expression()?))
-        } else {
-            None
-        };
+        if existing_limit && limit.is_some() {
+            return Err(self.parse_error("Multiple LIMIT/FETCH clauses in the same query"));
+        }
 
         // Apply modifiers to the outermost set operation
         match expr {

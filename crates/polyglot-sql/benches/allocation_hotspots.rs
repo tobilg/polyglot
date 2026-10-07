@@ -29,7 +29,58 @@ fn print_stats(case: &str, operation: &str, input_bytes: usize, stats: Stats) {
     );
 }
 
+fn compound_row_limits() {
+    for branches in [1, 10, 100] {
+        let body = vec!["SELECT a FROM t"; branches].join(" UNION ALL ");
+        for (name, source, target, tail) in [
+            (
+                "count",
+                DialectType::PostgreSQL,
+                DialectType::Oracle,
+                "LIMIT 5 OFFSET 2",
+            ),
+            (
+                "percent",
+                DialectType::DuckDB,
+                DialectType::Oracle,
+                "LIMIT 10 PERCENT",
+            ),
+            (
+                "fetch",
+                DialectType::Oracle,
+                DialectType::DuckDB,
+                "OFFSET 2 ROWS FETCH NEXT 5 ROWS ONLY",
+            ),
+        ] {
+            let sql = format!("{body} ORDER BY a {tail}");
+            let dialect = Dialect::get(source);
+            let writer = Dialect::get(target);
+            let ast = dialect.parse(&sql).unwrap();
+            let case = format!("compound/{name}/{branches}");
+            print_stats(
+                &case,
+                "parse",
+                sql.len(),
+                measure(|| dialect.parse(&sql).unwrap()),
+            );
+            print_stats(
+                &case,
+                "generate",
+                sql.len(),
+                measure(|| writer.generate(&ast[0]).unwrap()),
+            );
+            print_stats(
+                &case,
+                "transpile",
+                sql.len(),
+                measure(|| dialect.transpile(&sql, target).unwrap()),
+            );
+        }
+    }
+}
+
 fn main() {
+    compound_row_limits();
     let dialect = Dialect::get(DialectType::PostgreSQL);
     let large = large_token_list();
     let columns = many_columns();
