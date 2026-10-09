@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "polyglot-sql-ast-derive",
  "serde",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-ast-derive"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "proc-macro2",
  "quote",
