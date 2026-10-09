@@ -169,7 +169,13 @@ fn duckdb_int_div_protects_zero_divisors() {
 #[test]
 fn duckdb_int_div_rejects_unresolved_types_in_every_mode() {
     for options in [TranspileOptions::default(), TranspileOptions::strict()] {
-        for target in ["postgresql", "bigquery", "clickhouse", "sqlite"] {
+        for target in [
+            "postgresql",
+            "bigquery",
+            "clickhouse",
+            "sqlite",
+            "datafusion",
+        ] {
             for sql in [
                 "SELECT x // 2 FROM t",
                 "SELECT x // 2 FROM (SELECT 7.0 AS x) t",
@@ -250,14 +256,16 @@ fn duckdb_integer_division_rejects_targets_without_a_lowering() {
 fn duckdb_integer_division_lowers_to_plain_division_for_datafusion() {
     // DataFusion's `/` already has DuckDB's `//` type-dependent semantics
     // (integer operands truncate toward zero, a floating operand gives float
-    // division), so `a / nullif(b, 0)` is exact and -- unlike targets whose
-    // integer division is a separate operator -- needs no operand types.
+    // division). Operand types must be resolved to exclude decimal arithmetic
+    // and functions whose return types differ between the two engines.
     for (sql, expected) in [
         ("SELECT 7 // 2 AS v", "SELECT 7 / nullif(2, 0) AS v"),
         ("SELECT -7 // 2 AS v", "SELECT -7 / nullif(2, 0) AS v"),
         ("SELECT 7 // 0 AS v", "SELECT 7 / nullif(0, 0) AS v"),
-        ("SELECT x // 2 FROM t", "SELECT x / nullif(2, 0) FROM t"),
-        ("SELECT x // y FROM t", "SELECT x / nullif(y, 0) FROM t"),
+        (
+            "SELECT CAST(x AS INTEGER) // CAST(y AS INTEGER) FROM t",
+            "SELECT CAST(x AS INT) / nullif(CAST(y AS INT), 0) FROM t",
+        ),
         (
             "SELECT 8 // 2 // 2 AS v",
             "SELECT 8 / nullif(2, 0) / nullif(2, 0) AS v",
@@ -271,7 +279,7 @@ fn duckdb_integer_division_lowers_to_plain_division_for_datafusion() {
     }
     // A DECIMAL operand produces DOUBLE in DuckDB, while DataFusion would keep
     // decimal arithmetic, so the cast is still needed -- including next to an
-    // untyped column, and when the DECIMAL sits on either side of a lowered
+    // explicitly typed column, and when the DECIMAL sits on either side of a lowered
     // integer // (which stays integer-typed in DataFusion).
     for (sql, expected) in [
         (
@@ -279,8 +287,8 @@ fn duckdb_integer_division_lowers_to_plain_division_for_datafusion() {
             "SELECT CAST(CAST(7 AS DECIMAL(10, 1)) AS DOUBLE) / nullif(2, 0) AS v",
         ),
         (
-            "SELECT x // CAST(2 AS DECIMAL(10, 1)) AS v FROM t",
-            "SELECT CAST(x AS DOUBLE) / nullif(CAST(2 AS DECIMAL(10, 1)), 0) AS v FROM t",
+            "SELECT CAST(x AS INTEGER) // CAST(2 AS DECIMAL(10, 1)) AS v FROM t",
+            "SELECT CAST(CAST(x AS INT) AS DOUBLE) / nullif(CAST(2 AS DECIMAL(10, 1)), 0) AS v FROM t",
         ),
         (
             "SELECT 7 // 2 // CAST(3 AS DECIMAL(10, 1)) AS v",
@@ -301,7 +309,7 @@ fn duckdb_source_division_inside_int_div_stays_float_for_datafusion() {
     // DuckDB's `/` is always DOUBLE, but DataFusion's `/` on two integers
     // truncates, so a source division inside a `//` operand gets its dividend
     // cast to DOUBLE: `(7 / 2) // 2` is 1.75 in DuckDB, not 1. A lowered `//`
-    // (the generated NULLIF divisor) is left as the integer it is.
+    // is left as the integer it is, including user-written NULLIF divisors.
     for (sql, expected) in [
         (
             "SELECT (7 / 2) // 2 AS v",
@@ -313,7 +321,7 @@ fn duckdb_source_division_inside_int_div_stays_float_for_datafusion() {
         ),
         (
             "SELECT 7.5 / 2 // 2 AS v",
-            "SELECT 7.5 / 2 / nullif(2, 0) AS v",
+            "SELECT CAST(7.5 AS DOUBLE) / 2 / nullif(2, 0) AS v",
         ),
         (
             "SELECT 7 // 2 // 2 AS v",
@@ -323,6 +331,128 @@ fn duckdb_source_division_inside_int_div_stays_float_for_datafusion() {
         let out = transpile(sql, DialectType::DuckDB, DialectType::DataFusion).unwrap();
         assert_eq!(out, vec![expected], "{sql}");
     }
+}
+
+// Engine execution coverage lives in the Python bindings' optional test suite.
+const DATAFUSION_NESTED_DIVISION_CASES: &[(&str, &str)] = &[
+    (
+        "SELECT ABS(7 / 2) // 2 AS v",
+        "SELECT ABS(CAST(7 AS DOUBLE) / 2) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT COALESCE(7 / 2, 0) // 2 AS v",
+        "SELECT coalesce(CAST(7 AS DOUBLE) / 2, 0) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT (CASE WHEN TRUE THEN 7 / 2 ELSE 0 END) // 2 AS v",
+        "SELECT (CASE WHEN TRUE THEN CAST(7 AS DOUBLE) / 2 ELSE 0 END) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT CAST(7 / 2 AS DOUBLE) // 2 AS v",
+        "SELECT CAST(CAST(7 AS DOUBLE) / 2 AS DOUBLE) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT (x / 2) // 2 AS v FROM (VALUES (7)) AS t(x)",
+        "SELECT (CAST(x AS DOUBLE) / 2) / nullif(2, 0) AS v FROM (VALUES (7)) AS t(x)",
+    ),
+    (
+        "SELECT ABS(x / y) // 2 AS v FROM (VALUES (7, 2)) AS t(x, y)",
+        "SELECT ABS(CAST(x AS DOUBLE) / y) / nullif(2, 0) AS v FROM (VALUES (7, 2)) AS t(x, y)",
+    ),
+    (
+        "SELECT (CAST(1 AS DECIMAL(10, 1)) / 3) // 2 AS v",
+        "SELECT (CAST(CAST(1 AS DECIMAL(10, 1)) AS DOUBLE) / 3) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT (7 / NULLIF(2, 0)) // 2 AS v",
+        "SELECT (CAST(7 AS DOUBLE) / nullif(2, 0)) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT (7 / NULLIF(2, 0)) // CAST(2 AS DECIMAL(10, 1)) AS v",
+        "SELECT (CAST(7 AS DOUBLE) / nullif(2, 0)) / nullif(CAST(2 AS DECIMAL(10, 1)), 0) AS v",
+    ),
+    (
+        "SELECT ABS(7 // 2) // 2 AS v",
+        "SELECT ABS(7 / nullif(2, 0)) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT COALESCE(NULL, 7 // 2) // 2 AS v",
+        "SELECT coalesce(NULL, 7 / nullif(2, 0)) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT (7 // CAST(2 AS FLOAT)) // 2 AS v",
+        "SELECT (7 / nullif(CAST(2 AS REAL), 0)) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT CAST(7 / 2 AS INTEGER) // 2 AS v",
+        "SELECT CAST(ROUND(CAST(7 AS DOUBLE) / 2, 0) AS INT) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT TRY_CAST(-7 / 2 AS INTEGER) // 2 AS v",
+        "SELECT TRY_CAST(ROUND(CAST(-7 AS DOUBLE) / 2, 0) AS INT) / nullif(2, 0) AS v",
+    ),
+    (
+        "SELECT CAST(CAST(7 AS DECIMAL(10, 1)) / 2 AS INTEGER) // 2 AS v",
+        "SELECT CAST(ROUND(CAST(CAST(7 AS DECIMAL(10, 1)) AS DOUBLE) / 2, 0) AS INT) / nullif(2, 0) AS v",
+    ),
+];
+
+#[test]
+fn duckdb_datafusion_nested_division_regressions() {
+    for &(sql, expected) in DATAFUSION_NESTED_DIVISION_CASES {
+        for options in [TranspileOptions::default(), TranspileOptions::strict()] {
+            let out = transpile_with_by_name(sql, "duckdb", "datafusion", &options)
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+            assert_eq!(out, [expected], "{sql}");
+        }
+    }
+}
+
+#[test]
+fn duckdb_datafusion_rejects_ambiguous_division_in_both_modes() {
+    for sql in [
+        "SELECT x // y FROM t",
+        "SELECT x // CAST(2 AS DECIMAL(10, 1)) FROM t",
+        "SELECT x // 3 FROM (SELECT CAST(1 AS DECIMAL(10, 1)) AS x) t",
+        "SELECT (x // 3) * 3 = 1 FROM (SELECT CAST(1 AS DECIMAL(10, 1)) AS x) t",
+        "SELECT ROUND(7, 0) // 2",
+        "SELECT ROUND(7 // 2, 0) // 2",
+        "SELECT ABS(x) // 2 FROM t",
+        "SELECT COALESCE(x, 7 / 2) // 2 FROM t",
+        "SELECT (CASE WHEN TRUE THEN 7 / 2 ELSE x END) // 2 FROM t",
+        "SELECT NULLIF(7, 2.5) // 2",
+    ] {
+        for options in [TranspileOptions::default(), TranspileOptions::strict()] {
+            let error = transpile_with_by_name(sql, "duckdb", "datafusion", &options).unwrap_err();
+            assert!(
+                error.to_string().contains("unresolved operand types"),
+                "{sql}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn duckdb_datafusion_division_rewrites_are_scoped_to_int_div() {
+    assert_eq!(
+        transpile(
+            "SELECT 7 / 2, (7 / 2) // 2",
+            DialectType::DuckDB,
+            DialectType::DataFusion
+        )
+        .unwrap(),
+        ["SELECT 7 / 2, (CAST(7 AS DOUBLE) / 2) / nullif(2, 0)"],
+    );
+    // Both divisions retain their original syntax in the source dialect.
+    assert_eq!(
+        transpile(
+            "SELECT ABS(7 / NULLIF(2, 0)) // 2",
+            DialectType::DuckDB,
+            DialectType::DuckDB
+        )
+        .unwrap(),
+        ["SELECT ABS(7 / NULLIF(2, 0)) // 2"],
+    );
 }
 
 #[test]

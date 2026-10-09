@@ -11,10 +11,13 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - DuckDB integer `//` now lowers for the DataFusion target as
   `a / NULLIF(b, 0)`. DataFusion's `/` already truncates integer operands
   toward zero and performs float division on a floating operand, so the
-  result matches DuckDB, including `NULL` on a zero divisor, without
-  resolving operand types. A DECIMAL operand, or a DuckDB `/` nested inside
-  the `//`, is cast to DOUBLE where DataFusion would otherwise keep integer
-  or decimal arithmetic.
+  result matches DuckDB, including `NULL` on a zero divisor, for resolved
+  numeric operands. Unresolved columns and function return types report an
+  error in both default and strict modes; explicit numeric casts remain
+  supported. Decimal operands use floating arithmetic. Nested DuckDB `/`
+  expressions retain floating division through functions, casts, and CASE,
+  including column operands and user-written `NULLIF` divisors. Numeric casts
+  from known fractional operands to integers inside `//` round as in DuckDB.
 
 ## [0.13.2] - 2026-10-08
 

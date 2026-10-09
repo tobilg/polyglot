@@ -2,6 +2,7 @@
 
 use super::scalar::{expression_numeric_kind, NumericKind};
 use super::*;
+use crate::expressions::RoundFunc;
 
 fn combine(left: NumericKind, right: NumericKind) -> NumericKind {
     use NumericKind::*;
@@ -33,105 +34,166 @@ fn numeric_kind(expr: &Expression) -> NumericKind {
     }
 }
 
-/// The divisor shape this pass generates: `NULLIF(b, 0)`. A `Div` with that
-/// divisor is a lowered `//`; any other `Div` is the source's own `/`.
-fn is_lowered_divisor(expr: &Expression) -> bool {
-    matches!(
-        expr,
-        Expression::Function(f)
-            if f.name.eq_ignore_ascii_case("NULLIF")
-                && f.args.len() == 2
-                && matches!(&f.args[1], Expression::Literal(lit)
-                    if matches!(lit.as_ref(), Literal::Number(n) if n == "0"))
-    )
-}
-
-/// DataFusion's `/` keeps the operands' own types, so a lowered integer `//`
-/// (`a / NULLIF(b, 0)`) is still an integer there and is classified from its
-/// operands. The source's own `/` is DOUBLE in DuckDB whatever its operands,
-/// so it stays Float, as in `numeric_kind`.
+/// Classify the rewritten DataFusion expression. Source `/` nodes have already
+/// been made floating, and lowered `//` nodes retain their operands' types.
+/// Never infer provenance from SQL syntax such as a NULLIF divisor.
 fn datafusion_numeric_kind(expr: &Expression) -> NumericKind {
     match expr {
         Expression::Paren(p) => datafusion_numeric_kind(&p.this),
+        Expression::Annotated(a) => datafusion_numeric_kind(&a.this),
         Expression::Neg(n) => datafusion_numeric_kind(&n.this),
         Expression::Alias(a) => datafusion_numeric_kind(&a.this),
+        Expression::Abs(f) => datafusion_numeric_kind(&f.this),
         Expression::Add(b) | Expression::Sub(b) | Expression::Mul(b) | Expression::Mod(b) => {
             combine(
                 datafusion_numeric_kind(&b.left),
                 datafusion_numeric_kind(&b.right),
             )
         }
-        Expression::Div(b) if is_lowered_divisor(&b.right) => combine(
-            datafusion_numeric_kind(&b.left),
-            datafusion_numeric_kind(&b.right),
-        ),
-        Expression::Div(_) => NumericKind::Float,
-        Expression::IntDiv(_) => NumericKind::Integer,
-        Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF") && f.args.len() == 2 => {
-            datafusion_numeric_kind(&f.args[0])
+        Expression::Div(b) => {
+            let left = datafusion_numeric_kind(&b.left);
+            // Div is already target SQL. Its generated NULLIF follows
+            // DataFusion's common-type coercion, including a floating divisor.
+            let right = match &b.right {
+                Expression::Function(f)
+                    if f.name.eq_ignore_ascii_case("NULLIF") && f.args.len() == 2 =>
+                {
+                    combine(
+                        datafusion_numeric_kind(&f.args[0]),
+                        datafusion_numeric_kind(&f.args[1]),
+                    )
+                }
+                other => datafusion_numeric_kind(other),
+            };
+            // A source `/` supplies a floating operand even when columns or
+            // function return types on the other side are unresolved.
+            if left == NumericKind::Float || right == NumericKind::Float {
+                NumericKind::Float
+            } else {
+                combine(left, right)
+            }
         }
-        Expression::NullIf(f) => datafusion_numeric_kind(&f.this),
+        Expression::Coalesce(f) => datafusion_branch_kind(f.expressions.iter()),
+        Expression::Case(c) => datafusion_branch_kind(
+            c.whens
+                .iter()
+                .map(|(_, result)| result)
+                .chain(c.else_.iter()),
+        ),
+        Expression::IfFunc(f) => {
+            datafusion_branch_kind(std::iter::once(&f.true_value).chain(f.false_value.iter()))
+        }
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF") && f.args.len() == 2 => {
+            datafusion_nullif_kind(&f.args[0], &f.args[1])
+        }
+        Expression::NullIf(f) => datafusion_nullif_kind(&f.this, &f.expression),
+        // Do not assume functions such as ROUND preserve numeric types across
+        // dialects: DuckDB ROUND(integer) is integer, DataFusion's is floating.
         _ => expression_numeric_kind(expr),
     }
 }
 
-/// DuckDB's `/` is always DOUBLE, but DataFusion's `/` on two integers
-/// truncates. Inside a `//` operand that difference changes the result
-/// (`(7 / 2) // 2` is 1.75 in DuckDB), so cast the dividend of any such
-/// source division to DOUBLE. Only arithmetic nodes are walked.
-fn float_source_divisions(expr: Expression) -> Expression {
-    match expr {
-        Expression::Paren(mut p) => {
-            p.this = float_source_divisions(p.this);
-            Expression::Paren(p)
-        }
-        Expression::Neg(mut n) => {
-            n.this = float_source_divisions(n.this);
-            Expression::Neg(n)
-        }
-        Expression::Alias(mut a) => {
-            a.this = float_source_divisions(a.this);
-            Expression::Alias(a)
-        }
-        Expression::Add(mut b) => {
-            b.left = float_source_divisions(b.left);
-            b.right = float_source_divisions(b.right);
-            Expression::Add(b)
-        }
-        Expression::Sub(mut b) => {
-            b.left = float_source_divisions(b.left);
-            b.right = float_source_divisions(b.right);
-            Expression::Sub(b)
-        }
-        Expression::Mul(mut b) => {
-            b.left = float_source_divisions(b.left);
-            b.right = float_source_divisions(b.right);
-            Expression::Mul(b)
-        }
-        Expression::Mod(mut b) => {
-            b.left = float_source_divisions(b.left);
-            b.right = float_source_divisions(b.right);
-            Expression::Mod(b)
-        }
-        Expression::Div(mut b) => {
-            b.left = float_source_divisions(b.left);
-            b.right = float_source_divisions(b.right);
-            if !is_lowered_divisor(&b.right)
-                && datafusion_numeric_kind(&b.left) == NumericKind::Integer
-                && datafusion_numeric_kind(&b.right) == NumericKind::Integer
-            {
-                b.left = super::operators::cast_expr(
-                    b.left,
-                    DataType::Double {
-                        precision: None,
-                        scale: None,
-                    },
-                );
-            }
-            Expression::Div(b)
-        }
-        other => other,
+fn datafusion_branch_kind<'a>(branches: impl Iterator<Item = &'a Expression>) -> NumericKind {
+    branches
+        .filter(|expr| !matches!(expr, Expression::Null(_)))
+        .map(datafusion_numeric_kind)
+        .reduce(combine)
+        .unwrap_or(NumericKind::Unknown)
+}
+
+fn datafusion_nullif_kind(left: &Expression, right: &Expression) -> NumericKind {
+    let left_kind = datafusion_numeric_kind(left);
+    // DuckDB preserves the first argument's type, but DataFusion coerces both
+    // arguments to a common type. Mixed numeric types need an explicit cast.
+    if left_kind == datafusion_numeric_kind(right) || matches!(right, Expression::Null(_)) {
+        left_kind
+    } else {
+        NumericKind::Unknown
     }
+}
+
+fn as_double(expr: Expression) -> Expression {
+    super::operators::cast_expr(
+        expr,
+        DataType::Double {
+            precision: None,
+            scale: None,
+        },
+    )
+}
+
+fn unresolved_division(target: DialectType) -> crate::error::Error {
+    crate::error::Error::unsupported(
+        "DuckDB // with unresolved operand types; use explicit numeric casts",
+        target.to_string(),
+    )
+}
+
+fn prepare_datafusion_division(expr: Expression) -> Result<Expression> {
+    // Stop the outer traversal at each outermost IntDiv. Rewrite that complete
+    // subtree once, bottom-up, including casts, functions, CASE and subqueries.
+    // Replacement nodes are not revisited, so a generated Div cannot be
+    // mistaken for a source `/`, even across nested integer divisions.
+    crate::traversal::transform_with_dispatch(
+        expr,
+        &Ok,
+        &|expr| !matches!(expr, Expression::IntDiv(_)),
+        &|expr, _| {
+            crate::traversal::transform_all(expr, &|mut expr| {
+                match &mut expr {
+                    Expression::Div(b) => {
+                        // Integer, decimal and unresolved source operands need
+                        // floating arithmetic. Preserve an existing FLOAT operand
+                        // rather than widening DuckDB's FLOAT/FLOAT division.
+                        if datafusion_numeric_kind(&b.left) != NumericKind::Float
+                            && datafusion_numeric_kind(&b.right) != NumericKind::Float
+                        {
+                            b.left =
+                                as_double(std::mem::replace(&mut b.left, Expression::number(0)));
+                        }
+                    }
+                    Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c)
+                        if super::scalar::data_type_numeric_kind(&c.to) == NumericKind::Integer
+                            && matches!(
+                                datafusion_numeric_kind(&c.this),
+                                NumericKind::Float | NumericKind::Decimal
+                            ) =>
+                    {
+                        // DuckDB rounds numeric casts to integers; DataFusion
+                        // truncates. This also matters after a nested source `/`.
+                        c.this = Expression::Round(Box::new(RoundFunc {
+                            this: std::mem::replace(&mut c.this, Expression::number(0)),
+                            decimals: Some(Expression::number(0)),
+                        }));
+                    }
+                    Expression::IntDiv(_) => {
+                        let Expression::IntDiv(mut division) = expr else {
+                            unreachable!()
+                        };
+                        let kind = combine(
+                            datafusion_numeric_kind(&division.this),
+                            datafusion_numeric_kind(&division.expression),
+                        );
+                        if kind == NumericKind::Unknown {
+                            return Err(unresolved_division(DialectType::DataFusion));
+                        }
+                        if kind == NumericKind::Decimal {
+                            division.this = as_double(division.this);
+                        }
+                        return Ok(Expression::Div(Box::new(BinaryOp::new(
+                            division.this,
+                            Expression::Function(Box::new(Function::new(
+                                "NULLIF".to_string(),
+                                vec![division.expression, Expression::number(0)],
+                            ))),
+                        ))));
+                    }
+                    _ => {}
+                }
+                Ok(expr)
+            })
+        },
+    )
 }
 
 pub(in crate::dialects) fn prepare_integer_division(
@@ -141,6 +203,10 @@ pub(in crate::dialects) fn prepare_integer_division(
 ) -> Result<Expression> {
     if source != DialectType::DuckDB || target == DialectType::DuckDB {
         return Ok(expr);
+    }
+
+    if target == DialectType::DataFusion {
+        return prepare_datafusion_division(expr);
     }
 
     // Visit every physical child, including typed function arguments and both
@@ -153,44 +219,8 @@ pub(in crate::dialects) fn prepare_integer_division(
         let right_kind = numeric_kind(&division.expression);
         let kind = combine(left_kind, right_kind);
 
-        // DataFusion's `/` is type-dependent in the same way as DuckDB's `//`:
-        // integer operands truncate toward zero and a floating operand makes
-        // it float division. So `a / NULLIF(b, 0)` is exact without resolving
-        // operand types (an untyped column that turns out to be DECIMAL keeps
-        // decimal arithmetic where DuckDB gives DOUBLE; the value is the same).
-        // A known DECIMAL operand is cast to DOUBLE whenever one is involved
-        // on either side, unless a float operand already decides the type.
-        if target == DialectType::DataFusion {
-            division.this = float_source_divisions(division.this);
-            division.expression = float_source_divisions(division.expression);
-            let left = datafusion_numeric_kind(&division.this);
-            let right = datafusion_numeric_kind(&division.expression);
-            let decimal_involved = left == NumericKind::Decimal || right == NumericKind::Decimal;
-            let float_involved = left == NumericKind::Float || right == NumericKind::Float;
-            if decimal_involved && !float_involved {
-                division.this = super::operators::cast_expr(
-                    division.this,
-                    DataType::Double {
-                        precision: None,
-                        scale: None,
-                    },
-                );
-            }
-            let divisor = Expression::Function(Box::new(Function::new(
-                "NULLIF".to_string(),
-                vec![division.expression, Expression::number(0)],
-            )));
-            return Ok(Expression::Div(Box::new(BinaryOp::new(
-                division.this,
-                divisor,
-            ))));
-        }
-
         if kind == NumericKind::Unknown {
-            return Err(crate::error::Error::unsupported(
-                "DuckDB // with unresolved operand types; use explicit numeric casts",
-                target.to_string(),
-            ));
+            return Err(unresolved_division(target));
         }
 
         // NULLIF evaluates the divisor once and preserves NULL on zero for
