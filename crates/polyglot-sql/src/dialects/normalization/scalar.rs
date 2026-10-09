@@ -15738,7 +15738,8 @@ pub(super) fn normalize_bigquery_function(
                 | DialectType::Athena
                 | DialectType::Snowflake
                 | DialectType::TSQL
-                | DialectType::Fabric => {
+                | DialectType::Fabric
+                | DialectType::DataFusion => {
                     let x = args.remove(0);
                     let y = args.remove(0);
                     // Wrap complex expressions in parens to preserve precedence

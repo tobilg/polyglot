@@ -18,6 +18,12 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   expressions retain floating division through functions, casts, and CASE,
   including column operands and user-written `NULLIF` divisors. Numeric casts
   from known fractional operands to integers inside `//` round as in DuckDB.
+- `MOD(a, b)` lowered to the infix `%` operator keeps the call's grouping
+  under arithmetic and unary operators, including nested calls and bitwise
+  arguments. DataFusion, which has no `MOD` function, renders `%` as well.
+- Infix integer division preserves operand grouping, including
+  `100 // MOD(7, 4)` and integer-division functions lowered to `//` or `DIV`.
+- Routine Rust verification now runs the MOD precedence regression suite.
 
 ## [0.13.2] - 2026-10-08
 
