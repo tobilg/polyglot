@@ -79,3 +79,98 @@ fn datafusion_renders_mod_as_percent_with_grouping() {
         );
     }
 }
+
+#[test]
+fn mod_preserves_unary_and_argument_grouping_through_both_lowering_paths() {
+    for source in [DialectType::DuckDB, DialectType::BigQuery] {
+        for target in [DialectType::DuckDB, DialectType::DataFusion] {
+            for (sql, expected) in [
+                ("SELECT 2 * -MOD(5, 3)", "SELECT 2 * -(5 % 3)"),
+                ("SELECT 80.0 / -MOD(7, 4)", "SELECT 80.0 / -(7 % 4)"),
+                ("SELECT -MOD(-7, 4)", "SELECT -(-7 % 4)"),
+                ("SELECT MOD(7, -MOD(9, 4))", "SELECT 7 % -(9 % 4)"),
+                ("SELECT MOD(7 | 8, 4)", "SELECT (7 | 8) % 4"),
+                ("SELECT MOD(7, 4 | 8)", "SELECT 7 % (4 | 8)"),
+                ("SELECT MOD(7 & 3, 2)", "SELECT (7 & 3) % 2"),
+                ("SELECT MOD(7, 1 << 2)", "SELECT 7 % (1 << 2)"),
+                ("SELECT MOD(7, 8 >> 2)", "SELECT 7 % (8 >> 2)"),
+            ] {
+                assert_eq!(
+                    transpile(sql, source, target).unwrap(),
+                    vec![expected],
+                    "{source:?} -> {target:?}: {sql}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mod_under_unary_operators_keeps_function_form_when_supported() {
+    assert_eq!(
+        transpile(
+            "SELECT 2 * -MOD(5, 3)",
+            DialectType::DuckDB,
+            DialectType::Oracle,
+        )
+        .unwrap(),
+        vec!["SELECT 2 * -MOD(5, 3)"],
+    );
+}
+
+#[test]
+fn mod_keeps_grouping_under_bitwise_not() {
+    assert_eq!(
+        transpile(
+            "SELECT ~MOD(7, 4)",
+            DialectType::DuckDB,
+            DialectType::DuckDB,
+        )
+        .unwrap(),
+        vec!["SELECT ~(7 % 4)"],
+    );
+}
+
+#[test]
+fn native_integer_division_groups_mod_operands() {
+    for (sql, expected) in [
+        ("SELECT 100 // MOD(7, 4)", "SELECT 100 // (7 % 4)"),
+        ("SELECT 100 // -MOD(7, 4)", "SELECT 100 // -(7 % 4)"),
+        ("SELECT MOD(7, 4) // 2", "SELECT 7 % 4 // 2"),
+        ("SELECT MOD(7, 9 // 4)", "SELECT 7 % (9 // 4)"),
+        ("SELECT MOD(9 // 4, 2)", "SELECT (9 // 4) % 2"),
+    ] {
+        assert_eq!(
+            transpile(sql, DialectType::DuckDB, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{sql}",
+        );
+    }
+}
+
+#[test]
+fn integer_division_functions_lowered_to_operators_keep_grouping() {
+    for (target, operator) in [
+        (DialectType::DuckDB, "//"),
+        (DialectType::Vertica, "//"),
+        (DialectType::Hive, "DIV"),
+        (DialectType::Spark, "DIV"),
+        (DialectType::Databricks, "DIV"),
+    ] {
+        assert_eq!(
+            transpile("SELECT 2 * DIV(7, 3)", DialectType::BigQuery, target).unwrap(),
+            vec![format!("SELECT 2 * (7 {operator} 3)")],
+            "{target:?}",
+        );
+        let divisor = if target == DialectType::Vertica {
+            "MOD(7, 4)"
+        } else {
+            "(7 % 4)"
+        };
+        assert_eq!(
+            transpile("SELECT DIV(100, MOD(7, 4))", DialectType::BigQuery, target).unwrap(),
+            vec![format!("SELECT 100 {operator} {divisor}")],
+            "{target:?}",
+        );
+    }
+}

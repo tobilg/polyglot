@@ -3476,20 +3476,28 @@ impl Generator {
                     Ok(())
                 } else if is_native_slash_op {
                     // DuckDB and Vertica use // operator for integer division
-                    self.generate_expression(&f.this)?;
+                    self.generate_infix_operand(InfixOperator::Div, &f.this, OperandSide::Left)?;
                     self.write(" // ");
-                    self.generate_expression(&f.expression)?;
+                    self.generate_infix_operand(
+                        InfixOperator::Div,
+                        &f.expression,
+                        OperandSide::Right,
+                    )?;
                     Ok(())
                 } else if matches!(
                     self.config.dialect,
                     Some(DialectType::Hive | DialectType::Spark | DialectType::Databricks)
                 ) {
                     // Hive/Spark use DIV as an infix operator
-                    self.generate_expression(&f.this)?;
+                    self.generate_infix_operand(InfixOperator::Div, &f.this, OperandSide::Left)?;
                     self.write(" ");
                     self.write_keyword("DIV");
                     self.write(" ");
-                    self.generate_expression(&f.expression)?;
+                    self.generate_infix_operand(
+                        InfixOperator::Div,
+                        &f.expression,
+                        OperandSide::Right,
+                    )?;
                     Ok(())
                 } else {
                     // Other dialects use DIV function
@@ -19061,7 +19069,9 @@ impl Generator {
 
         if use_percent_operator {
             // MOD(a, b) treats both arguments as grouped expressions. When
-            // lowering to an infix operator, keep binary arguments grouped.
+            // lowering to an infix operator, keep binary arguments grouped,
+            // including operators introduced when rendering either argument.
+            let dialect = self.config.dialect;
             let needs_paren = |e: &Expression| {
                 matches!(
                     e,
@@ -19071,6 +19081,11 @@ impl Generator {
                         | Expression::Div(_)
                         | Expression::Mod(_)
                         | Expression::ModFunc(_)
+                ) || Self::infix_operand_needs_parentheses(
+                    dialect,
+                    InfixOperator::Mod,
+                    e,
+                    OperandSide::Right,
                 )
             };
             if needs_paren(&f.this) {
@@ -25935,6 +25950,22 @@ impl Generator {
             Expression::ModFunc(_) if Self::mod_func_uses_percent_for(dialect) => {
                 Some(InfixOperator::Mod)
             }
+            // IntDiv is atomic when rendered as a function or CAST, but // and
+            // DIV have the same precedence and associativity as division.
+            Expression::IntDiv(_)
+                if matches!(
+                    dialect,
+                    Some(
+                        DialectType::DuckDB
+                            | DialectType::Vertica
+                            | DialectType::Hive
+                            | DialectType::Spark
+                            | DialectType::Databricks
+                    )
+                ) =>
+            {
+                Some(InfixOperator::Div)
+            }
             Expression::Or(_) => Some(InfixOperator::Or),
             Expression::Xor(_) => Some(InfixOperator::Xor),
             Expression::And(_) => Some(InfixOperator::And),
@@ -25977,6 +26008,21 @@ impl Generator {
     ) -> bool {
         if matches!(child, Expression::Paren(_)) {
             return false;
+        }
+
+        // Bitwise precedence differs between dialects. Group these operands
+        // explicitly when emitting arithmetic, including a lowered MOD call.
+        if parent.is_arithmetic()
+            && matches!(
+                child,
+                Expression::BitwiseAnd(_)
+                    | Expression::BitwiseOr(_)
+                    | Expression::BitwiseXor(_)
+                    | Expression::BitwiseLeftShift(_)
+                    | Expression::BitwiseRightShift(_)
+            )
+        {
+            return true;
         }
 
         let Some(child_operator) = Self::infix_operator(dialect, child) else {
@@ -26295,7 +26341,18 @@ impl Generator {
                 self.write_space();
             }
         }
-        self.generate_expression(&op.this)
+        // Function-like AST nodes such as MOD and DIV can render as infix
+        // operators. Preserve their grouping under a symbolic unary operator.
+        let needs_parens = matches!(operator, "-" | "~")
+            && Self::infix_operator(self.config.dialect, &op.this).is_some();
+        if needs_parens {
+            self.write("(");
+        }
+        self.generate_expression(&op.this)?;
+        if needs_parens {
+            self.write(")");
+        }
+        Ok(())
     }
 
     fn generate_in(&mut self, in_expr: &In) -> Result<()> {

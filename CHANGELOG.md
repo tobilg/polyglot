@@ -9,9 +9,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ### Fixed
 
 - `MOD(a, b)` lowered to the infix `%` operator keeps the call's grouping
-  when it is an operand of another operator (`2 * MOD(5, 3)` is now
-  `2 * (5 % 3)`, not `2 * 5 % 3`). DataFusion, which has no `MOD` function,
-  renders `%` as well.
+  under arithmetic and unary operators, including nested calls and bitwise
+  arguments. DataFusion, which has no `MOD` function, renders `%` as well.
+- Infix integer division preserves operand grouping, including
+  `100 // MOD(7, 4)` and integer-division functions lowered to `//` or `DIV`.
+- Routine Rust verification now runs the MOD precedence regression suite.
 
 ## [0.13.2] - 2026-10-08
 
