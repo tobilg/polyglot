@@ -2915,6 +2915,7 @@ impl Generator {
             Expression::ApproxDistinct(f) => {
                 match self.config.dialect {
                     Some(DialectType::Vertica) => self.generate_vertica_approximate_count(f),
+                    Some(DialectType::Impala) => self.generate_agg_func("NDV", f),
                     Some(DialectType::Hive)
                     | Some(DialectType::Spark)
                     | Some(DialectType::Databricks)
@@ -6988,6 +6989,13 @@ impl Generator {
                 }
             }
         } else {
+            if self.config.dialect == Some(DialectType::Impala) {
+                if let Some(hint) = &join.join_hint {
+                    self.write(" [");
+                    self.write(hint);
+                    self.write("]");
+                }
+            }
             self.write_space();
             self.generate_expression(&join.this)?;
         }
@@ -8303,7 +8311,14 @@ impl Generator {
             return Ok(());
         }
 
-        if insert.is_replace {
+        if insert.is_upsert {
+            self.write_keyword("UPSERT");
+            if let Some(ref hint) = insert.hint {
+                self.generate_hint(hint)?;
+            }
+            self.write_space();
+            self.write_keyword("INTO");
+        } else if insert.is_replace {
             // MySQL/SQLite REPLACE INTO statement
             self.write_keyword("REPLACE INTO");
         } else if insert.overwrite {
@@ -8341,6 +8356,17 @@ impl Generator {
             self.generate_expression(func)?;
         } else {
             self.write_space();
+            if self.config.dialect == Some(DialectType::Impala) && !insert.overwrite {
+                let write_table = if insert.is_upsert {
+                    insert.explicit_table_keyword
+                } else {
+                    true
+                };
+                if write_table {
+                    self.write_keyword("TABLE");
+                    self.write_space();
+                }
+            }
             self.generate_table(&insert.table)?;
         }
 
@@ -8444,7 +8470,10 @@ impl Generator {
             self.write_space();
             self.write_keyword("DEFAULT VALUES");
         } else if let Some(query) = &insert.query {
-            if self.config.pretty {
+            if let Some(hint) = &insert.query_hint {
+                self.generate_hint(hint)?;
+                self.write_space();
+            } else if self.config.pretty {
                 self.write_newline();
             } else {
                 self.write_space();
@@ -9548,6 +9577,7 @@ impl Generator {
                 let is_hive_dialect = matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::Hive)
+                        | Some(crate::dialects::DialectType::Impala)
                         | Some(crate::dialects::DialectType::Spark)
                         | Some(crate::dialects::DialectType::Databricks)
                         | Some(crate::dialects::DialectType::Athena)
@@ -17814,6 +17844,18 @@ impl Generator {
 
     /// Generate a query hint /*+ ... */
     fn generate_hint(&mut self, hint: &Hint) -> Result<()> {
+        if hint.source_dialect == Some(DialectType::Impala) {
+            if self.config.dialect != Some(DialectType::Impala) {
+                return Ok(());
+            }
+            for expression in &hint.expressions {
+                let text = self.hint_expression_to_string(expression)?;
+                self.write(" [");
+                self.write(&text);
+                self.write("]");
+            }
+            return Ok(());
+        }
         if hint.source_dialect.is_some() {
             if hint.source_dialect != self.config.dialect {
                 return Err(self.hana_unsupported("Optimizer hint has no verified target mapping"));
@@ -22491,6 +22533,7 @@ impl Generator {
                 | Some(DialectType::Spark)
                 | Some(DialectType::Hive)
                 | Some(DialectType::Databricks)
+                | Some(DialectType::Impala)
         ) && f.flags.is_none()
         {
             // SingleStore/Spark/Hive/Databricks use RLIKE infix operator
@@ -38807,6 +38850,12 @@ impl Generator {
 
     fn generate_regexp_i_like(&mut self, e: &RegexpILike) -> Result<()> {
         use crate::dialects::DialectType;
+        if self.config.dialect == Some(DialectType::Impala) && e.flag.is_none() {
+            self.generate_expression(&e.this)?;
+            self.write_keyword(" IREGEXP ");
+            self.generate_expression(&e.expression)?;
+            return Ok(());
+        }
         // PostgreSQL/Redshift uses ~* operator for case-insensitive regex matching
         if matches!(
             self.config.dialect,
@@ -39941,14 +39990,22 @@ impl Generator {
     }
 
     fn generate_sort_by(&mut self, e: &SortBy) -> Result<()> {
-        // SORT BY expressions
+        // SORT BY expressions. Impala writes this as a parenthesized table clause.
         self.write_keyword("SORT BY");
-        self.write_space();
+        let parenthesized = self.config.dialect == Some(DialectType::Impala);
+        if parenthesized {
+            self.write(" (");
+        } else {
+            self.write_space();
+        }
         for (i, expr) in e.expressions.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
             self.generate_ordered(expr)?;
+        }
+        if parenthesized {
+            self.write(")");
         }
         Ok(())
     }

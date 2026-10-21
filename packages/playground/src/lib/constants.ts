@@ -15,6 +15,7 @@ export const DIALECT_DISPLAY_NAMES: Record<string, string> = {
   fabric: "Microsoft Fabric",
   hana: "SAP HANA",
   hive: "Apache Hive",
+  impala: "Apache Impala",
   materialize: "Materialize",
   mysql: "MySQL",
   oracle: "Oracle",

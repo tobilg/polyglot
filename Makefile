@@ -252,6 +252,9 @@ test-rust-feature-gates:
 	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-tsql
 	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-fabric
 	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-vertica
+	cargo check -p polyglot-sql --no-default-features --features dialect-impala
+	cargo check -p polyglot-sql --no-default-features --features generate,dialect-impala
+	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-impala
 	cargo check -p polyglot-sql --no-default-features --features dialect-snowflake
 	cargo check -p polyglot-sql --no-default-features --features generate,dialect-snowflake
 	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-snowflake

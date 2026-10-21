@@ -74,7 +74,7 @@ all-dialects = [
     "dialect-druid", "dialect-solr", "dialect-tableau",
     "dialect-dune", "dialect-fabric", "dialect-drill",
     "dialect-dremio", "dialect-exasol", "dialect-datafusion", "dialect-hana",
-    "dialect-vertica",
+    "dialect-vertica", "dialect-impala",
 ]
 dialect-postgresql = ["polyglot-sql/dialect-postgresql"]
 dialect-mysql = ["polyglot-sql/dialect-mysql"]
@@ -85,6 +85,7 @@ dialect-tsql = ["polyglot-sql/dialect-tsql"]
 dialect-clickhouse = ["polyglot-sql/dialect-clickhouse"]
 dialect-oracle = ["polyglot-sql/dialect-oracle"]
 dialect-hive = ["polyglot-sql/dialect-hive"]
+dialect-impala = ["polyglot-sql/dialect-impala"]
 dialect-spark = ["polyglot-sql/dialect-spark"]
 dialect-sqlite = ["polyglot-sql/dialect-sqlite"]
 dialect-presto = ["polyglot-sql/dialect-presto"]

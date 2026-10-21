@@ -33,12 +33,12 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 |---|---|---|---|---|
 | Athena | BigQuery | ClickHouse | CockroachDB | Databricks |
 | Doris | Dremio | Drill | Druid | DuckDB |
-| Dune | Exasol | Fabric | Hive | Materialize |
+| Dune | Exasol | Fabric | Hive | Impala |
 | MySQL | Oracle | PostgreSQL | Presto | Redshift |
 | RisingWave | SingleStore | Snowflake | Solr | Spark |
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
 | Trino | TSQL | Vertica | DataFusion | SAP HANA |
-| Generic SQL | | | | |
+| Generic SQL | Materialize | | | |
 
 ## Quick Start
 

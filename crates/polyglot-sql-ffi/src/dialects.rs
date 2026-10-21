@@ -12,6 +12,7 @@ const DIALECTS: &[DialectType] = &[
     DialectType::DuckDB,
     DialectType::SQLite,
     DialectType::Hive,
+    DialectType::Impala,
     DialectType::Spark,
     DialectType::Trino,
     DialectType::Presto,

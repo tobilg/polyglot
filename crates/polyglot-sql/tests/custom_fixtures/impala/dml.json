@@ -1,0 +1,107 @@
+{
+  "category": "dml",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT INTO TABLE t (a, b) VALUES (1, 'x'), (2, 'y')"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT INTO TABLE t SELECT * FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT OVERWRITE TABLE t SELECT * FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT OR IGNORE INTO TABLE t SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT OVERWRITE DIRECTORY '/tmp/out' SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT [SHUFFLE] INTO TABLE t SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INSERT INTO TABLE t [NOSHUFFLE] SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "UPSERT INTO TABLE t VALUES (1)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "UPSERT [NOSHUFFLE] INTO TABLE t SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_table_keyword_is_added",
+      "expected": "INSERT INTO TABLE t VALUES (1, 'a')",
+      "sql": "INSERT INTO t VALUES (1, 'a')"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "INSERT INTO TABLE t PARTITION(dt = '2026-01-01') SELECT id FROM t2",
+      "sql": "INSERT INTO TABLE t PARTITION (dt='2026-01-01') SELECT id FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "INSERT INTO TABLE t PARTITION(dt) SELECT id, dt FROM t2",
+      "sql": "INSERT INTO TABLE t PARTITION (dt) SELECT id, dt FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DELETE FROM t WHERE id = 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DELETE t FROM t JOIN t2 ON t.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "LOAD DATA INPATH '/user/x' OVERWRITE INTO TABLE t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_load_data_partition_spacing",
+      "expected": "LOAD DATA INPATH '/user/x' INTO TABLE t PARTITION(dt = '2026-01-01')",
+      "sql": "LOAD DATA INPATH '/user/x' INTO TABLE t PARTITION (dt='2026-01-01')"
+    },
+    {
+      "description": "test_generator.py:test_dml",
+      "sql": "INSERT OVERWRITE TABLE db.t1 SELECT id FROM db.t4"
+    },
+    {
+      "description": "test_generator.py:test_dml",
+      "sql": "INSERT OR IGNORE INTO TABLE db.t1 SELECT id FROM db.staging"
+    },
+    {
+      "description": "test_generator.py:test_dml",
+      "sql": "INSERT OVERWRITE DIRECTORY '/tmp/out' SELECT id FROM db.t4"
+    },
+    {
+      "description": "test_generator.py:test_dml",
+      "sql": "UPSERT [NOSHUFFLE] INTO TABLE t (c) VALUES (1)"
+    },
+    {
+      "description": "test_generator.py:test_dml",
+      "sql": "UPSERT INTO TABLE t [SHUFFLE] SELECT 1"
+    },
+    {
+      "description": "test_generator.py:test_upsert_node",
+      "sql": "UPSERT INTO TABLE operational.t (c) VALUES (1)"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#15",
+      "sql": "GRANT INSERT, ALTER ON DATABASE analytics TO ROLE data_scientist"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#42",
+      "sql": "DELETE FROM operational.user_profiles WHERE user_id = 1003"
+    }
+  ],
+  "transpilation": []
+}

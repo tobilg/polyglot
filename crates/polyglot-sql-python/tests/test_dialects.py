@@ -19,6 +19,7 @@ EXPECTED_DIALECTS = {
     "generic",
     "hana",
     "hive",
+    "impala",
     "materialize",
     "mysql",
     "oracle",

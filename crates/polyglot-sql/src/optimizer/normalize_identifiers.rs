@@ -48,6 +48,7 @@ pub fn get_normalization_strategy(dialect: Option<DialectType>) -> Normalization
         | Some(DialectType::Presto)
         | Some(DialectType::Trino)
         | Some(DialectType::Hive)
+        | Some(DialectType::Impala)
         | Some(DialectType::Spark)
         | Some(DialectType::Databricks)
         | Some(DialectType::Redshift) => NormalizationStrategy::CaseInsensitive,

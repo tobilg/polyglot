@@ -1,0 +1,291 @@
+{
+  "category": "ddl",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_create_table.py:test_key_constraint_options_round_trip",
+      "sql": "CREATE TABLE t (pkey INT PRIMARY KEY)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE DATABASE db1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE SCHEMA IF NOT EXISTS s1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE IF NOT EXISTS db.t (id INT COMMENT 'pk', v STRING) COMMENT 'tbl'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE EXTERNAL TABLE db.t (id INT) LOCATION '/data/t'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) PARTITIONED BY (year INT, month INT)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) SORT BY (id)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS PARQUET"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS TEXTFILE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS AVRO"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS ORC"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS RCFILE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) STORED AS SEQUENCEFILE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT) TBLPROPERTIES ('k'='v')"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t LIKE t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t STORED AS PARQUET AS SELECT id FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_column_types_unchanged",
+      "sql": "CREATE TABLE t (a TINYINT, b SMALLINT, c INT, d BIGINT, e BOOLEAN, f FLOAT, g DOUBLE)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_column_types_unchanged",
+      "sql": "CREATE TABLE t (a DECIMAL(10, 2), b STRING, c CHAR(10), d VARCHAR(32), e TIMESTAMP, f DATE, g BINARY)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_column_types_unchanged",
+      "sql": "CREATE TABLE t (a ARRAY<INT>, b MAP<STRING, INT>, c STRUCT<x: INT, y: STRING>)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE VIEW v AS SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE AGGREGATE FUNCTION db.a(BIGINT) RETURNS BIGINT INTERMEDIATE STRING LOCATION '/x.so' INIT_FN='i' UPDATE_FN='u' MERGE_FN='m' SERIALIZE_FN='s' FINALIZE_FN='f'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE ROLE r1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t RENAME TO db2.t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t ADD COLUMNS (c INT)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t ADD COLUMN IF NOT EXISTS c INT"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t DROP COLUMN c"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t CHANGE COLUMN c1 c2 STRING COMMENT 'x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t ALTER COLUMN c DROP DEFAULT"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_change_column_keyword_is_added",
+      "expected": "ALTER TABLE t CHANGE COLUMN c1 c2 STRING",
+      "sql": "ALTER TABLE t CHANGE c1 c2 STRING"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "ALTER TABLE t ADD PARTITION(dt = '2026-01-01')",
+      "sql": "ALTER TABLE t ADD PARTITION (dt='2026-01-01')"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "ALTER TABLE t DROP IF EXISTS PARTITION(dt = '2026-01-01')",
+      "sql": "ALTER TABLE t DROP IF EXISTS PARTITION (dt='2026-01-01')"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER VIEW v AS SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER VIEW db.v RENAME TO db.v2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DROP SCHEMA s"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DROP TABLE t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DROP TABLE IF EXISTS db.t PURGE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DROP VIEW IF EXISTS v"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "TRUNCATE TABLE IF EXISTS db.t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_signature_spacing",
+      "expected": "DROP FUNCTION db.f (INT)",
+      "sql": "DROP FUNCTION db.f(INT)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DROP FUNCTION IF EXISTS db.f"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE AGGREGATE FUNCTION db.f(BIGINT) RETURNS BIGINT LOCATION '/x.so' UPDATE_FN='u' CLOSE_FN='c'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW CREATE TABLE t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW CREATE VIEW v"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE ALTER ON DATABASE db FROM ROLE r CASCADE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE ALTER ON DATABASE db FROM ROLE r RESTRICT"
+    },
+    {
+      "description": "test_generator.py:test_show_statements",
+      "sql": "SHOW CREATE TABLE db.t4"
+    },
+    {
+      "description": "test_generator.py:test_show_statements",
+      "sql": "SHOW CREATE VIEW db.v1"
+    },
+    {
+      "description": "test_generator.py:test_revoke",
+      "sql": "REVOKE ALTER ON DATABASE analytics FROM ROLE data_scientist"
+    },
+    {
+      "description": "test_generator.py:test_revoke",
+      "sql": "REVOKE ALTER ON DATABASE analytics FROM ROLE data_scientist CASCADE"
+    },
+    {
+      "description": "test_generator.py:test_revoke",
+      "sql": "REVOKE ALTER ON DATABASE analytics FROM ROLE data_scientist RESTRICT"
+    },
+    {
+      "description": "test_generator.py:test_create",
+      "sql": "CREATE AGGREGATE FUNCTION hr.myagg(BIGINT) RETURNS STRING INTERMEDIATE STRING LOCATION '/path.so' INIT_FN='i' UPDATE_FN='u' MERGE_FN='m'"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP TABLE mytable"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP TABLE IF EXISTS mytable"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP TABLE IF EXISTS data_lake.telemetry_events"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP TABLE IF EXISTS db.t1 PURGE"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP VIEW IF EXISTS analytics.v_active_users"
+    },
+    {
+      "description": "test_generator.py:test_drop_ddl",
+      "sql": "DROP SCHEMA IF EXISTS s"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#61",
+      "sql": "SHOW CREATE TABLE analytics.clickstream"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#62",
+      "sql": "SHOW CREATE VIEW analytics.v_active_users"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#75",
+      "sql": "DROP TABLE IF EXISTS data_lake.telemetry_metadata_bak"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#76",
+      "sql": "DROP TABLE IF EXISTS operational.user_profiles"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#77",
+      "sql": "DROP TABLE IF EXISTS analytics.clickstream"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#78",
+      "sql": "DROP TABLE IF EXISTS analytics.cdc_stream"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#79",
+      "sql": "DROP TABLE IF EXISTS warehouse.reporting_summary"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#81",
+      "sql": "DROP DATABASE IF EXISTS data_lake"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#82",
+      "sql": "DROP DATABASE IF EXISTS operational"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#83",
+      "sql": "DROP DATABASE IF EXISTS analytics"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#84",
+      "sql": "DROP DATABASE IF EXISTS warehouse"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#85",
+      "sql": "DROP DATABASE IF EXISTS hr"
+    }
+  ],
+  "transpilation": []
+}

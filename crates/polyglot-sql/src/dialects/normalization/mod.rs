@@ -101,6 +101,12 @@ pub(super) fn normalize(
         {
             return Ok(e);
         }
+        #[cfg(feature = "dialect-impala")]
+        let e = if source == DialectType::Impala && target != DialectType::Impala {
+            super::impala::rewrite_outgoing(e, target)
+        } else {
+            e
+        };
         let e = if matches!(source, DialectType::Vertica) && !matches!(target, DialectType::Vertica)
         {
             vertica::normalize_from_vertica(e, target)?

@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Apache Impala dialect support across Rust, TypeScript/WASM, Python, and FFI.
+  Impala keeps Hive's identifier and string rules without numeric literal
+  suffixes, and it generates native `ILIKE`, `IREGEXP`, `RLIKE`, `NDV`, and
+  `INSERT INTO TABLE` / `UPSERT` spelling. Bracket hints such as `[SHUFFLE]`
+  stay on Impala output and are dropped for other targets.
+
 ## [0.13.3] - 2026-10-09
 
 ### Added

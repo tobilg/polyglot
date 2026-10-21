@@ -1,0 +1,153 @@
+{
+  "category": "admin",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t ALTER COLUMN c SET DEFAULT 10"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "ALTER TABLE t PARTITION(dt = '2026-01-01') SET LOCATION '/p'",
+      "sql": "ALTER TABLE t PARTITION (dt='2026-01-01') SET LOCATION '/p'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_partition_spec",
+      "expected": "ALTER TABLE t PARTITION(dt = '2026-01-01') SET FILEFORMAT PARQUET",
+      "sql": "ALTER TABLE t PARTITION (dt='2026-01-01') SET FILEFORMAT PARQUET"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET FILEFORMAT PARQUET"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET LOCATION '/p'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET ROW FORMAT DELIMITED FIELDS TERMINATED BY ','"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET OWNER USER u"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET OWNER ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER TABLE t SET UNCACHED"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "ALTER DATABASE db SET OWNER ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMPUTE STATS t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMPUTE STATS t (a, b)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMPUTE STATS t TABLESAMPLE SYSTEM(10) REPEATABLE(1234)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMPUTE INCREMENTAL STATS t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INVALIDATE METADATA"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "INVALIDATE METADATA db.t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "REFRESH db.t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "REFRESH AUTHORIZATION"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "REFRESH FUNCTIONS db"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "UPDATE t SET a = 1, b = 'x' WHERE id > 0"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t ORDER BY a DESC NULLS LAST LIMIT 10 OFFSET 5"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SET ALL"
+    },
+    {
+      "description": "test_generator.py:test_exact",
+      "sql": "REFRESH FUNCTIONS data_lake"
+    },
+    {
+      "description": "test_generator.py:test_exact",
+      "sql": "REFRESH db.t4"
+    },
+    {
+      "description": "test_generator.py:test_exact",
+      "sql": "INVALIDATE METADATA db.t4"
+    },
+    {
+      "description": "test_generator.py:test_compute_and_drop_stats",
+      "sql": "COMPUTE STATS db.t4"
+    },
+    {
+      "description": "test_generator.py:test_compute_and_drop_stats",
+      "sql": "COMPUTE STATS db.t4 (id, v)"
+    },
+    {
+      "description": "test_generator.py:test_compute_and_drop_stats",
+      "sql": "COMPUTE STATS db.t4 TABLESAMPLE SYSTEM(10)"
+    },
+    {
+      "description": "test_generator.py:test_compute_and_drop_stats",
+      "sql": "COMPUTE STATS db.t4 TABLESAMPLE SYSTEM(10) REPEATABLE(1234)"
+    },
+    {
+      "description": "test_generator.py:test_alter",
+      "sql": "ALTER TABLE db.t4 SET OWNER ROLE data_scientist"
+    },
+    {
+      "description": "test_generator.py:test_alter",
+      "sql": "ALTER TABLE db.t4 SET OWNER USER analyst"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#29",
+      "sql": "ALTER TABLE data_lake.telemetry_metadata_bak SET LOCATION '/tmp/altered_metadata_bak'"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#46",
+      "sql": "COMPUTE INCREMENTAL STATS data_lake.telemetry_events PARTITION (year=2026, month=6, day=18)"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#49",
+      "sql": "REFRESH data_lake.telemetry_events PARTITION (year=2026, month=6, day=18)"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#51",
+      "sql": "REFRESH FUNCTIONS"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#52",
+      "sql": "INVALIDATE METADATA operational.user_profiles"
+    }
+  ],
+  "transpilation": []
+}

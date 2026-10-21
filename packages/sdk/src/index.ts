@@ -23,6 +23,7 @@ export enum Dialect {
   DuckDB = 'duckdb',
   SQLite = 'sqlite',
   Hive = 'hive',
+  Impala = 'impala',
   Spark = 'spark',
   Trino = 'trino',
   Presto = 'presto',

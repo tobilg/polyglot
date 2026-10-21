@@ -1257,6 +1257,14 @@ impl Parser {
         {
             return self.parse_hana_upsert();
         }
+        if self.is_impala() && self.check_identifier("UPSERT") {
+            return self.parse_insert();
+        }
+        if self.is_impala()
+            && (self.check_identifier("COMPUTE") || self.check_identifier("INVALIDATE"))
+        {
+            return self.fallback_to_command(statement_start);
+        }
 
         match self.peek().token_type {
             // Handle hint comment /*+ ... */ before a statement - convert to regular comment
@@ -1427,6 +1435,7 @@ impl Parser {
             TokenType::Use => self.parse_use(),
             TokenType::Cache => self.parse_cache(),
             TokenType::Uncache => self.parse_uncache(),
+            TokenType::Refresh if self.is_impala() => self.fallback_to_command(statement_start),
             TokenType::Refresh => {
                 self.skip(); // consume REFRESH
                 self.parse_refresh()?
@@ -1457,6 +1466,7 @@ impl Parser {
             {
                 self.fallback_to_command(statement_start)
             }
+            TokenType::Set if self.is_impala() => self.fallback_to_command(statement_start),
             TokenType::Set => self.parse_set(),
             TokenType::Database
                 if matches!(
@@ -2370,12 +2380,18 @@ impl Parser {
         let leading_comments = select_token.comments;
         let post_select_comments = select_token.trailing_comments;
 
-        // Parse query hint /*+ ... */ if present (comes immediately after SELECT)
-        let hint = if self.check(TokenType::Hint) {
+        // Parse query hint /*+ ... */ if present (comes immediately after SELECT).
+        // Impala bracket hints (`SELECT [SHUFFLE] a`) use the same slot.
+        let mut hint = if self.check(TokenType::Hint) {
             Some(self.parse_hint()?)
         } else {
             None
         };
+        if hint.is_none() {
+            if let Some(name) = self.parse_impala_bracket_name(true)? {
+                hint = Some(self.impala_hint(name));
+            }
+        }
 
         // Parse TOP clause (SQL Server style - comes before DISTINCT)
         // But not if TOP is followed by DOT (e.g., SELECT top.x - top is a table alias)
@@ -2505,7 +2521,7 @@ impl Parser {
                 | Some(crate::dialects::DialectType::TiDB)
                 | Some(crate::dialects::DialectType::Doris)
         );
-        if is_mysql_dialect {
+        if is_mysql_dialect || self.is_impala() {
             const MYSQL_MODIFIERS: &[&str] = &[
                 "HIGH_PRIORITY",
                 "STRAIGHT_JOIN",
@@ -2519,7 +2535,7 @@ impl Parser {
                 if self.check(TokenType::StraightJoin) {
                     self.skip();
                     operation_modifiers.push("STRAIGHT_JOIN".to_string());
-                } else if self.check(TokenType::Var) {
+                } else if is_mysql_dialect && self.check(TokenType::Var) {
                     let upper = self.peek_text().to_ascii_uppercase();
                     if MYSQL_MODIFIERS.contains(&upper.as_str()) {
                         self.skip();
@@ -2842,22 +2858,27 @@ impl Parser {
             false
         };
 
-        // Parse DISTRIBUTE BY (Hive/Spark) - comes before SORT BY
-        let distribute_by = if self.match_keywords(&[TokenType::Distribute, TokenType::By]) {
+        // Parse DISTRIBUTE BY (Hive/Spark) - comes before SORT BY.
+        // Impala uses these names on CREATE TABLE, not as query clauses.
+        let distribute_by = if !self.is_impala()
+            && self.match_keywords(&[TokenType::Distribute, TokenType::By])
+        {
             Some(self.parse_distribute_by()?)
         } else {
             None
         };
 
-        // Parse CLUSTER BY (Hive/Spark)
-        let cluster_by = if self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
+        // Parse CLUSTER BY (Hive/Spark). Not a query clause in Impala.
+        let cluster_by = if !self.is_impala() && self.match_keywords(&[TokenType::Cluster, TokenType::By])
+        {
             Some(self.parse_cluster_by()?)
         } else {
             None
         };
 
-        // Parse SORT BY (Hive/Spark) - can come before ORDER BY
-        let sort_by = if self.match_keywords(&[TokenType::Sort, TokenType::By]) {
+        // Parse SORT BY (Hive/Spark) - can come before ORDER BY.
+        // Impala SORT BY belongs to CREATE TABLE, not to a query.
+        let sort_by = if !self.is_impala() && self.match_keywords(&[TokenType::Sort, TokenType::By]) {
             Some(self.parse_sort_by()?)
         } else {
             None
@@ -3071,6 +3092,26 @@ impl Parser {
             exclude,
             into,
         } = *head;
+        let mut operation_modifiers = operation_modifiers;
+        let mut joins = joins;
+        if self.is_impala() {
+            // `t1 STRAIGHT_JOIN t2` is generated as a select modifier plus JOIN.
+            let mut saw_straight = false;
+            for join in &mut joins {
+                if join.kind == JoinKind::Straight {
+                    saw_straight = true;
+                    join.kind = JoinKind::Inner;
+                    join.use_inner_keyword = false;
+                }
+            }
+            if saw_straight
+                && !operation_modifiers
+                    .iter()
+                    .any(|modifier| modifier.eq_ignore_ascii_case("STRAIGHT_JOIN"))
+            {
+                operation_modifiers.insert(0, "STRAIGHT_JOIN".to_string());
+            }
+        }
 
         if self.is_vertica()
             && match_clause.is_some()
@@ -4057,6 +4098,7 @@ impl Parser {
                                 self.config.dialect,
                                 Some(crate::dialects::DialectType::Spark)
                                     | Some(crate::dialects::DialectType::Hive)
+                                    | Some(crate::dialects::DialectType::Impala)
                             ))
                     )
                     // GROUP BY / ORDER BY are clause boundaries, not aliases.
@@ -7915,6 +7957,11 @@ impl Parser {
                 if needs_join_keyword {
                     self.expect(TokenType::Join)?;
                 }
+                let join_hint = if join_hint.is_none() {
+                    self.parse_impala_bracket_name(false)?.or(join_hint)
+                } else {
+                    join_hint
+                };
 
                 // ClickHouse: ARRAY JOIN uses expressions, not table references
                 let table = if matches!(kind, JoinKind::Array | JoinKind::LeftArray) {
@@ -9056,16 +9103,21 @@ impl Parser {
 
     /// Parse modifiers following a parenthesized query without changing its inner scope.
     fn parse_query_modifiers(&mut self, inner: Expression) -> Result<Expression> {
-        // Parse DISTRIBUTE BY (Hive/Spark)
-        let distribute_by = if self.match_keywords(&[TokenType::Distribute, TokenType::By]) {
+        // Parse DISTRIBUTE BY (Hive/Spark). Impala does not use this as a query clause.
+        let distribute_by = if !self.is_impala()
+            && self.match_keywords(&[TokenType::Distribute, TokenType::By])
+        {
             let exprs = self.parse_expression_list()?;
             Some(DistributeBy { expressions: exprs })
         } else {
             None
         };
 
-        // Parse SORT BY (Hive/Spark) or CLUSTER BY (Hive/Spark)
-        let (sort_by, cluster_by) = if self.match_keywords(&[TokenType::Sort, TokenType::By]) {
+        // Parse SORT BY (Hive/Spark) or CLUSTER BY (Hive/Spark).
+        // Impala rejects both as query clauses.
+        let (sort_by, cluster_by) = if !self.is_impala()
+            && self.match_keywords(&[TokenType::Sort, TokenType::By])
+        {
             // SORT BY
             let mut orders = Vec::new();
             loop {
@@ -9084,7 +9136,7 @@ impl Parser {
                 }),
                 None,
             )
-        } else if self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
+        } else if !self.is_impala() && self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
             // CLUSTER BY
             let mut orders = Vec::new();
             loop {
@@ -11085,6 +11137,15 @@ impl Parser {
     fn parse_lateral_views(&mut self) -> Result<Vec<LateralView>> {
         let mut views = Vec::new();
 
+        if self.is_impala()
+            && self.check(TokenType::Lateral)
+            && self
+                .peek_nth(1)
+                .is_some_and(|token| token.token_type == TokenType::View)
+        {
+            return Err(self.parse_error("LATERAL VIEW is not valid Impala syntax"));
+        }
+
         while self.match_keywords(&[TokenType::Lateral, TokenType::View]) {
             // Check for OUTER keyword
             let outer = self.match_token(TokenType::Outer);
@@ -12214,16 +12275,27 @@ impl Parser {
     /// Parse INSERT statement
     fn parse_insert(&mut self) -> Result<Expression> {
         let insert_start_index = self.current;
-        let insert_token = self.expect(TokenType::Insert)?;
+        let is_upsert = self.is_impala() && self.check_identifier("UPSERT");
+        let insert_token = if is_upsert {
+            self.advance()?
+        } else {
+            self.expect(TokenType::Insert)?
+        };
         let insert_start_span = insert_token.span.start;
         let leading_comments = insert_token.comments;
 
         // Parse query hint /*+ ... */ if present (Oracle: INSERT /*+ APPEND */ INTO ...)
-        let hint = if self.check(TokenType::Hint) {
+        // Impala: INSERT [SHUFFLE] INTO ... / UPSERT [NOSHUFFLE] INTO ...
+        let mut hint = if self.check(TokenType::Hint) {
             Some(self.parse_hint()?)
         } else {
             None
         };
+        if hint.is_none() {
+            if let Some(name) = self.parse_impala_bracket_name(true)? {
+                hint = Some(self.impala_hint(name));
+            }
+        }
 
         // Handle SQLite conflict action: INSERT OR ABORT|FAIL|IGNORE|REPLACE|ROLLBACK INTO
         let conflict_action = if self.match_token(TokenType::Or) {
@@ -12358,6 +12430,9 @@ impl Parser {
                 by_name: false,
                 conflict_action: conflict_action.clone(),
                 is_replace: false,
+                is_upsert,
+                explicit_table_keyword: false,
+                query_hint: None,
                 replace_where: None,
                 source: None,
                 hint: hint.clone(),
@@ -12367,15 +12442,15 @@ impl Parser {
             })));
         }
 
-        if overwrite {
+        let explicit_table_keyword = if overwrite {
             // OVERWRITE can be followed by INTO (Snowflake) or TABLE (Hive/Spark)
             self.match_token(TokenType::Into);
-            self.match_token(TokenType::Table);
+            self.match_token(TokenType::Table)
         } else {
             self.expect(TokenType::Into)?;
-            // Optional TABLE keyword after INTO
-            self.match_token(TokenType::Table);
-        }
+            // Optional TABLE keyword after INTO (`INSERT INTO TABLE t`, `UPSERT INTO TABLE t`)
+            self.match_token(TokenType::Table)
+        };
 
         // ClickHouse: INSERT INTO [TABLE] FUNCTION func_name(args...)
         let mut function_target: Option<Box<Expression>> = None;
@@ -12645,6 +12720,12 @@ impl Parser {
 
         // Check for BY NAME (DuckDB): INSERT INTO x BY NAME SELECT ...
         let by_name = self.match_token(TokenType::By) && self.match_identifier("NAME");
+        // Impala: INSERT INTO TABLE t [SHUFFLE] SELECT ...
+        let query_hint = if let Some(name) = self.parse_impala_bracket_name(true)? {
+            Some(self.impala_hint(name))
+        } else {
+            None
+        };
 
         // Check for DEFAULT VALUES (PostgreSQL)
         let default_values =
@@ -12947,6 +13028,9 @@ impl Parser {
             by_name,
             conflict_action,
             is_replace: false,
+            is_upsert,
+            explicit_table_keyword,
+            query_hint,
             replace_where,
             source: source.map(Box::new),
             hint,
@@ -13238,6 +13322,9 @@ impl Parser {
             by_name: false,
             conflict_action: None,
             is_replace: true,
+            is_upsert: false,
+            explicit_table_keyword: false,
+            query_hint: None,
             replace_where: None,
             source: None,
             hint: None,
@@ -19138,6 +19225,15 @@ impl Parser {
                         }))),
                     },
                 )));
+                continue;
+            }
+
+            // Impala CREATE TABLE clause. Not a query clause.
+            if self.is_impala() && self.match_keywords(&[TokenType::Sort, TokenType::By]) {
+                self.expect(TokenType::LParen)?;
+                let sort_by = self.parse_sort_by()?;
+                self.expect(TokenType::RParen)?;
+                properties.push(Expression::SortBy(Box::new(sort_by)));
                 continue;
             }
 
@@ -36801,11 +36897,47 @@ impl Parser {
                 | Some(crate::dialects::DialectType::TSQL)
                 | Some(crate::dialects::DialectType::ClickHouse)
                 | Some(crate::dialects::DialectType::Hive)
+                | Some(crate::dialects::DialectType::Impala)
                 | Some(crate::dialects::DialectType::Spark)
                 | Some(crate::dialects::DialectType::Databricks)
                 | Some(crate::dialects::DialectType::Drill)
                 | Some(crate::dialects::DialectType::Dremio)
         )
+    }
+
+    fn is_impala(&self) -> bool {
+        self.config.dialect == Some(crate::dialects::DialectType::Impala)
+    }
+
+    /// `[SHUFFLE]` / `[NOSHUFFLE]` / `[BROADCAST]`. Join rejects NOSHUFFLE.
+    fn parse_impala_bracket_name(&mut self, allow_noshuffle: bool) -> Result<Option<String>> {
+        if !self.is_impala() || !self.check(TokenType::LBracket) {
+            return Ok(None);
+        }
+        let saved = self.current;
+        self.skip();
+        let name = if self.check(TokenType::Var) || self.check(TokenType::Identifier) {
+            self.advance_text()?
+        } else {
+            self.current = saved;
+            return Ok(None);
+        };
+        if !self.match_token(TokenType::RBracket) {
+            self.current = saved;
+            return Ok(None);
+        }
+        let name = name.to_ascii_uppercase();
+        if !allow_noshuffle && name == "NOSHUFFLE" {
+            return Err(self.parse_error("[NOSHUFFLE] is not valid on JOIN"));
+        }
+        Ok(Some(name))
+    }
+
+    fn impala_hint(&self, name: String) -> Hint {
+        Hint {
+            source_dialect: Some(crate::dialects::DialectType::Impala),
+            expressions: vec![HintExpression::Identifier(name)],
+        }
     }
 
     /// Parse the subset of typed functions that are handled via function-registry metadata.
@@ -48332,6 +48464,7 @@ impl Parser {
             Some(crate::dialects::DialectType::Spark)
                 | Some(crate::dialects::DialectType::Hive)
                 | Some(crate::dialects::DialectType::Databricks)
+                | Some(crate::dialects::DialectType::Impala)
         ) && matches!(token_type, TokenType::Limit | TokenType::Offset)
         {
             let next = self.current + 1;
@@ -57835,6 +57968,9 @@ impl Parser {
                 by_name: false,
                 conflict_action: None,
                 is_replace: false,
+                is_upsert: false,
+                explicit_table_keyword: false,
+                query_hint: None,
                 replace_where: None,
                 source: None,
                 hint: None,

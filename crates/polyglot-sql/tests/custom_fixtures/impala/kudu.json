@@ -1,0 +1,11 @@
+{
+  "category": "kudu",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "CREATE TABLE t (id INT PRIMARY KEY, v STRING NULL DEFAULT 'x') STORED AS KUDU"
+    }
+  ],
+  "transpilation": []
+}

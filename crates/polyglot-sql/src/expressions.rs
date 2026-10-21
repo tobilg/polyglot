@@ -4419,6 +4419,17 @@ pub struct Insert {
     /// MySQL/SQLite REPLACE INTO statement (treat like INSERT)
     #[serde(default)]
     pub is_replace: bool,
+    /// Impala UPSERT, which parses like INSERT and prints UPSERT.
+    #[serde(default)]
+    pub is_upsert: bool,
+    /// The TABLE keyword was written after INTO (`UPSERT INTO TABLE t`).
+    /// INSERT generation for Impala always spells TABLE; UPSERT keeps this flag.
+    #[serde(default)]
+    pub explicit_table_keyword: bool,
+    /// Bracket hint between the target and the source query.
+    /// `INSERT INTO TABLE t [SHUFFLE] SELECT ...`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_hint: Option<Hint>,
     /// Oracle-style hint: `INSERT <hint> INTO ...` (for example Oracle APPEND hints)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<Hint>,

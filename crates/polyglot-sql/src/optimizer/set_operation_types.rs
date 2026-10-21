@@ -316,7 +316,7 @@ fn family(dialect: DialectType) -> Family {
         Snowflake => Family::Snowflake,
         DuckDB => Family::DuckDB,
         SQLite => Family::SQLite,
-        Hive => Family::Hive,
+        Hive | Impala => Family::Hive,
         Spark => Family::Spark,
         Databricks => Family::Databricks,
         Trino | Presto | Athena | Dune => Family::Trino,

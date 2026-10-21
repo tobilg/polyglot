@@ -1043,6 +1043,7 @@ This limit covers recursive parsing, not arbitrary programmatic AST construction
 | Fabric | `Dialect.Fabric` |
 | Generic SQL | `Dialect.Generic` |
 | Hive | `Dialect.Hive` |
+| Impala | `Dialect.Impala` |
 | Materialize | `Dialect.Materialize` |
 | MySQL | `Dialect.MySQL` |
 | Oracle | `Dialect.Oracle` |

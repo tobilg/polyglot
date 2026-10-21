@@ -1,0 +1,55 @@
+{
+  "category": "functions",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a ILIKE 'x%'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a NOT ILIKE 'x%'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a RLIKE '^x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a IREGEXP '^x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT DAYS_ADD(d, 1), MONTHS_SUB(d, 1), YEARS_ADD(d, 2), HOURS_ADD(d, 3) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNC(ts, 'Q'), DATE_TRUNC('MONTH', ts) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNC(ts, 'DD'), TRUNC(ts, 'HH'), TRUNC(ts, 'MI') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNC(ts, 'WW'), TRUNC(ts, 'W') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNC(ts, 'DAY'), TRUNC(ts, 'MONTH'), TRUNC(ts, 'YEAR') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT DATE_TRUNC('DAY', ts), DATE_TRUNC('WEEK', ts), DATE_TRUNC('SECOND', ts) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT REGEXP_LIKE(s, 'abc', 'i'), s RLIKE 'abc' FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT NDV(x, 5) FROM t"
+    }
+  ],
+  "transpilation": []
+}

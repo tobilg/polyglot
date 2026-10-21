@@ -1,0 +1,397 @@
+{
+  "category": "select",
+  "dialect": "impala",
+  "identity": [
+    {
+      "description": "test_select.py:test_operation_modifier",
+      "sql": "SELECT STRAIGHT_JOIN a, b FROM t1 JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_select.py:test_operation_modifier_with_distinct",
+      "sql": "SELECT DISTINCT STRAIGHT_JOIN a FROM t"
+    },
+    {
+      "description": "test_select.py:test_shuffle",
+      "sql": "SELECT [SHUFFLE] a FROM t"
+    },
+    {
+      "description": "test_select.py:test_noshuffle",
+      "sql": "SELECT [NOSHUFFLE] a FROM t"
+    },
+    {
+      "description": "test_select.py:test_nulls_first",
+      "sql": "SELECT a FROM t ORDER BY a NULLS FIRST"
+    },
+    {
+      "description": "test_select.py:test_nulls_last_desc",
+      "sql": "SELECT a FROM t ORDER BY a DESC NULLS LAST"
+    },
+    {
+      "description": "test_select.py:test_left_semi_join",
+      "sql": "SELECT a FROM t1 LEFT SEMI JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT DISTINCT a FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a AS x, b FROM db.t AS y"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT COUNT(*) FROM t GROUP BY a HAVING COUNT(*) > 1"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a, b, COUNT(*) FROM t GROUP BY ROLLUP (a, b)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 UNION ALL SELECT a FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 UNION SELECT a FROM t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "WITH c AS (SELECT 1 AS a) SELECT a FROM c"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM (SELECT a FROM t) AS x"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT SUM(a) OVER (ORDER BY b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_default_modifier",
+      "expected": "SELECT a FROM t",
+      "sql": "SELECT ALL a FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 INNER JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 LEFT OUTER JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 FULL OUTER JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 CROSS JOIN t2"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 LEFT ANTI JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t1 JOIN t2 USING (id)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT STRAIGHT_JOIN a FROM t1 JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_straight_join_operator_becomes_select_modifier",
+      "expected": "SELECT STRAIGHT_JOIN a FROM t1 JOIN t2 ON t1.id = t2.id",
+      "sql": "SELECT a FROM t1 STRAIGHT_JOIN t2 ON t1.id = t2.id"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a IN (SELECT b FROM t2)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE EXISTS(SELECT 1 FROM t2)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a BETWEEN 1 AND 5"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a IS NULL"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a IS DISTINCT FROM b"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a IS NOT DISTINCT FROM b"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a LIKE 'x%' AND b NOT LIKE 'y%'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE NOT a AND (b OR c)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a FROM t WHERE a = TRUE OR b = FALSE"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized_equivalent_spelling",
+      "expected": "SELECT a FROM t WHERE a RLIKE '^x'",
+      "sql": "SELECT a FROM t WHERE a REGEXP '^x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT CASE WHEN a = 1 THEN 'x' ELSE 'y' END FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT CASE a WHEN 1 THEN 'x' ELSE 'z' END FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT CAST(a AS STRING), CAST(a AS DECIMAL(10, 2)), CAST(a AS CHAR(3)), CAST(a AS VARCHAR(3)) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT a || b FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT MAX(a), MIN(b), AVG(c), SUM(d) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT LAG(a) OVER (ORDER BY b), LEAD(a) OVER (ORDER BY b) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT COUNT(*) FILTER(WHERE a > 1) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNCATE(1.234, 2)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT EXTRACT(YEAR FROM ts) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT NULLIF(a, b), COALESCE(a, b), IF(a > 1, 'x', 'y') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT REGEXP_REPLACE(a, 'x', 'y'), CONCAT_WS(',', a, b) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT REGEXP_EXTRACT(a, 'x', 1), REGEXP_EXTRACT(a, 'x', 0) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT UTC_TIMESTAMP(), CURRENT_DATE(), DAYOFYEAR(ts), IS_NAN(x) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT `select` FROM `table`"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT 1 AS `x y`"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_interval_value_is_numeric",
+      "sql": "SELECT INTERVAL -6 MONTHS"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT UNNEST(arr) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT * FROM t, UNNEST(t.arr)"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT SHA1(s) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT LTRIM(s, 'x'), RTRIM(s, 'x'), BTRIM(s, 'x'), TRIM(s) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT TRUNCATE(x, -1), TRUNCATE(x) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT CAST(s AS DATE FORMAT 'YYYY-MM-DD') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT CAST(s AS TIMESTAMP FORMAT 'YYYY-MM-DD HH24:MI:SS') FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SELECT 7d, 30d FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_normalized",
+      "expected": "SELECT LTRIM(a) FROM t",
+      "sql": "SELECT TRIM(LEADING FROM a) FROM t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW DATABASES"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW DATABASES LIKE 'x*'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW SCHEMAS"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW TABLES"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW ROLES"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SHOW CURRENT ROLES"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_grant_unchanged",
+      "sql": "GRANT ALL ON SERVER TO ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_grant_unchanged",
+      "sql": "GRANT SELECT ON DATABASE db TO ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_grant_unchanged",
+      "sql": "GRANT SELECT(c) ON TABLE t TO ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_grant_unchanged",
+      "sql": "GRANT ROLE r TO GROUP g"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE ALL ON SERVER FROM ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE SELECT ON TABLE t FROM ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE GRANT OPTION FOR SELECT ON TABLE t FROM ROLE r"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_revoke_unchanged",
+      "sql": "REVOKE ROLE r FROM GROUP g"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DESCRIBE t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DESCRIBE FORMATTED t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "DESCRIBE EXTENDED t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_desc_expands_to_describe",
+      "expected": "DESCRIBE t",
+      "sql": "DESC t"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "USE db"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "SET"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMMENT ON TABLE t IS 'x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMMENT ON DATABASE db IS 'x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMMENT ON COLUMN t.c IS 'x'"
+    },
+    {
+      "description": "test_impala_keyword_generation.py:test_unchanged",
+      "sql": "COMMENT ON TABLE t IS NULL"
+    },
+    {
+      "description": "test_generator.py:test_show_statements",
+      "sql": "SHOW DATABASES LIKE 'data*'"
+    },
+    {
+      "description": "test_generator.py:test_grant",
+      "sql": "GRANT ROLE data_scientist TO GROUP admin"
+    },
+    {
+      "description": "test_generator.py:test_grant",
+      "sql": "GRANT SELECT ON DATABASE data_lake TO ROLE data_scientist"
+    },
+    {
+      "description": "test_generator.py:test_revoke",
+      "sql": "REVOKE ROLE data_scientist FROM GROUP admin"
+    },
+    {
+      "description": "test_generator.py:test_revoke",
+      "sql": "REVOKE GRANT OPTION FOR SELECT ON TABLE hr.t FROM ROLE data_scientist"
+    },
+    {
+      "description": "test_generator.py:test_describe",
+      "sql": "DESCRIBE FORMATTED db.t4"
+    },
+    {
+      "description": "test_plan_hint_slots.py:test_join_bracket_wins_over_a_different_comment_hint",
+      "expected": "SELECT a FROM t1 JOIN [BROADCAST] t2 ON t1.a = t2.a",
+      "sql": "SELECT a FROM t1 JOIN [BROADCAST] /* +SHUFFLE */ t2 ON t1.a = t2.a"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#16",
+      "sql": "GRANT SELECT ON TABLE hr.hr_dummy_placeholder TO ROLE data_scientist WITH GRANT OPTION"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#68",
+      "sql": "DESCRIBE FORMATTED analytics.clickstream"
+    },
+    {
+      "description": "gemini-code-1781818024566.sql#69",
+      "sql": "DESCRIBE data_lake.telemetry_events.payload"
+    }
+  ],
+  "transpilation": []
+}

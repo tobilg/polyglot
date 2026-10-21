@@ -148,6 +148,7 @@ pub fn dialect_identity_test(
                 | DialectType::Databricks
                 | DialectType::Spark
                 | DialectType::Hive
+                | DialectType::Impala
         );
         if skip_identify {
             false
@@ -283,6 +284,7 @@ pub fn parse_dialect(name: &str) -> Option<DialectType> {
         "duckdb" => Some(DialectType::DuckDB),
         "sqlite" => Some(DialectType::SQLite),
         "hive" => Some(DialectType::Hive),
+        "impala" => Some(DialectType::Impala),
         "spark" => Some(DialectType::Spark),
         // "spark2" entries are skipped - Spark2 was merged into Spark
         // and some fixture expectations differ between spark2 and spark

@@ -55,6 +55,8 @@ mod fabric;
 mod hana;
 #[cfg(feature = "dialect-hive")]
 mod hive;
+#[cfg(feature = "dialect-impala")]
+mod impala;
 #[cfg(feature = "dialect-materialize")]
 mod materialize;
 #[cfg(feature = "dialect-mysql")]
@@ -128,6 +130,8 @@ pub use fabric::FabricDialect;
 pub use hana::HanaDialect;
 #[cfg(feature = "dialect-hive")]
 pub use hive::HiveDialect;
+#[cfg(feature = "dialect-impala")]
+pub use impala::ImpalaDialect;
 #[cfg(feature = "dialect-materialize")]
 pub use materialize::MaterializeDialect;
 #[cfg(feature = "dialect-mysql")]
@@ -231,6 +235,8 @@ pub enum DialectType {
     SQLite,
     /// Apache Hive -- data warehouse on Hadoop with HiveQL syntax.
     Hive,
+    /// Apache Impala -- analytic database with Hive-like SQL and its own statements.
+    Impala,
     /// Apache Spark SQL -- distributed query engine (also accepts "spark2").
     Spark,
     /// Trino -- distributed SQL query engine (formerly PrestoSQL).
@@ -331,6 +337,7 @@ impl std::fmt::Display for DialectType {
             DialectType::DuckDB => write!(f, "duckdb"),
             DialectType::SQLite => write!(f, "sqlite"),
             DialectType::Hive => write!(f, "hive"),
+            DialectType::Impala => write!(f, "impala"),
             DialectType::Spark => write!(f, "spark"),
             DialectType::Trino => write!(f, "trino"),
             DialectType::Presto => write!(f, "presto"),
@@ -376,6 +383,7 @@ impl std::str::FromStr for DialectType {
             "duckdb" => Ok(DialectType::DuckDB),
             "sqlite" => Ok(DialectType::SQLite),
             "hive" => Ok(DialectType::Hive),
+            "impala" => Ok(DialectType::Impala),
             "spark" | "spark2" => Ok(DialectType::Spark),
             "trino" => Ok(DialectType::Trino),
             "presto" => Ok(DialectType::Presto),
@@ -2565,6 +2573,7 @@ cached_dialect!(CACHED_DUCKDB, DuckDBDialect, "dialect-duckdb");
 cached_dialect!(CACHED_TSQL, TSQLDialect, "dialect-tsql");
 cached_dialect!(CACHED_ORACLE, OracleDialect, "dialect-oracle");
 cached_dialect!(CACHED_HIVE, HiveDialect, "dialect-hive");
+cached_dialect!(CACHED_IMPALA, ImpalaDialect, "dialect-impala");
 cached_dialect!(CACHED_SPARK, SparkDialect, "dialect-spark");
 cached_dialect!(CACHED_SQLITE, SQLiteDialect, "dialect-sqlite");
 cached_dialect!(CACHED_PRESTO, PrestoDialect, "dialect-presto");
@@ -2636,6 +2645,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::Oracle => from_cache!(CACHED_ORACLE, OracleDialect),
         #[cfg(feature = "dialect-hive")]
         DialectType::Hive => from_cache!(CACHED_HIVE, HiveDialect),
+        #[cfg(feature = "dialect-impala")]
+        DialectType::Impala => from_cache!(CACHED_IMPALA, ImpalaDialect),
         #[cfg(feature = "dialect-spark")]
         DialectType::Spark => from_cache!(CACHED_SPARK, SparkDialect),
         #[cfg(feature = "dialect-sqlite")]

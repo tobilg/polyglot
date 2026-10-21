@@ -93,6 +93,7 @@ def test_sqlglot_style_error_level_keyword_is_accepted_for_valid_sql():
             "SELECT EPOCH_MS(1618088028295)",
         ),
         ("SELECT 1", "postgres", "postgres", "SELECT 1"),
+        ("SELECT a FROM t WHERE x > 1", "impala", "impala", "SELECT a FROM t WHERE x > 1"),
         ("SELECT CURRENT_TIMESTAMP", "postgres", "mysql", "SELECT CURRENT_TIMESTAMP()"),
         (
             "SELECT DATE_TRUNC('day', ts) FROM t",

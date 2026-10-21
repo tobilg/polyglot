@@ -1,0 +1,63 @@
+{
+  "category": "transpilation",
+  "dialect": "impala",
+  "identity": [],
+  "transpilation": [
+    {
+      "description": "test_impala_functions.py:test_nullifzero_spark",
+      "sql": "SELECT NULLIFZERO(x) FROM t",
+      "write": {
+        "spark": "SELECT NULLIF(x, 0) FROM t"
+      }
+    },
+    {
+      "description": "test_impala_functions.py:test_date_sub_interval_spark_transpilation",
+      "sql": "SELECT DATE_SUB(ts, INTERVAL 6 months) FROM t",
+      "write": {
+        "spark": "SELECT ts - INTERVAL '6' MONTHS FROM t"
+      }
+    },
+    {
+      "description": "test_impala_statements_transpilation.py:test_unset_tblproperties_on_view_tier1",
+      "sql": "ALTER VIEW db.v UNSET TBLPROPERTIES (\"owner\")",
+      "write": {
+        "spark": "ALTER VIEW db.v UNSET TBLPROPERTIES ('owner')"
+      }
+    },
+    {
+      "description": "test_select_transpilation.py:test_intersect_inside_union_left_unchanged",
+      "sql": "SELECT 1 INTERSECT SELECT 2 UNION ALL SELECT 3",
+      "write": {
+        "spark": "SELECT 1 INTERSECT SELECT 2 UNION ALL SELECT 3"
+      }
+    },
+    {
+      "description": "test_select_transpilation.py:test_except_inside_union_left_unchanged",
+      "sql": "SELECT 1 EXCEPT SELECT 2 UNION ALL SELECT 3",
+      "write": {
+        "spark": "SELECT 1 EXCEPT SELECT 2 UNION ALL SELECT 3"
+      }
+    },
+    {
+      "description": "test_select_transpilation.py:test_already_parenthesised_left_preserved",
+      "sql": "(SELECT 1 UNION ALL SELECT 2) INTERSECT SELECT 2",
+      "write": {
+        "spark": "(SELECT 1 UNION ALL SELECT 2) INTERSECT SELECT 2"
+      }
+    },
+    {
+      "description": "test_select_transpilation.py:test_already_parenthesised_right_preserved",
+      "sql": "SELECT 1 UNION ALL (SELECT 2 INTERSECT SELECT 3)",
+      "write": {
+        "spark": "SELECT 1 UNION ALL (SELECT 2 INTERSECT SELECT 3)"
+      }
+    },
+    {
+      "description": "test_select_transpilation.py:test_simple_intersect_unchanged",
+      "sql": "SELECT a FROM t1 INTERSECT SELECT a FROM t2",
+      "write": {
+        "spark": "SELECT a FROM t1 INTERSECT SELECT a FROM t2"
+      }
+    }
+  ]
+}
