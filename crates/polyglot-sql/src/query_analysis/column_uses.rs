@@ -660,6 +660,7 @@ fn unresolved(column: &Column, confidence: ReferenceConfidence) -> ColumnUseRefe
             column: column.name.name.clone(),
             unqualified: column.table.is_none(),
             confidence,
+            path_transform_kind: None,
         },
         span: column.span.or(column.name.span).map(source_span),
     }
@@ -670,7 +671,7 @@ fn use_references(
     span: Option<QuerySourceSpan>,
     unqualified: bool,
 ) -> Vec<ColumnUseReferenceFact> {
-    terminal_references_from_lineage(node)
+    terminal_references_from_lineage(node, None)
         .into_iter()
         .map(|mut reference| {
             reference.unqualified = unqualified;

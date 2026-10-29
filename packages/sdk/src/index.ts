@@ -254,6 +254,8 @@ export interface ColumnReferenceFact {
   column: string;
   unqualified: boolean;
   confidence: ReferenceConfidence;
+  /** Strongest transform from this reference to the projection output. Only projection upstream references set it. */
+  pathTransformKind?: TransformKind;
 }
 
 export interface TransformFunctionFact {

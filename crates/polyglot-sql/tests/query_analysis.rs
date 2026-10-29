@@ -1274,6 +1274,162 @@ fn analyze_query_follows_cte_lineage() {
     assert_eq!(analysis.base_tables[0].name, "users");
 }
 
+fn path_kind_analysis(sql: &str, dialect: DialectType) -> polyglot_sql::QueryAnalysis {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{
+            "name": "orders",
+            "schema": "s",
+            "columns": [
+                {"name": "order_id", "type": "INT"},
+                {"name": "customer_id", "type": "INT"},
+                {"name": "amount", "type": "DECIMAL(10,2)"},
+                {"name": "status", "type": "TEXT"},
+                {"name": "ordered_at", "type": "TIMESTAMP"},
+                {"name": "payload", "type": "TEXT"}
+            ]
+        }]
+    }))
+    .unwrap();
+    analyze_query(
+        sql,
+        AnalyzeQueryOptions {
+            dialect,
+            schema: Some(schema),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+fn path_kinds(projection: &polyglot_sql::ProjectionFact) -> Vec<(String, Option<TransformKind>)> {
+    projection
+        .upstream
+        .iter()
+        .map(|reference| {
+            (
+                reference.column.to_ascii_lowercase(),
+                reference.path_transform_kind,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn analyze_query_reports_path_transform_kind_through_query_scopes() {
+    use TransformKind::*;
+    let aggregate = "SELECT customer_id, SUM(amount) AS total FROM s.orders GROUP BY customer_id";
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        for sql in [
+            format!("SELECT t.customer_id, t.total FROM ({aggregate}) AS t"),
+            format!("WITH c AS ({aggregate}) SELECT customer_id, total FROM c"),
+            format!("SELECT customer_id, total + 1 AS total FROM ({aggregate}) AS t"),
+            "WITH a AS (SELECT customer_id, CAST(amount AS INT) AS amt FROM s.orders), \
+             b AS (SELECT customer_id, amt * 2 AS amt2 FROM a) \
+             SELECT customer_id, amt2 FROM b"
+                .to_string(),
+        ] {
+            let analysis = path_kind_analysis(&sql, dialect);
+            let total = &analysis.projections[1];
+            let expected = if sql.contains("amt2") {
+                Expression
+            } else {
+                Aggregation
+            };
+            assert_eq!(
+                path_kinds(&analysis.projections[0]),
+                vec![("customer_id".into(), Some(Direct))],
+                "{dialect}: {sql}"
+            );
+            assert_eq!(
+                path_kinds(total),
+                vec![("amount".into(), Some(expected))],
+                "{dialect}: {sql}"
+            );
+            assert_ne!(total.transform_kind, Aggregation, "{dialect}: {sql}");
+        }
+
+        let analysis = path_kind_analysis(
+            "WITH a AS (SELECT CAST(amount AS INT) AS amt FROM s.orders) SELECT amt FROM a",
+            dialect,
+        );
+        assert_eq!(analysis.projections[0].transform_kind, Direct);
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![("amount".into(), Some(Cast))]
+        );
+    }
+}
+
+#[test]
+fn analyze_query_reports_path_transform_kind_per_set_operation_branch() {
+    use TransformKind::*;
+    let union =
+        "SELECT amount AS x FROM s.orders UNION ALL SELECT SUM(order_id) AS x FROM s.orders";
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        for sql in [
+            format!("SELECT t.x FROM ({union}) AS t"),
+            format!("WITH u AS ({union}) SELECT x FROM u"),
+            union.to_string(),
+        ] {
+            let analysis = path_kind_analysis(&sql, dialect);
+            assert_eq!(
+                path_kinds(&analysis.projections[0]),
+                vec![
+                    ("amount".into(), Some(Direct)),
+                    ("order_id".into(), Some(Aggregation))
+                ],
+                "{dialect}: {sql}"
+            );
+        }
+
+        let analysis = path_kind_analysis(
+            &format!("{union} UNION ALL SELECT amount + 1 FROM s.orders"),
+            dialect,
+        );
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![
+                ("amount".into(), Some(Expression)),
+                ("order_id".into(), Some(Aggregation))
+            ],
+            "{dialect}: paths that reach one column keep the strongest kind"
+        );
+
+        let analysis = path_kind_analysis(union, dialect);
+        let branches = &analysis.set_operations[0].branches;
+        assert_eq!(
+            path_kinds(&branches[0].projections[0]),
+            vec![("amount".into(), Some(Direct))]
+        );
+        assert_eq!(
+            path_kinds(&branches[1].projections[0]),
+            vec![("order_id".into(), Some(Aggregation))]
+        );
+    }
+}
+
+#[test]
+fn analyze_query_path_transform_kind_is_json_additive() {
+    let analysis = path_kind_analysis(
+        "SELECT t.total FROM (SELECT SUM(amount) AS total FROM s.orders) AS t WHERE t.total > 0",
+        DialectType::PostgreSQL,
+    );
+    let mut value = serde_json::to_value(&analysis).unwrap();
+    assert_eq!(
+        value["projections"][0]["upstream"][0]["pathTransformKind"],
+        "aggregation"
+    );
+    assert!(value["columnUses"][0]["references"][0]
+        .get("pathTransformKind")
+        .is_none());
+    value["projections"][0]["upstream"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("pathTransformKind");
+    let decoded: polyglot_sql::QueryAnalysis = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.projections[0].upstream[0].path_transform_kind, None);
+}
+
 #[test]
 fn analyze_query_reports_top_level_cte_facts() {
     let analysis = analyze_query(

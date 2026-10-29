@@ -701,7 +701,11 @@ Types propagate through CTE and derived-table outputs. `transformKind` and
 `castType` describe the current projection, not transformations earlier in its
 lineage: a passthrough of a cast column is still `direct`, with the cast's result
 type in `typeHint`. Compact `upstream` references identify base dependencies;
-use the full lineage API to inspect intermediate CTEs and expressions.
+each one carries `pathTransformKind`, the strongest transform on its path to
+the projection (`direct` < `star` < `cast` < `expression` < `aggregation`), so
+that passthrough reports `cast` there. Set-operation branches rank separately,
+and paths that reach the same column keep the strongest kind. Use the full
+lineage API to inspect intermediate CTEs and expressions.
 For set operations, `typeHint` describes the dialect's combined output type
 after positional or name alignment. For example, Snowflake INTEGER/FLOAT
 branches produce `FLOAT`. The combined `castType` is present only when every

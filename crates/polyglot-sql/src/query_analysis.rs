@@ -166,6 +166,13 @@ pub struct ColumnReferenceFact {
     pub column: String,
     pub unqualified: bool,
     pub confidence: ReferenceConfidence,
+    /// Strongest transform on the lineage path from this reference to the
+    /// projection output, through CTEs, derived tables, and set-operation
+    /// branches. Steps rank `Direct < Star < Cast < Expression < Aggregation`;
+    /// a `Constant` step has no upstream reference. Only projection upstream
+    /// references carry this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_transform_kind: Option<TransformKind>,
 }
 
 /// Compact fact about a relation visible in the root scope.
@@ -1068,6 +1075,7 @@ fn projection_fact(
 ) -> ProjectionFact {
     let inner = unwrap_projection_alias(projection);
     let is_star = projection_is_star(inner);
+    let kind = transform_kind(inner);
     let mut lineage = nullability_context.lineage.borrow_mut();
     let prepared = lineage
         .entry(scope as *const Scope)
@@ -1076,7 +1084,8 @@ fn projection_fact(
         .output(index)
         .map(|node| {
             let uncertain = lineage_uncertainty(&node, nullability_context.uncertain_columns);
-            let mut references = terminal_references_from_lineage(&node);
+            let mut references =
+                terminal_references_from_lineage(&node, Some(TransformKind::Direct));
             if let Some(confidence) = uncertain {
                 for reference in &mut references {
                     reference.confidence = confidence;
@@ -1091,6 +1100,10 @@ fn projection_fact(
         for reference in &mut upstream {
             reference.confidence = confidence;
         }
+    }
+    // A fallback reference has no traced path, so it takes the projection kind.
+    for reference in &mut upstream {
+        reference.path_transform_kind.get_or_insert(kind);
     }
     if let Some(schema) = nullability_context.mapping_schema {
         for reference in &mut upstream {
@@ -1135,7 +1148,7 @@ fn projection_fact(
         name,
         is_star,
         star_table: projection_star_table(inner),
-        transform_kind: transform_kind(inner),
+        transform_kind: kind,
         transform_function,
         cast_type: cast_type(inner, dialect),
         type_hint: projection
@@ -1730,22 +1743,58 @@ impl NullabilityContext<'_> {
     }
 }
 
-fn terminal_references_from_lineage(node: &LineageNode) -> Vec<ColumnReferenceFact> {
+/// Seed `path_kind` with `Direct` to report each reference's path transform kind.
+fn terminal_references_from_lineage(
+    node: &LineageNode,
+    path_kind: Option<TransformKind>,
+) -> Vec<ColumnReferenceFact> {
     let mut refs = Vec::new();
-    collect_terminal_references(node, &mut refs);
+    collect_terminal_references(node, path_kind, &mut refs);
     dedupe_column_refs(refs)
 }
 
-fn collect_terminal_references(node: &LineageNode, refs: &mut Vec<ColumnReferenceFact>) {
+fn collect_terminal_references(
+    node: &LineageNode,
+    path_kind: Option<TransformKind>,
+    refs: &mut Vec<ColumnReferenceFact>,
+) {
+    // A set-operation node only routes to its branches; each branch is a step.
+    let path_kind = path_kind.map(|kind| {
+        if is_set_operation(&node.expression) {
+            kind
+        } else {
+            combine_transform_kinds(
+                kind,
+                transform_kind(unwrap_projection_alias(&node.expression)),
+            )
+        }
+    });
     if node.downstream.is_empty() {
-        if let Some(reference) = column_reference_from_lineage_node(node) {
+        if let Some(mut reference) = column_reference_from_lineage_node(node) {
+            reference.path_transform_kind = path_kind;
             refs.push(reference);
         }
         return;
     }
 
     for child in &node.downstream {
-        collect_terminal_references(child, refs);
+        collect_terminal_references(child, path_kind, refs);
+    }
+}
+
+fn combine_transform_kinds(left: TransformKind, right: TransformKind) -> TransformKind {
+    let rank = |kind| match kind {
+        TransformKind::Constant => 0,
+        TransformKind::Direct => 1,
+        TransformKind::Star => 2,
+        TransformKind::Cast => 3,
+        TransformKind::Expression => 4,
+        TransformKind::Aggregation => 5,
+    };
+    if rank(right) > rank(left) {
+        right
+    } else {
+        left
     }
 }
 
@@ -1768,6 +1817,7 @@ fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnRefere
                 column: column.name.name.clone(),
                 unqualified: column.table.is_none(),
                 confidence,
+                path_transform_kind: None,
             })
         }
         Expression::Star(_) => Some(ColumnReferenceFact {
@@ -1782,6 +1832,7 @@ fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnRefere
             } else {
                 ReferenceConfidence::Resolved
             },
+            path_transform_kind: None,
         }),
         _ => None,
     }
@@ -1866,6 +1917,7 @@ fn fallback_column_references(expression: &Expression, scope: &Scope) -> Vec<Col
                 column: column.name.name.clone(),
                 unqualified: column.table.is_none(),
                 confidence,
+                path_transform_kind: None,
             });
         }
     }
@@ -1874,7 +1926,7 @@ fn fallback_column_references(expression: &Expression, scope: &Scope) -> Vec<Col
 }
 
 fn dedupe_column_refs(refs: Vec<ColumnReferenceFact>) -> Vec<ColumnReferenceFact> {
-    let mut seen = HashSet::new();
+    let mut seen = HashMap::new();
     let mut deduped = Vec::new();
 
     for reference in refs {
@@ -1887,7 +1939,16 @@ fn dedupe_column_refs(refs: Vec<ColumnReferenceFact>) -> Vec<ColumnReferenceFact
             reference.unqualified,
             format!("{:?}", reference.confidence),
         );
-        if seen.insert(key) {
+        if let Some(&index) = seen.get(&key) {
+            // Paths that reach the same column keep the strongest kind.
+            let existing: &mut ColumnReferenceFact = &mut deduped[index];
+            if let (Some(left), Some(right)) =
+                (existing.path_transform_kind, reference.path_transform_kind)
+            {
+                existing.path_transform_kind = Some(combine_transform_kinds(left, right));
+            }
+        } else {
+            seen.insert(key, deduped.len());
             deduped.push(reference);
         }
     }

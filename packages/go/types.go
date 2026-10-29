@@ -341,6 +341,9 @@ type ColumnReferenceFact struct {
 	Column      string  `json:"column"`
 	Unqualified bool    `json:"unqualified"`
 	Confidence  string  `json:"confidence"`
+	// PathTransformKind is the strongest transform from this reference to the
+	// projection output. Only projection upstream references set it.
+	PathTransformKind *string `json:"pathTransformKind,omitempty"`
 }
 
 type RelationFact struct {
