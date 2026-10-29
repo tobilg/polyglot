@@ -2417,6 +2417,38 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
 }
 
 #[test]
+fn analyze_query_resolves_clickhouse_array_join_aliases_with_schema() {
+    for sql in [
+        "SELECT item FROM t ARRAY JOIN arr AS item",
+        "SELECT item FROM t LEFT ARRAY JOIN arr AS item",
+        "SELECT item FROM t ARRAY JOIN t.arr AS item WHERE item > 0",
+        "SELECT arr FROM t ARRAY JOIN arr",
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::ClickHouse,
+                schema: Some(unnest_analysis_schema()),
+            },
+        )
+        .unwrap();
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].table.as_deref(), Some("t"), "{sql}");
+        assert_eq!(upstream[0].column, "arr", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        for fact in &analysis.column_uses {
+            assert_eq!(fact.references[0].reference.column, "arr", "{sql}");
+        }
+    }
+}
+
+#[test]
 fn analyze_query_resolves_struct_fields_and_types_issue_408() {
     let cases = [
         (

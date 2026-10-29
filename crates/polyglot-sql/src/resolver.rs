@@ -14,7 +14,7 @@ use crate::expressions::{Expression, Identifier, TableRef};
 #[cfg(feature = "generate")]
 use crate::generator::Generator;
 use crate::schema::{normalize_name, Schema};
-use crate::scope::{Scope, SourceInfo};
+use crate::scope::{Scope, SourceInfo, SourceKind};
 use crate::traversal::ExpressionWalk;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -219,7 +219,13 @@ impl<'a> Resolver<'a> {
 
     /// Extract column names from a source expression
     fn extract_columns_from_source(&self, source_info: &SourceInfo) -> ResolverResult<Vec<String>> {
-        self.get_source_columns_for_expression(&source_info.expression)
+        match &source_info.expression {
+            // ClickHouse ARRAY JOIN item, e.g. `arr AS item`.
+            Expression::Alias(alias) if source_info.kind == SourceKind::Virtual => {
+                Ok(alias_output_columns(alias))
+            }
+            expression => self.get_source_columns_for_expression(expression),
+        }
     }
 
     fn get_source_columns_for_expression(

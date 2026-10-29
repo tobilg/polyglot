@@ -5,7 +5,7 @@
 //!
 //! Ported from sqlglot's optimizer/scope.py
 
-use crate::expressions::Expression;
+use crate::expressions::{Expression, JoinKind};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -680,13 +680,15 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
             // Register relations in order. CTE declarations are available for
             // FROM lookup, but only selected preceding bindings are lateral inputs.
             let mut preceding_sources = HashSet::new();
-            for table in select
-                .from
-                .iter()
-                .flat_map(|from| &from.expressions)
-                .chain(select.joins.iter().map(|join| &join.this))
-            {
+            for table in select.from.iter().flat_map(|from| &from.expressions) {
                 add_relation_to_scope(table, current_scope, &mut preceding_sources);
+            }
+            for join in &select.joins {
+                if matches!(join.kind, JoinKind::Array | JoinKind::LeftArray) {
+                    add_array_join_to_scope(&join.this, current_scope, &mut preceding_sources);
+                } else {
+                    add_relation_to_scope(&join.this, current_scope, &mut preceding_sources);
+                }
             }
 
             // Process table-generating lateral views (Hive/Spark style UDTFs).
@@ -1048,6 +1050,24 @@ fn add_lateral_view_to_scope(lateral_view: &crate::expressions::LateralView, sco
             alias,
             Expression::LateralView(Box::new(lateral_view.clone())),
         );
+    }
+}
+
+/// ClickHouse `ARRAY JOIN arr AS item` binds each aliased array as a virtual source.
+fn add_array_join_to_scope(
+    expr: &Expression,
+    scope: &mut Scope,
+    preceding_sources: &mut HashSet<String>,
+) {
+    let items = match expr {
+        Expression::Tuple(tuple) => tuple.expressions.as_slice(),
+        item => std::slice::from_ref(item),
+    };
+    for item in items {
+        if let Expression::Alias(alias) = item {
+            scope.add_virtual_source(alias.alias.name.clone(), item.clone());
+            preceding_sources.insert(alias.alias.name.clone());
+        }
     }
 }
 
@@ -1538,6 +1558,30 @@ mod tests {
         let scope = parse_and_build_scope("SELECT n.a FROM t, (SELECT t.a) n");
         assert!(!scope.derived_table_scopes[0].is_lateral);
         assert!(scope.derived_table_scopes[0].lateral_sources.is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_array_join_aliases_are_virtual_sources() {
+        for (sql, aliases) in [
+            ("SELECT item FROM t ARRAY JOIN arr AS item", &["item"][..]),
+            (
+                "SELECT a, b FROM t LEFT ARRAY JOIN arr AS a, t.nested AS b",
+                &["a", "b"],
+            ),
+            ("SELECT arr FROM t ARRAY JOIN arr", &[]),
+        ] {
+            let ast = crate::parse_one(sql, crate::dialects::DialectType::ClickHouse).unwrap();
+            let scope = build_scope(&ast);
+            let mut virtual_sources: Vec<_> = scope
+                .sources
+                .iter()
+                .filter(|(_, source)| source.kind == SourceKind::Virtual)
+                .map(|(name, _)| name.as_str())
+                .collect();
+            virtual_sources.sort();
+            assert_eq!(virtual_sources, aliases, "{sql}");
+            assert_eq!(scope.sources.len(), aliases.len() + 1, "{sql}");
+        }
     }
 
     #[test]
