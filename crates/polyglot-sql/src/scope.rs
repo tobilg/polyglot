@@ -5,7 +5,7 @@
 //!
 //! Ported from sqlglot's optimizer/scope.py
 
-use crate::expressions::{Expression, JoinKind};
+use crate::expressions::{Expression, Identifier, JoinKind, Literal, TableRef};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -988,8 +988,53 @@ fn add_table_to_scope(
             Some(name)
         }
         Expression::Paren(paren) => add_table_to_scope(&paren.this, scope, preceding_sources),
-        _ => None,
+        _ => identifier_table(expr).and_then(|table| {
+            add_table_to_scope(
+                &Expression::Table(Box::new(table)),
+                scope,
+                preceding_sources,
+            )
+        }),
     }
+}
+
+/// Snowflake `IDENTIFIER('db.schema.table')` names a table with a string literal.
+fn identifier_table(expr: &Expression) -> Option<TableRef> {
+    let (function, alias) = match expr {
+        Expression::Function(function) => (function, None),
+        Expression::Alias(alias) => match &alias.this {
+            Expression::Function(function) => (function, Some(alias)),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !function.name.eq_ignore_ascii_case("IDENTIFIER") {
+        return None;
+    }
+    let [Expression::Literal(literal)] = function.args.as_slice() else {
+        return None;
+    };
+    let Literal::String(name) = literal.as_ref() else {
+        return None;
+    };
+    let mut parts: Vec<Identifier> = name
+        .split('.')
+        .map(
+            |part| match part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+                Some(quoted) => Identifier::quoted(quoted),
+                None => Identifier::new(part),
+            },
+        )
+        .collect();
+    let mut table = TableRef::new("");
+    table.name = parts.pop().filter(|part| !part.is_empty())?;
+    table.schema = parts.pop();
+    table.catalog = parts.pop();
+    if let Some(alias) = alias {
+        table.alias = Some(alias.alias.clone());
+        table.column_aliases = alias.column_aliases.clone();
+    }
+    parts.is_empty().then_some(table)
 }
 
 fn is_query_like_relation(expr: &Expression) -> bool {
@@ -1582,6 +1627,25 @@ mod tests {
             assert_eq!(virtual_sources, aliases, "{sql}");
             assert_eq!(scope.sources.len(), aliases.len() + 1, "{sql}");
         }
+    }
+
+    #[test]
+    fn test_snowflake_identifier_string_is_a_table_source() {
+        let ast = crate::parse_one(
+            "SELECT o.id FROM IDENTIFIER('db.s.orders') AS o, IDENTIFIER('customers'), IDENTIFIER($t)",
+            crate::dialects::DialectType::Snowflake,
+        )
+        .unwrap();
+        let scope = build_scope(&ast);
+        assert_eq!(scope.sources.len(), 2);
+        let Expression::Table(orders) = &scope.sources["o"].expression else {
+            panic!("expected a table source");
+        };
+        assert_eq!(orders.catalog.as_ref().unwrap().name, "db");
+        assert_eq!(orders.schema.as_ref().unwrap().name, "s");
+        assert_eq!(orders.name.name, "orders");
+        assert_eq!(scope.sources["o"].kind, SourceKind::Table);
+        assert!(scope.sources.contains_key("customers"));
     }
 
     #[test]

@@ -2449,6 +2449,58 @@ fn analyze_query_resolves_clickhouse_array_join_aliases_with_schema() {
 }
 
 #[test]
+fn analyze_query_resolves_snowflake_identifier_tables() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{"schema": "s", "name": "orders", "columns": [{"name": "id", "type": "INT"}]}]
+    }))
+    .unwrap();
+    let analyze = |sql: &str| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::Snowflake,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    for sql in [
+        "SELECT id FROM IDENTIFIER('s.orders')",
+        "SELECT o.id FROM IDENTIFIER('s.orders') AS o",
+    ] {
+        let analysis = analyze(sql);
+        let plain = analyze(&sql.replace("IDENTIFIER('s.orders')", "s.orders"));
+        assert_eq!(analysis.base_tables.len(), 1, "{sql}");
+        assert_eq!(
+            analysis.base_tables[0].schema.as_deref(),
+            Some("s"),
+            "{sql}"
+        );
+        assert_eq!(
+            analysis.base_tables[0].table.as_deref(),
+            Some("orders"),
+            "{sql}"
+        );
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].column, "id", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        assert_eq!(
+            serde_json::to_value(upstream).unwrap(),
+            serde_json::to_value(&plain.projections[0].upstream).unwrap(),
+            "{sql}"
+        );
+    }
+    let analysis = analyze("SELECT id FROM IDENTIFIER($t)");
+    assert!(analysis.base_tables.is_empty());
+}
+
+#[test]
 fn analyze_query_resolves_struct_fields_and_types_issue_408() {
     let cases = [
         (
