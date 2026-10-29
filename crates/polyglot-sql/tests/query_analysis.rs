@@ -83,6 +83,40 @@ fn analyze_query_set_operation_types_454() {
 }
 
 #[test]
+fn analyze_query_constant_projections_through_sources_have_no_upstream() {
+    for (sql, with_schema) in [
+        ("(SELECT 'x' AS src, CAST(a AS INT) AS v FROM x) UNION ALL (SELECT 'y' AS src, CAST(b AS INT) AS v FROM y)", true),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", false),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", true),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", false),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", true),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::PostgreSQL,
+                schema: with_schema.then(schema),
+            },
+        )
+        .unwrap();
+        assert!(
+            analysis.projections[0].upstream.is_empty(),
+            "{sql}: {:?}",
+            analysis.projections[0].upstream
+        );
+        assert!(
+            analysis.projections[1]
+                .upstream
+                .iter()
+                .any(|reference| reference.table.as_deref() == Some("x") && reference.column == "a"),
+            "{sql}: {:?}",
+            analysis.projections[1].upstream
+        );
+    }
+}
+
+#[test]
 fn analyze_query_set_operation_consumers_and_parameters_454() {
     let mut failures = Vec::new();
     for (dialect, sql, expected) in [
