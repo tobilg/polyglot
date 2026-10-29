@@ -599,6 +599,39 @@ fn analyze_query_column_uses_do_not_leak_ctes_or_non_lateral_sources() {
 }
 
 #[test]
+fn analyze_query_column_uses_resolve_lateral_outer_references() {
+    use polyglot_sql::ColumnUseContext;
+    for sql in [
+        "SELECT c.id, l.n FROM customers c, LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+        "SELECT c.id, l.n FROM customers c CROSS JOIN LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+    ] {
+        let analysis = column_use_analysis(sql, true);
+        assert!(analysis.projections[1].upstream.is_empty(), "{sql}");
+        let mut base_tables: Vec<_> = analysis.base_tables.iter().map(|t| t.name.as_str()).collect();
+        base_tables.sort();
+        assert_eq!(base_tables, ["customers", "orders"], "{sql}");
+        let filter = analysis
+            .column_uses
+            .iter()
+            .find(|fact| fact.scope_path == "root.derived[0]" && fact.context == ColumnUseContext::Filter)
+            .unwrap();
+        let references: Vec<_> = filter
+            .references
+            .iter()
+            .map(|r| (r.reference.table.as_deref(), r.reference.column.as_str(), r.reference.confidence))
+            .collect();
+        assert_eq!(
+            references,
+            [
+                (Some("orders"), "customer_id", ReferenceConfidence::Resolved),
+                (Some("customers"), "id", ReferenceConfidence::Resolved),
+            ],
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn analyze_query_column_uses_conservatively_resolve_partial_and_ambiguous_schemas() {
     for (sql, with_schema, expected) in [
         (
