@@ -590,13 +590,20 @@ fn star_projection_facts(
             }
 
             let table = projection_star_table(inner);
-            let expanded_columns = expanded_star_columns(
+            let mut expanded_columns = expanded_star_columns(
                 table.as_deref(),
                 &scope,
                 &ordered_sources,
                 mapping_schema,
                 dialect,
             );
+            if let Expression::Star(star) = inner {
+                expanded_columns = expanded_columns
+                    .into_iter()
+                    .filter(|column| !star.excludes(column))
+                    .map(|column| star.renamed(&column).map_or(column, |new| new.name.clone()))
+                    .collect();
+            }
 
             Some(StarProjectionFact {
                 index,

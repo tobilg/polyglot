@@ -660,8 +660,13 @@ fn rewrite_stars_in_select(
                 {
                     for (src_alias, col_name) in &expanded {
                         let table_id = Identifier::new(src_alias);
-                        new_expressions.push(make_column_expr(col_name, Some(&table_id)));
-                        result_columns.push(col_name.clone());
+                        let column = make_column_expr(col_name, Some(&table_id));
+                        if let Some(expression) = star.expand_column(col_name, column) {
+                            if let Some(name) = get_expression_output_name(&expression) {
+                                result_columns.push(name);
+                            }
+                            new_expressions.push(expression);
+                        }
                     }
                 } else {
                     new_expressions.push(expr.clone());
@@ -6816,6 +6821,38 @@ SELECT json_data FROM transform_cte
         assert!(
             sql.contains("SELECT b.right_name FROM b"),
             "expected the differently named right arm to still be expanded, got {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_cte_stars_applies_except_replace_rename() {
+        let mut expr = parse_dialect(
+            "WITH a AS (SELECT 1 AS x, 2 AS y, 3 AS z), \
+             b AS (SELECT * EXCLUDE (y) RENAME (x AS w) FROM a) \
+             SELECT * FROM b",
+            DialectType::Snowflake,
+        );
+
+        expand_cte_stars(&mut expr, None);
+
+        assert_eq!(
+            crate::generate(&expr, DialectType::Snowflake).unwrap(),
+            "WITH a AS (SELECT 1 AS x, 2 AS y, 3 AS z), \
+             b AS (SELECT a.x AS w, a.z FROM a) \
+             SELECT b.w, b.z FROM b"
+        );
+
+        let mut expr = parse_dialect(
+            "WITH a AS (SELECT 1 AS x, 2 AS y) \
+             SELECT * REPLACE (y + 1 AS y) FROM a",
+            DialectType::BigQuery,
+        );
+
+        expand_cte_stars(&mut expr, None);
+
+        assert_eq!(
+            crate::generate(&expr, DialectType::BigQuery).unwrap(),
+            "WITH a AS (SELECT 1 AS x, 2 AS y) SELECT a.x, y + 1 AS y FROM a"
         );
     }
 

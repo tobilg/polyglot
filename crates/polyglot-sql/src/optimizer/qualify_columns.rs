@@ -1069,7 +1069,7 @@ fn expand_stars(
                         }
                         for col_name in &columns {
                             let normalized = normalize_column_name(col_name, resolver.dialect);
-                            if coalesced_columns.contains(&normalized) {
+                            if star.excludes(col_name) || coalesced_columns.contains(&normalized) {
                                 continue;
                             }
                             if let Some(tables) = column_tables.get(&normalized) {
@@ -1089,8 +1089,10 @@ fn expand_stars(
                                     continue;
                                 }
                             }
-                            new_selections
-                                .push(create_qualified_column(col_name, Some(table_name)));
+                            new_selections.extend(star.expand_column(
+                                col_name,
+                                create_qualified_column(col_name, Some(table_name)),
+                            ));
                         }
                     }
                 } else {
@@ -1101,8 +1103,10 @@ fn expand_stars(
                             }
                             for col_name in &columns {
                                 let normalized = normalize_column_name(col_name, resolver.dialect);
-                                if coalesced_columns.contains(&normalized) {
-                                    // Already emitted as COALESCE, skip
+                                if star.excludes(col_name)
+                                    || coalesced_columns.contains(&normalized)
+                                {
+                                    // Excluded, or already emitted as COALESCE
                                     continue;
                                 }
                                 if let Some(tables) = column_tables.get(&normalized) {
@@ -1123,8 +1127,10 @@ fn expand_stars(
                                         continue;
                                     }
                                 }
-                                new_selections
-                                    .push(create_qualified_column(col_name, Some(source_name)));
+                                new_selections.extend(star.expand_column(
+                                    col_name,
+                                    create_qualified_column(col_name, Some(source_name)),
+                                ));
                             }
                         }
                     }
@@ -3409,6 +3415,58 @@ mod tests {
         assert!(sql.contains("users.id"));
         assert!(sql.contains("users.name"));
         assert!(sql.contains("users.email"));
+    }
+
+    #[test]
+    fn test_expand_stars_applies_except_replace_rename() {
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        for (dialect, sql, expected) in [
+            (
+                DialectType::Snowflake,
+                "SELECT * EXCLUDE (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * EXCEPT (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::Snowflake,
+                "SELECT t.* EXCLUDE (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * REPLACE (b * 2 AS b) FROM t",
+                "SELECT t.a AS a, t.b * 2 AS b, t.c AS c FROM t",
+            ),
+            (
+                DialectType::Snowflake,
+                "SELECT * RENAME (b AS d) FROM t",
+                "SELECT t.a AS a, t.b AS d, t.c AS c FROM t",
+            ),
+        ] {
+            let expr = crate::dialects::Dialect::get(dialect)
+                .parse(sql)
+                .expect("parse")
+                .remove(0);
+            let result =
+                qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+            assert_eq!(gen(&result), expected, "{sql}");
+        }
     }
 
     #[test]

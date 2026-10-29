@@ -873,6 +873,10 @@ fn expand_star_output_fields(
     };
 
     let qualifier = star_qualifier(star_expr);
+    let star = match star_expr {
+        Expression::Star(star) => Some(star),
+        _ => None,
+    };
     let sources = select_source_tables(select);
     for (alias, qname) in sources {
         if qualifier
@@ -885,9 +889,24 @@ fn expand_star_output_fields(
         match schema.column_names(&qname) {
             Ok(columns) => {
                 for name in columns {
+                    if star.is_some_and(|star| star.excludes(&name)) {
+                        continue;
+                    }
+                    let output_name = star
+                        .and_then(|star| star.renamed(&name))
+                        .map_or_else(|| name.clone(), |new| new.name.clone());
+                    if let Some(replacement) = star.and_then(|star| star.replacement(&name)) {
+                        fields.push(OutputField {
+                            lineage_name: output_name.clone(),
+                            name: output_name,
+                            expression: Some(Expression::Alias(Box::new(replacement.clone()))),
+                            star_source_table: None,
+                        });
+                        continue;
+                    }
                     fields.push(OutputField {
-                        lineage_name: name.clone(),
-                        name,
+                        name: output_name,
+                        lineage_name: name,
                         expression: None,
                         star_source_table: Some(qname.clone()),
                     });
@@ -1445,5 +1464,73 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
         let result = openlineage_column_lineage("SELECT * FROM t", &opts).expect("lineage");
         assert!(result.facet.fields.contains_key("a"));
         assert!(result.facet.fields.contains_key("b"));
+    }
+
+    #[test]
+    fn select_star_applies_except_replace_rename() {
+        let schema: ValidationSchema = serde_json::from_value(json!({
+            "tables": [{
+                "name": "orders",
+                "schema": "s",
+                "columns": [
+                    {"name": "order_id", "type": "INT"},
+                    {"name": "amount", "type": "INT"},
+                    {"name": "payload", "type": "TEXT"}
+                ]
+            }]
+        }))
+        .expect("schema");
+        let lineage = |dialect, sql| {
+            let mut opts = options();
+            opts.dialect = dialect;
+            opts.schema = Some(schema.clone());
+            openlineage_column_lineage(sql, &opts).expect("lineage")
+        };
+
+        for (dialect, sql) in [
+            (
+                DialectType::Snowflake,
+                "SELECT * EXCLUDE (payload) FROM s.orders",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * EXCEPT (payload) FROM s.orders",
+            ),
+            (
+                DialectType::ClickHouse,
+                "SELECT * EXCEPT (payload) FROM s.orders",
+            ),
+        ] {
+            let result = lineage(dialect, sql);
+            // Snowflake normalizes unquoted schema columns to upper case.
+            let fields: Vec<_> = result
+                .facet
+                .fields
+                .keys()
+                .map(|f| f.to_lowercase())
+                .collect();
+            assert_eq!(fields, vec!["amount", "order_id"], "{sql}");
+        }
+
+        let result = lineage(
+            DialectType::BigQuery,
+            "SELECT * REPLACE (amount * 2 AS amount) FROM s.orders",
+        );
+        let inputs = &result.facet.fields["amount"].input_fields;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "s.orders");
+        assert_eq!(inputs[0].field, "amount");
+        assert_eq!(inputs[0].transformations[0].subtype, "TRANSFORMATION");
+
+        let result = lineage(
+            DialectType::Snowflake,
+            "SELECT * RENAME (amount AS order_amount) FROM s.orders",
+        );
+        assert!(!result.facet.fields.contains_key("AMOUNT"));
+        let inputs = &result.facet.fields["order_amount"].input_fields;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "s.orders");
+        assert_eq!(inputs[0].field, "AMOUNT");
+        assert_eq!(inputs[0].transformations[0].subtype, "IDENTITY");
     }
 }

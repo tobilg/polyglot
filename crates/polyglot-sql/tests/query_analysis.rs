@@ -1729,6 +1729,82 @@ fn analyze_query_expands_unqualified_star_with_schema() {
 }
 
 #[test]
+fn analyze_query_applies_star_except_replace_rename() {
+    let analyze = |dialect, sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap()
+    };
+
+    for (dialect, sql) in [
+        (
+            DialectType::Snowflake,
+            "SELECT * EXCLUDE (total) FROM orders",
+        ),
+        (DialectType::BigQuery, "SELECT * EXCEPT (total) FROM orders"),
+        (
+            DialectType::ClickHouse,
+            "SELECT * EXCEPT (total) FROM orders",
+        ),
+        (DialectType::DuckDB, "SELECT * EXCLUDE (total) FROM orders"),
+    ] {
+        let analysis = analyze(dialect, sql);
+        // Snowflake normalizes unquoted schema columns to upper case.
+        let names: Vec<_> = analysis
+            .projections
+            .iter()
+            .filter_map(|projection| projection.name.as_deref())
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(names, ["id", "user_id", "customer_id", "amount"], "{sql}");
+        let expanded: Vec<_> = analysis.star_projections[0]
+            .expanded_columns
+            .iter()
+            .map(|column| column.to_lowercase())
+            .collect();
+        assert_eq!(expanded, names, "{sql}");
+    }
+
+    let analysis = analyze(
+        DialectType::BigQuery,
+        "SELECT * REPLACE (amount * 2 AS amount) FROM orders",
+    );
+    assert_eq!(analysis.projections.len(), 5);
+    let amount = &analysis.projections[3];
+    assert_eq!(amount.name.as_deref(), Some("amount"));
+    assert_eq!(amount.transform_kind, TransformKind::Expression);
+    assert_eq!(amount.upstream.len(), 1);
+    assert_eq!(amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(amount.upstream[0].column, "amount");
+
+    let analysis = analyze(
+        DialectType::Snowflake,
+        "SELECT * RENAME (amount AS order_amount) FROM orders",
+    );
+    let names: Vec<_> = analysis
+        .projections
+        .iter()
+        .filter_map(|projection| projection.name.as_deref())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ID", "USER_ID", "CUSTOMER_ID", "order_amount", "TOTAL"]
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns, names);
+    let order_amount = &analysis.projections[3];
+    assert_eq!(order_amount.transform_kind, TransformKind::Direct);
+    assert_eq!(order_amount.upstream.len(), 1);
+    assert_eq!(order_amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(order_amount.upstream[0].column, "AMOUNT");
+}
+
+#[test]
 fn analyze_query_classifies_typed_aggregates() {
     let analysis = analyze_query(
         "SELECT COUNT(*) AS rows, SUM(amount) AS amount_sum FROM orders",

@@ -3681,6 +3681,61 @@ pub struct Star {
     pub span: Option<Span>,
 }
 
+impl Star {
+    /// Apply EXCEPT, REPLACE, and RENAME to the expanded `column` named `name`.
+    /// Returns `None` when EXCEPT removes the column.
+    pub(crate) fn expand_column(&self, name: &str, column: Expression) -> Option<Expression> {
+        if self.excludes(name) {
+            return None;
+        }
+        let renamed = self.renamed(name).cloned();
+        if let Some(replacement) = self.replacement(name) {
+            let mut replacement = replacement.clone();
+            if let Some(alias) = renamed {
+                replacement.alias = alias;
+            }
+            return Some(Expression::Alias(Box::new(replacement)));
+        }
+        Some(match renamed {
+            Some(alias) => Expression::Alias(Box::new(Alias::new(column, alias))),
+            None => column,
+        })
+    }
+
+    /// Whether EXCEPT / EXCLUDE removes the column `name`.
+    pub(crate) fn excludes(&self, name: &str) -> bool {
+        self.except
+            .iter()
+            .flatten()
+            .any(|column| star_modifier_matches(column, name))
+    }
+
+    /// The new name RENAME gives to the column `name`.
+    pub(crate) fn renamed(&self, name: &str) -> Option<&Identifier> {
+        self.rename
+            .iter()
+            .flatten()
+            .find(|(old, _)| star_modifier_matches(old, name))
+            .map(|(_, new)| new)
+    }
+
+    /// The REPLACE expression for the column `name`.
+    pub(crate) fn replacement(&self, name: &str) -> Option<&Alias> {
+        self.replace
+            .iter()
+            .flatten()
+            .find(|replacement| star_modifier_matches(&replacement.alias, name))
+    }
+}
+
+fn star_modifier_matches(identifier: &Identifier, name: &str) -> bool {
+    if identifier.quoted {
+        identifier.name == name
+    } else {
+        identifier.name.eq_ignore_ascii_case(name)
+    }
+}
+
 /// Represent a complete SELECT statement.
 ///
 /// This is the most feature-rich AST node, covering the full surface area of
