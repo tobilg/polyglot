@@ -661,6 +661,8 @@ fn unresolved(column: &Column, confidence: ReferenceConfidence) -> ColumnUseRefe
             unqualified: column.table.is_none(),
             confidence,
             path_transform_kind: None,
+            path_functions: Vec::new(),
+            path_window: false,
         },
         span: column.span.or(column.name.span).map(source_span),
     }

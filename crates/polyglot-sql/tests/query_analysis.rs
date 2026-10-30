@@ -1422,12 +1422,119 @@ fn analyze_query_path_transform_kind_is_json_additive() {
     assert!(value["columnUses"][0]["references"][0]
         .get("pathTransformKind")
         .is_none());
+    let upstream = &value["projections"][0]["upstream"][0];
+    assert_eq!(upstream["pathFunctions"], json!(["SUM"]));
+    assert!(upstream.get("pathWindow").is_none());
+    for field in ["pathFunctions", "pathWindow"] {
+        assert!(value["columnUses"][0]["references"][0].get(field).is_none());
+    }
     value["projections"][0]["upstream"][0]
         .as_object_mut()
         .unwrap()
         .remove("pathTransformKind");
     let decoded: polyglot_sql::QueryAnalysis = serde_json::from_value(value).unwrap();
     assert_eq!(decoded.projections[0].upstream[0].path_transform_kind, None);
+    assert_eq!(decoded.projections[0].upstream[0].path_functions, ["SUM"]);
+}
+
+fn path_functions(projection: &polyglot_sql::ProjectionFact) -> Vec<(String, Vec<String>, bool)> {
+    projection
+        .upstream
+        .iter()
+        .map(|reference| {
+            (
+                reference.column.to_ascii_lowercase(),
+                reference.path_functions.clone(),
+                reference.path_window,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn analyze_query_reports_path_functions_and_windows() {
+    let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        let analysis = path_kind_analysis(
+            "WITH t AS (SELECT customer_id, SUM(amount) AS total, COUNT(DISTINCT order_id) AS n \
+             FROM s.orders GROUP BY customer_id) \
+             SELECT customer_id, ROUND(total, 2) AS total, n FROM t",
+            dialect,
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[0]),
+            vec![("customer_id".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[1]),
+            vec![("amount".into(), names(&["ROUND", "SUM"]), false)],
+            "{dialect}"
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[2]),
+            vec![("order_id".into(), names(&["COUNT"]), false)],
+            "{dialect}"
+        );
+
+        let analysis = path_kind_analysis(
+            "SELECT SUM(amount) OVER (PARTITION BY customer_id) AS running, \
+             ROW_NUMBER() OVER (ORDER BY ordered_at) AS rn, \
+             CAST(amount AS INT) AS amt, CASE WHEN amount > 0 THEN amount END AS pos, \
+             UPPER(status) || 'x' AS st \
+             FROM s.orders",
+            dialect,
+        );
+        let running = path_functions(&analysis.projections[0]);
+        assert!(running
+            .iter()
+            .all(|(_, functions, window)| *functions == names(&["SUM"]) && *window));
+        assert_eq!(
+            analysis.projections[0].upstream[0].path_transform_kind,
+            Some(TransformKind::Aggregation)
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[1]),
+            vec![("ordered_at".into(), names(&["ROW_NUMBER"]), true)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[2]),
+            vec![("amount".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[3]),
+            vec![("amount".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[4]),
+            vec![("status".into(), names(&["UPPER"]), false)]
+        );
+    }
+
+    let analysis = path_kind_analysis(
+        "SELECT IFF(amount > 0, amount, 0) AS pos FROM s.orders",
+        DialectType::Snowflake,
+    );
+    assert_eq!(
+        path_functions(&analysis.projections[0]),
+        vec![("amount".into(), names(&["IFF"]), false)]
+    );
+}
+
+#[test]
+fn analyze_query_merges_path_functions_of_set_operation_branches() {
+    let analysis = path_kind_analysis(
+        "SELECT x FROM (SELECT amount AS x FROM s.orders \
+         UNION ALL SELECT ABS(amount) AS x FROM s.orders) AS u",
+        DialectType::PostgreSQL,
+    );
+    assert_eq!(
+        path_functions(&analysis.projections[0]),
+        vec![("amount".into(), vec!["ABS".to_string()], false)]
+    );
+    assert_eq!(
+        analysis.projections[0].upstream[0].path_transform_kind,
+        Some(TransformKind::Expression)
+    );
 }
 
 #[test]

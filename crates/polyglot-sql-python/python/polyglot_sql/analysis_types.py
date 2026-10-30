@@ -69,6 +69,8 @@ class QuerySourceSpan(TypedDict):
 
 class _ColumnReferenceFactOptional(TypedDict, total=False):
     pathTransformKind: TransformKind
+    pathFunctions: list[str]
+    pathWindow: bool
 
 class ColumnReferenceFact(_ColumnReferenceFactOptional):
     sourceName: Optional[str]

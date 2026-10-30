@@ -704,7 +704,11 @@ type in `typeHint`. Compact `upstream` references identify base dependencies;
 each one carries `pathTransformKind`, the strongest transform on its path to
 the projection (`direct` < `star` < `cast` < `expression` < `aggregation`), so
 that passthrough reports `cast` there. Set-operation branches rank separately,
-and paths that reach the same column keep the strongest kind. Use the full
+and paths that reach the same column keep the strongest kind. `pathFunctions`
+lists the function names on the path, from the output to the source, in the
+dialect spelling (`["ROUND", "SUM"]`). Operators, `CASE`, and casts are not
+functions. `pathWindow` is `true` when a step is a window function, so
+`SUM(x) OVER (...)` reports `aggregation` with `pathWindow`. Use the full
 lineage API to inspect intermediate CTEs and expressions.
 For set operations, `typeHint` describes the dialect's combined output type
 after positional or name alignment. For example, Snowflake INTEGER/FLOAT
