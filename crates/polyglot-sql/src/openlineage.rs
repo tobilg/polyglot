@@ -230,6 +230,8 @@ pub fn openlineage_column_lineage(
         &mut warnings,
     );
 
+    // Built on first use: a star field of a base table needs no lineage.
+    let mut lineage = None;
     let mut fields = BTreeMap::new();
     for output_field in output_fields {
         if fields.contains_key(&output_field.name) {
@@ -244,6 +246,7 @@ pub fn openlineage_column_lineage(
 
         let input_fields = input_fields_for_output(
             &analysis.query,
+            &mut lineage,
             &output_field,
             options,
             schema_mapping.as_ref().map(|s| s as &dyn Schema),
@@ -508,6 +511,7 @@ fn apply_output_column_names(
 
 fn input_fields_for_output(
     query: &Expression,
+    lineage: &mut Option<Result<lineage::ScopedLineage>>,
     output_field: &OutputField,
     options: &OpenLineageOptions,
     schema: Option<&dyn Schema>,
@@ -527,21 +531,14 @@ fn input_fields_for_output(
         );
     }
 
-    let lineage_result = if let Some(schema) = schema {
-        lineage::lineage_with_schema(
-            &output_field.lineage_name,
-            query,
-            Some(schema),
-            Some(options.dialect),
-            false,
-        )
-    } else {
-        lineage::lineage(
-            &output_field.lineage_name,
-            query,
-            Some(options.dialect),
-            false,
-        )
+    let lineage = lineage.get_or_insert_with(|| {
+        lineage::ScopedLineage::for_query(query, schema, Some(options.dialect))
+    });
+    let lineage_result = match lineage {
+        Ok(lineage) => lineage
+            .named(&output_field.lineage_name)
+            .map_err(|err| err.to_string()),
+        Err(err) => Err(err.to_string()),
     };
 
     let node = match lineage_result {
@@ -1103,6 +1100,29 @@ mod tests {
             event_type: Some(OpenLineageRunEventType::Complete),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn resolves_each_field_of_a_wide_query_on_one_scope() {
+        let columns: Vec<String> = (0..40).map(|i| format!("c{i}")).collect();
+        let sql = format!(
+            "WITH w AS (SELECT {cols} FROM t) SELECT {cols}, c0 + c1 AS total FROM w",
+            cols = columns.join(", ")
+        );
+        let result = openlineage_column_lineage(&sql, &options()).expect("lineage");
+        assert_eq!(result.facet.fields.len(), columns.len() + 1);
+        for column in &columns {
+            let field = result.facet.fields.get(column).expect("field");
+            assert_eq!(field.input_fields.len(), 1, "{column}");
+            assert_eq!(field.input_fields[0].field, *column);
+        }
+        let total = result.facet.fields.get("total").expect("total");
+        let inputs: Vec<&str> = total
+            .input_fields
+            .iter()
+            .map(|f| f.field.as_str())
+            .collect();
+        assert_eq!(inputs, ["c0", "c1"]);
     }
 
     #[test]
