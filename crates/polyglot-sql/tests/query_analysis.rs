@@ -1794,7 +1794,7 @@ fn analyze_query_applies_star_except_replace_rename() {
         .collect();
     assert_eq!(
         names,
-        vec!["ID", "USER_ID", "CUSTOMER_ID", "order_amount", "TOTAL"]
+        vec!["ID", "USER_ID", "CUSTOMER_ID", "ORDER_AMOUNT", "TOTAL"]
     );
     assert_eq!(analysis.star_projections[0].expanded_columns, names);
     let order_amount = &analysis.projections[3];
@@ -1802,6 +1802,38 @@ fn analyze_query_applies_star_except_replace_rename() {
     assert_eq!(order_amount.upstream.len(), 1);
     assert_eq!(order_amount.upstream[0].table.as_deref(), Some("orders"));
     assert_eq!(order_amount.upstream[0].column, "AMOUNT");
+
+    // A quoted RENAME target keeps its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * RENAME (amount AS "order_amount") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "order_amount", "TOTAL"]
+    );
+
+    // A quoted EXCLUDE name matches with its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("TOTAL") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "AMOUNT"]
+    );
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("total") FROM orders"#,
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns.len(), 5);
+
+    // The columns that a pattern removes are not known.
+    let analysis = analyze(
+        DialectType::ClickHouse,
+        "SELECT * EXCEPT ('^tot.*') FROM orders",
+    );
+    assert!(analysis.star_projections[0].expanded_columns.is_empty());
 }
 
 #[test]

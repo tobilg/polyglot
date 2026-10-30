@@ -657,13 +657,16 @@ fn rewrite_stars_in_select(
         match expr {
             Expression::Star(star) => {
                 let qual = star.table.as_ref();
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &sources, resolved_ctes, schema)
-                {
+                let expanded = (!star.has_except_pattern())
+                    .then(|| expand_star_from_sources(qual, &sources, resolved_ctes, schema))
+                    .flatten();
+                if let Some(expanded) = expanded {
                     for (src_alias, col_name) in &expanded {
                         let table_id = Identifier::new(src_alias);
                         let column = make_column_expr(col_name, Some(&table_id));
-                        if let Some(expression) = star.expand_column(col_name, column) {
+                        if let Some(expression) =
+                            star.expand_column(col_name, column, schema.and_then(|s| s.dialect()))
+                        {
                             if let Some(name) = get_expression_output_name(&expression) {
                                 result_columns.push(name);
                             }
@@ -2943,7 +2946,7 @@ fn find_select_expr_by_name(
         [] => {}
     }
 
-    if let Some(expression) = synthesize_star_passthrough_expr(select, name) {
+    if let Some(expression) = synthesize_star_passthrough_expr(select, name, dialect) {
         return Ok(expression);
     }
 
@@ -3138,7 +3141,11 @@ fn find_select_expr(
     }
 }
 
-fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expression> {
+fn synthesize_star_passthrough_expr(
+    select: &Select,
+    name: &str,
+    dialect: Option<DialectType>,
+) -> Option<Expression> {
     let sources = get_select_sources(select);
     if sources.is_empty() {
         return None;
@@ -3157,12 +3164,13 @@ fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expre
 
         // Apply the star modifiers: the output `name` may read another column, or none.
         let column = match passthrough_star(expr) {
+            Some(star) if star.has_except_pattern() => return None,
             Some(star) => {
-                if let Some(alias) = star.replacement(name) {
+                if let Some(alias) = star.replacement(name, dialect) {
                     replacement = Some(Expression::Alias(Box::new(alias.clone())));
                     continue;
                 }
-                match star.source_column(name) {
+                match star.source_column(name, dialect) {
                     Some(column) => column,
                     None => continue,
                 }

@@ -881,6 +881,13 @@ fn expand_star_output_fields(
         Expression::Star(star) => Some(star),
         _ => None,
     };
+    if star.is_some_and(|star| star.has_except_pattern()) {
+        warnings.push(OpenLineageWarning::new(
+            "W_STAR_EXCEPT_PATTERN",
+            "SELECT * EXCEPT with a pattern cannot be expanded into OpenLineage column lineage",
+        ));
+        return;
+    }
     let sources = select_source_tables(select);
     for (alias, source) in sources {
         let (columns, star_source_table) = match source {
@@ -932,13 +939,14 @@ fn expand_star_output_fields(
         };
 
         for name in columns {
-            if star.is_some_and(|star| star.excludes(&name)) {
+            if star.is_some_and(|star| star.excludes(&name, Some(dialect))) {
                 continue;
             }
             let output_name = star
-                .and_then(|star| star.renamed(&name))
-                .map_or_else(|| name.clone(), |new| new.name.clone());
-            if let Some(replacement) = star.and_then(|star| star.replacement(&name)) {
+                .and_then(|star| star.renamed(&name, Some(dialect)))
+                .map_or_else(|| name.clone(), |new| new.name);
+            if let Some(replacement) = star.and_then(|star| star.replacement(&name, Some(dialect)))
+            {
                 fields.push(OutputField {
                     lineage_name: output_name.clone(),
                     name: output_name,
@@ -1583,11 +1591,27 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
             "SELECT * RENAME (amount AS order_amount) FROM s.orders",
         );
         assert!(!result.facet.fields.contains_key("AMOUNT"));
-        let inputs = &result.facet.fields["order_amount"].input_fields;
+        let inputs = &result.facet.fields["ORDER_AMOUNT"].input_fields;
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].name, "s.orders");
         assert_eq!(inputs[0].field, "AMOUNT");
         assert_eq!(inputs[0].transformations[0].subtype, "IDENTITY");
+
+        let result = lineage(
+            DialectType::Snowflake,
+            r#"SELECT * RENAME (amount AS "order_amount") FROM s.orders"#,
+        );
+        assert!(result.facet.fields.contains_key("order_amount"));
+
+        let result = lineage(
+            DialectType::ClickHouse,
+            "SELECT * EXCEPT ('^pay.*') FROM s.orders",
+        );
+        assert!(result.facet.fields.is_empty());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.code == "W_STAR_EXCEPT_PATTERN"));
     }
 
     #[test]

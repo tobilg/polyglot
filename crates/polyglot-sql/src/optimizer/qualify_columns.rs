@@ -1056,6 +1056,9 @@ fn expand_stars(
 
     for expr in &select.expressions {
         match expr {
+            Expression::Star(star) if star.has_except_pattern() => {
+                new_selections.push(expr.clone());
+            }
             Expression::Star(star) => {
                 has_star = true;
                 if let Some(table) = &star.table {
@@ -1069,7 +1072,9 @@ fn expand_stars(
                         }
                         for col_name in &columns {
                             let normalized = normalize_column_name(col_name, resolver.dialect);
-                            if star.excludes(col_name) || coalesced_columns.contains(&normalized) {
+                            if star.excludes(col_name, resolver.dialect)
+                                || coalesced_columns.contains(&normalized)
+                            {
                                 continue;
                             }
                             if let Some(tables) = column_tables.get(&normalized) {
@@ -1092,6 +1097,7 @@ fn expand_stars(
                             new_selections.extend(star.expand_column(
                                 col_name,
                                 create_qualified_column(col_name, Some(table_name)),
+                                resolver.dialect,
                             ));
                         }
                     }
@@ -1103,7 +1109,7 @@ fn expand_stars(
                             }
                             for col_name in &columns {
                                 let normalized = normalize_column_name(col_name, resolver.dialect);
-                                if star.excludes(col_name)
+                                if star.excludes(col_name, resolver.dialect)
                                     || coalesced_columns.contains(&normalized)
                                 {
                                     // Excluded, or already emitted as COALESCE
@@ -1130,6 +1136,7 @@ fn expand_stars(
                                 new_selections.extend(star.expand_column(
                                     col_name,
                                     create_qualified_column(col_name, Some(source_name)),
+                                    resolver.dialect,
                                 ));
                             }
                         }
