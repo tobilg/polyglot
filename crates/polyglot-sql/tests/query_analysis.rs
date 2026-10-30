@@ -1805,6 +1805,42 @@ fn analyze_query_applies_star_except_replace_rename() {
 }
 
 #[test]
+fn analyze_query_expands_stars_over_derived_tables_and_ctes() {
+    for (sql, expected) in [
+        (
+            "SELECT * FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT t.* EXCEPT (t.total) FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+        (
+            "WITH c AS (SELECT * FROM orders) SELECT * FROM c",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT * EXCEPT (o.total) FROM orders o",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.star_projections[0].expanded_columns, expected,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn analyze_query_classifies_typed_aggregates() {
     let analysis = analyze_query(
         "SELECT COUNT(*) AS rows, SUM(amount) AS amount_sum FROM orders",

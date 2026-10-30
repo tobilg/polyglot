@@ -7,7 +7,9 @@
 
 use crate::dialects::DialectType;
 use crate::error::{ColumnResolutionReason, ColumnResolutionTarget};
-use crate::expressions::{DataType, Expression, Identifier, JoinKind, NamedWindow, Select, With};
+use crate::expressions::{
+    DataType, Expression, Identifier, JoinKind, NamedWindow, Select, Star, With,
+};
 #[cfg(feature = "generate")]
 use crate::generator::Generator;
 use crate::optimizer::annotate_types::annotate_types;
@@ -3142,8 +3144,9 @@ fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expre
         return None;
     }
 
-    let mut candidate_aliases = Vec::new();
+    let mut candidates = Vec::new();
     let mut seen = HashSet::new();
+    let mut replacement = None;
 
     for expr in &select.expressions {
         let aliases = match star_passthrough_source_aliases(expr, &sources) {
@@ -3152,18 +3155,42 @@ fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expre
             StarPassthroughSources::Aliases(aliases) => aliases,
         };
 
+        // Apply the star modifiers: the output `name` may read another column, or none.
+        let column = match passthrough_star(expr) {
+            Some(star) => {
+                if let Some(alias) = star.replacement(name) {
+                    replacement = Some(Expression::Alias(Box::new(alias.clone())));
+                    continue;
+                }
+                match star.source_column(name) {
+                    Some(column) => column,
+                    None => continue,
+                }
+            }
+            None => name.to_string(),
+        };
+
         for alias in aliases {
-            if seen.insert(alias.clone()) {
-                candidate_aliases.push(alias);
+            if seen.insert((alias.clone(), column.clone())) {
+                candidates.push((alias, column.clone()));
             }
         }
     }
 
-    match candidate_aliases.as_slice() {
-        [alias] => {
+    match (replacement, candidates.as_slice()) {
+        (Some(replacement), []) => Some(replacement),
+        (None, [(alias, column)]) => {
             let table = Identifier::new(alias.clone());
-            Some(make_column_expr(name, Some(&table)))
+            Some(make_column_expr(column, Some(&table)))
         }
+        _ => None,
+    }
+}
+
+fn passthrough_star(expr: &Expression) -> Option<&Star> {
+    match expr {
+        Expression::Star(star) => Some(star),
+        Expression::Annotated(annotated) => passthrough_star(&annotated.this),
         _ => None,
     }
 }
@@ -6605,6 +6632,42 @@ SELECT json_data FROM transform_cte
             result.is_err(),
             "Unqualified star over multiple sources should remain ambiguous, got: {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn test_lineage_schema_less_star_passthrough_applies_modifiers() {
+        let leaves = |dialect, sql, column| {
+            let expr = parse_dialect(sql, dialect);
+            lineage(column, &expr, Some(dialect), false).map(|node| {
+                node.walk()
+                    .filter(|node| node.downstream.is_empty())
+                    .map(|node| node.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        let sql = "SELECT * EXCLUDE (b) FROM (SELECT * FROM t) s";
+        assert!(leaves(DialectType::Snowflake, sql, "b").is_err());
+        assert_eq!(
+            leaves(DialectType::Snowflake, sql, "a").unwrap(),
+            vec!["t.a"]
+        );
+
+        let sql = "SELECT * RENAME (a AS d) FROM (SELECT * FROM t) s";
+        assert_eq!(
+            leaves(DialectType::Snowflake, sql, "d").unwrap(),
+            vec!["t.a"]
+        );
+        assert!(leaves(DialectType::Snowflake, sql, "a").is_err());
+
+        let sql = "SELECT * REPLACE (a * 2 AS a) FROM (SELECT * FROM t) s";
+        let expr = parse_dialect(sql, DialectType::BigQuery);
+        let node = lineage("a", &expr, Some(DialectType::BigQuery), false).unwrap();
+        assert!(matches!(node.expression, Expression::Alias(_)));
+        assert_eq!(
+            leaves(DialectType::BigQuery, sql, "a").unwrap(),
+            vec!["t.a"]
         );
     }
 

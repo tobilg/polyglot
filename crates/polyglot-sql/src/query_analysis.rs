@@ -263,12 +263,6 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
         options.dialect,
         options.complexity_guard,
     )?;
-    let star_projections = star_projection_facts(
-        &original_expression,
-        mapping_schema.as_ref(),
-        options.dialect,
-    );
-
     if let Some(schema) = mapping_schema.as_ref() {
         use crate::optimizer::qualify_columns::QualifyColumnsError;
         expression = match qualify_schema_aware_expression(
@@ -296,6 +290,12 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
     crate::lineage::expand_cte_stars(
         &mut expression,
         mapping_schema.as_ref().map(|schema| schema as &dyn Schema),
+    );
+    let star_projections = star_projection_facts(
+        &original_expression,
+        &expression,
+        mapping_schema.as_ref(),
+        options.dialect,
     );
     annotate_types(
         &mut expression,
@@ -572,13 +572,16 @@ fn top_level_cte_facts(
         .collect()
 }
 
+/// `resolved` is `expression` after qualification and CTE star expansion. Its
+/// sources give the columns of derived tables and CTEs that select a star.
 fn star_projection_facts(
     expression: &Expression,
+    resolved: &Expression,
     mapping_schema: Option<&MappingSchema>,
     dialect: DialectType,
 ) -> Vec<StarProjectionFact> {
-    let scope = build_scope(expression);
-    let ordered_sources = ordered_source_names_for_query(expression);
+    let scope = build_scope(resolved);
+    let ordered_sources = ordered_source_names_for_query(resolved);
 
     select_expressions_for_query(expression)
         .iter()

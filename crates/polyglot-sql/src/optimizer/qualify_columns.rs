@@ -3450,6 +3450,11 @@ mod tests {
             ),
             (
                 DialectType::BigQuery,
+                "SELECT * EXCEPT (t.b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
                 "SELECT * REPLACE (b * 2 AS b) FROM t",
                 "SELECT t.a AS a, t.b * 2 AS b, t.c AS c FROM t",
             ),

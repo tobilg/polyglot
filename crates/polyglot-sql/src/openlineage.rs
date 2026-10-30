@@ -457,7 +457,10 @@ fn output_fields_for_query(
     dialect: DialectType,
     warnings: &mut Vec<OpenLineageWarning>,
 ) -> Result<Vec<OutputField>> {
-    let select = leftmost_select(query).ok_or_else(|| {
+    // A star over a CTE is not in the schema. Expand it from the CTE output columns.
+    let mut query = query.clone();
+    lineage::expand_cte_stars(&mut query, schema);
+    let select = leftmost_select(&query).ok_or_else(|| {
         Error::unsupported(
             "OpenLineage output field extraction for non-SELECT query",
             dialect.to_string(),
@@ -1585,6 +1588,57 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
         assert_eq!(inputs[0].name, "s.orders");
         assert_eq!(inputs[0].field, "AMOUNT");
         assert_eq!(inputs[0].transformations[0].subtype, "IDENTITY");
+    }
+
+    #[test]
+    fn select_star_expands_cte_fields() {
+        let mut opts = options();
+        opts.schema = Some(
+            serde_json::from_value(json!({
+                "tables": [{
+                    "name": "orders",
+                    "schema": "s",
+                    "columns": [
+                        {"name": "order_id", "type": "INT"},
+                        {"name": "amount", "type": "INT"}
+                    ]
+                }]
+            }))
+            .expect("schema"),
+        );
+
+        for (sql, fields) in [
+            (
+                "WITH c AS (SELECT * FROM s.orders) SELECT * FROM c",
+                vec!["amount", "order_id"],
+            ),
+            (
+                "WITH a AS (SELECT * FROM s.orders), c AS (SELECT * FROM a) SELECT c.* FROM c",
+                vec!["amount", "order_id"],
+            ),
+            (
+                "WITH c AS (SELECT order_id, amount FROM s.orders) SELECT * FROM c WHERE amount > 0",
+                vec!["amount", "order_id"],
+            ),
+        ] {
+            let result = openlineage_column_lineage(sql, &opts).expect("lineage");
+            assert!(result.warnings.is_empty(), "{sql}: {:?}", result.warnings);
+            assert_eq!(
+                result.facet.fields.keys().collect::<Vec<_>>(),
+                fields,
+                "{sql}"
+            );
+            for field in fields {
+                let inputs = &result.facet.fields[field].input_fields;
+                assert_eq!(inputs.len(), 1, "{sql}: {field}");
+                assert_eq!(inputs[0].name, "s.orders", "{sql}: {field}");
+                assert_eq!(inputs[0].field, field, "{sql}: {field}");
+                assert_eq!(
+                    inputs[0].transformations[0].subtype, "IDENTITY",
+                    "{sql}: {field}"
+                );
+            }
+        }
     }
 
     #[test]

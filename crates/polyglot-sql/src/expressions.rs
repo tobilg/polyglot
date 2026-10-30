@@ -3726,14 +3726,43 @@ impl Star {
             .flatten()
             .find(|replacement| star_modifier_matches(&replacement.alias, name))
     }
+
+    /// The source column that the star outputs as `output`, after RENAME and
+    /// EXCEPT. Returns `None` when the star does not output `output`.
+    pub(crate) fn source_column(&self, output: &str) -> Option<String> {
+        let renames = self.rename.iter().flatten();
+        let column = match renames
+            .clone()
+            .find(|(_, new)| star_modifier_matches(new, output))
+        {
+            Some((old, _)) => old.name.clone(),
+            None if renames
+                .clone()
+                .any(|(old, _)| star_modifier_matches(old, output)) =>
+            {
+                return None
+            }
+            None => output.to_string(),
+        };
+        (!self.excludes(&column)).then_some(column)
+    }
 }
 
+/// Match a modifier name to a column. A qualified name such as `t.col`
+/// (EXCEPT / EXCLUDE) matches on its column part, as in sqlglot.
 fn star_modifier_matches(identifier: &Identifier, name: &str) -> bool {
-    if identifier.quoted {
-        identifier.name == name
-    } else {
-        identifier.name.eq_ignore_ascii_case(name)
-    }
+    let matches = |candidate: &str| {
+        if identifier.quoted {
+            candidate == name
+        } else {
+            candidate.eq_ignore_ascii_case(name)
+        }
+    };
+    matches(&identifier.name)
+        || identifier
+            .name
+            .rsplit_once('.')
+            .is_some_and(|(_, column)| matches(column))
 }
 
 /// Represent a complete SELECT statement.
