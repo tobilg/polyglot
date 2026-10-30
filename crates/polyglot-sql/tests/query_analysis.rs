@@ -1,6 +1,7 @@
 use polyglot_sql::{
-    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionNullability,
-    QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind, ValidationSchema,
+    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionFact,
+    ProjectionNullability, QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind,
+    ValidationSchema,
 };
 use serde_json::json;
 
@@ -1870,6 +1871,74 @@ fn analyze_query_expands_stars_over_derived_tables_and_ctes() {
             "{sql}"
         );
     }
+}
+
+#[test]
+fn analyze_query_expands_stars_over_pivot_and_unpivot() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name": "payments", "schema": "s", "columns": [
+            {"name": "order_id", "type": "INT"},
+            {"name": "method", "type": "TEXT"},
+            {"name": "amount", "type": "INT"}
+        ]},
+        {"name": "customers", "schema": "s", "columns": [
+            {"name": "customer_id", "type": "INT"},
+            {"name": "first_name", "type": "TEXT"},
+            {"name": "last_name", "type": "TEXT"}
+        ]}
+    ]}))
+    .unwrap();
+    let analyze = |sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    let upstream = |projection: &ProjectionFact| {
+        projection
+            .upstream
+            .iter()
+            .map(|reference| {
+                format!(
+                    "{}.{}",
+                    reference.table.as_deref().unwrap_or("?"),
+                    reference.column
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
+         PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["order_id", "card", "coupon"]
+    );
+    assert_eq!(upstream(&analysis.projections[0]), ["s.payments.order_id"]);
+    assert_eq!(
+        upstream(&analysis.projections[1]),
+        ["s.payments.amount", "s.payments.method"]
+    );
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT customer_id, first_name, last_name FROM s.customers) \
+         UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["customer_id", "name_kind", "name_value"]
+    );
+    assert_eq!(
+        upstream(&analysis.projections[0]),
+        ["s.customers.customer_id"]
+    );
 }
 
 #[test]

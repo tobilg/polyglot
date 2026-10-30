@@ -1836,9 +1836,19 @@ fn attach_pivot_dependencies(
         return false;
     };
 
-    for col_ref in input_columns {
+    // A generated output aggregates its inputs for each value of the pivot field.
+    let aggregation = pivot_output_aggregation(pivot, scope, col_name, dialect);
+    let field_columns = match aggregation {
+        Some(_) => pivot_field_columns(pivot, dialect),
+        None => Vec::new(),
+    };
+    let mut step = aggregation.map(|aggregation| {
+        LineageNode::new(node.name.clone(), aggregation.clone(), node.source.clone())
+    });
+    let target = step.as_mut().unwrap_or(&mut *node);
+    for col_ref in input_columns.iter().chain(&field_columns) {
         attach_pivot_input_column(
-            node,
+            target,
             context,
             scope_id,
             dialect,
@@ -1849,6 +1859,7 @@ fn attach_pivot_dependencies(
             depth,
         );
     }
+    node.downstream.extend(step);
     true
 }
 
@@ -1864,8 +1875,33 @@ fn attach_unpivot_dependencies(
     depth: usize,
 ) -> bool {
     let mapping = unpivot_column_mapping(unpivot, dialect);
-    let Some(input_columns) = mapping.get(&normalize_column_name(col_name, dialect)) else {
-        return false;
+    let normalized = normalize_column_name(col_name, dialect);
+    let Some(input_columns) = mapping.get(&normalized) else {
+        // A column outside the UNPIVOT passes through from the input.
+        let unpivoted = unpivot
+            .columns
+            .iter()
+            .flat_map(unpivot_entry_columns)
+            .any(|column| normalize_column_name(&column.column, dialect) == normalized);
+        if unpivoted {
+            return false;
+        }
+        let col_ref = SimpleColumnRef {
+            table: None,
+            column: col_name.to_string(),
+        };
+        attach_pivot_input_column(
+            node,
+            context,
+            scope_id,
+            dialect,
+            &unpivot.this,
+            &col_ref,
+            trim_selects,
+            all_cte_scopes,
+            depth,
+        );
+        return true;
     };
 
     for col_ref in input_columns {
@@ -1944,6 +1980,46 @@ fn pivot_lineage_column_mapping(
     }
 
     mapping
+}
+
+/// The aggregation that computes the generated pivot output `col_name`.
+fn pivot_output_aggregation<'a>(
+    pivot: &'a crate::expressions::Pivot,
+    scope: &Scope,
+    col_name: &str,
+    dialect: Option<DialectType>,
+) -> Option<&'a Expression> {
+    let mut name = normalize_column_name(col_name, dialect);
+    // Pivot alias columns rename the outputs by position.
+    if let Some(pre_columns) = pre_pivot_output_columns(&pivot.this, scope) {
+        if let Some((_, pre)) = pivot_output_columns(pivot, &pre_columns, dialect)
+            .into_iter()
+            .find(|(post, _)| normalize_column_name(post, dialect) == name)
+        {
+            name = normalize_column_name(&pre, dialect);
+        }
+    }
+    let aggregations = pivot_aggregation_expressions(pivot);
+    pivot_generated_output_columns(pivot, dialect)
+        .iter()
+        .position(|output| normalize_column_name(output, dialect) == name)
+        .and_then(|index| aggregations.get(index % aggregations.len()))
+}
+
+/// The columns of the pivot field (`FOR method IN (...)`).
+fn pivot_field_columns(
+    pivot: &crate::expressions::Pivot,
+    dialect: Option<DialectType>,
+) -> Vec<SimpleColumnRef> {
+    pivot
+        .fields
+        .iter()
+        .filter_map(|field| match field {
+            Expression::In(in_expr) => Some(&in_expr.this),
+            _ => None,
+        })
+        .flat_map(|expr| find_column_refs_in_expr(expr, dialect))
+        .collect()
 }
 
 fn pre_pivot_output_columns(source: &Expression, scope: &Scope) -> Option<Vec<String>> {
@@ -7719,6 +7795,41 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         .unwrap();
         assert_lineage_contains(&second, "produce.q2");
         assert_lineage_contains(&second, "produce.q4");
+    }
+
+    #[test]
+    fn test_lineage_pivot_output_reads_aggregation_and_field() {
+        let expr = parse_dialect(
+            "SELECT order_id, card FROM (SELECT order_id, method, amount FROM payments) \
+             PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+            DialectType::Snowflake,
+        );
+        let node = lineage("card", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_lineage_contains(&node, "payments.amount");
+        assert_lineage_contains(&node, "payments.method");
+        assert!(node
+            .walk()
+            .any(|step| crate::traversal::contains_aggregate(&step.expression)));
+
+        let node = lineage("order_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_eq!(
+            lineage_names(&node)
+                .iter()
+                .filter(|name| name.starts_with("payments."))
+                .collect::<Vec<_>>(),
+            ["payments.order_id"]
+        );
+    }
+
+    #[test]
+    fn test_lineage_unpivot_passthrough_resolves_input_column() {
+        let expr = parse_dialect(
+            "SELECT customer_id FROM (SELECT customer_id, first_name, last_name FROM customers) \
+             UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+            DialectType::Snowflake,
+        );
+        let node = lineage("customer_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_lineage_contains(&node, "customers.customer_id");
     }
 
     #[test]

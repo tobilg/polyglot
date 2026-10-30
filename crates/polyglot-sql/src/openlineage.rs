@@ -14,6 +14,7 @@ use crate::{mapping_schema_from_validation_schema_with_dialect, Error, Result, V
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub const OPENLINEAGE_SCHEMA_URL: &str = "https://openlineage.io/spec/2-0-2/OpenLineage.json";
@@ -915,7 +916,7 @@ fn expand_star_output_fields(
                     continue;
                 }
                 let columns =
-                    lineage::output_columns_with_schema(query, Some(schema), Some(dialect))
+                    lineage::output_columns_with_schema(&query, Some(schema), Some(dialect))
                         .ok()
                         .and_then(|output| {
                             output
@@ -930,7 +931,7 @@ fn expand_star_output_fields(
                 let Some(columns) = columns else {
                     warnings.push(OpenLineageWarning::new(
                         "W_STAR_SCHEMA_LOOKUP_FAILED",
-                        format!("Could not expand SELECT * for derived table '{alias}'"),
+                        format!("Could not expand SELECT * for source '{alias}'"),
                     ));
                     continue;
                 };
@@ -958,6 +959,7 @@ fn expand_star_output_fields(
             // Derived table columns resolve through the lineage of the whole query.
             let (lineage_name, expression) = match &star_source_table {
                 Some(_) => (name, None),
+                None if alias.is_empty() => (output_name.clone(), Some(Expression::column(name))),
                 None => (
                     output_name.clone(),
                     Some(Expression::qualified_column(alias.as_str(), name)),
@@ -976,23 +978,28 @@ fn expand_star_output_fields(
 /// A FROM or JOIN source that a star can expand.
 enum StarSource<'a> {
     Table(String),
-    Derived(&'a Expression),
+    Derived(Box<Cow<'a, Expression>>),
 }
 
 fn select_source_tables(select: &Select) -> Vec<(String, StarSource<'_>)> {
     let mut result = Vec::new();
+    let with = select.with.as_ref();
     if let Some(from) = &select.from {
         for expr in &from.expressions {
-            collect_source_table(expr, &mut result);
+            collect_source_table(expr, with, &mut result);
         }
     }
     for join in &select.joins {
-        collect_source_table(&join.this, &mut result);
+        collect_source_table(&join.this, with, &mut result);
     }
     result
 }
 
-fn collect_source_table<'a>(expr: &'a Expression, result: &mut Vec<(String, StarSource<'a>)>) {
+fn collect_source_table<'a>(
+    expr: &'a Expression,
+    with: Option<&With>,
+    result: &mut Vec<(String, StarSource<'a>)>,
+) {
     match expr {
         Expression::Table(table) => {
             let qname = table_ref_qualified_name(table);
@@ -1005,11 +1012,32 @@ fn collect_source_table<'a>(expr: &'a Expression, result: &mut Vec<(String, Star
         }
         Expression::Subquery(subquery) => {
             if let Some(alias) = &subquery.alias {
-                result.push((alias.name.clone(), StarSource::Derived(&subquery.this)));
+                result.push((
+                    alias.name.clone(),
+                    StarSource::Derived(Box::new(Cow::Borrowed(&subquery.this))),
+                ));
             }
         }
-        Expression::Alias(alias) => collect_source_table(&alias.this, result),
-        Expression::Paren(paren) => collect_source_table(&paren.this, result),
+        Expression::Pivot(_) | Expression::Unpivot(_) => {
+            let alias = match expr {
+                Expression::Pivot(pivot) => pivot.alias.as_ref(),
+                Expression::Unpivot(unpivot) => unpivot.alias.as_ref(),
+                _ => None,
+            };
+            // A PIVOT or UNPIVOT expands as the derived table `SELECT * FROM <pivot>`.
+            let mut query = Select::new();
+            query.with = with.cloned();
+            query.expressions = vec![Expression::star()];
+            query.from = Some(From {
+                expressions: vec![expr.clone()],
+            });
+            result.push((
+                alias.map(|a| a.name.clone()).unwrap_or_default(),
+                StarSource::Derived(Box::new(Cow::Owned(Expression::Select(Box::new(query))))),
+            ));
+        }
+        Expression::Alias(alias) => collect_source_table(&alias.this, with, result),
+        Expression::Paren(paren) => collect_source_table(&paren.this, with, result),
         _ => {}
     }
 }
@@ -1612,6 +1640,65 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
             .warnings
             .iter()
             .any(|w| w.code == "W_STAR_EXCEPT_PATTERN"));
+    }
+
+    #[test]
+    fn select_star_expands_pivot_and_unpivot_fields() {
+        let mut opts = options();
+        opts.dialect = DialectType::Snowflake;
+        opts.schema = Some(
+            serde_json::from_value(json!({"tables": [
+                {"name": "payments", "schema": "s", "columns": [
+                    {"name": "order_id", "type": "INT"},
+                    {"name": "method", "type": "TEXT"},
+                    {"name": "amount", "type": "INT"}
+                ]},
+                {"name": "customers", "schema": "s", "columns": [
+                    {"name": "customer_id", "type": "INT"},
+                    {"name": "first_name", "type": "TEXT"},
+                    {"name": "last_name", "type": "TEXT"}
+                ]}
+            ]}))
+            .expect("schema"),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
+                 PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+                vec![
+                    ("card", vec!["amount", "method"]),
+                    ("coupon", vec!["amount", "method"]),
+                    ("order_id", vec!["order_id"]),
+                ],
+            ),
+            (
+                "SELECT * FROM (SELECT customer_id, first_name, last_name FROM s.customers) \
+                 UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+                vec![
+                    ("customer_id", vec!["customer_id"]),
+                    ("name_kind", vec!["first_name", "last_name"]),
+                    ("name_value", vec!["first_name", "last_name"]),
+                ],
+            ),
+        ] {
+            let result = openlineage_column_lineage(sql, &opts).expect("lineage");
+            assert!(result.warnings.is_empty(), "{sql}: {:?}", result.warnings);
+            let fields: Vec<_> = result
+                .facet
+                .fields
+                .iter()
+                .map(|(name, field)| {
+                    let inputs: Vec<_> = field
+                        .input_fields
+                        .iter()
+                        .map(|f| f.field.as_str())
+                        .collect();
+                    (name.as_str(), inputs)
+                })
+                .collect();
+            assert_eq!(fields, expected, "{sql}");
+        }
     }
 
     #[test]

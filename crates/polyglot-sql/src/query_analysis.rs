@@ -641,6 +641,12 @@ fn expanded_star_columns(
 
     source_names.dedup();
 
+    let empty_schema = MappingSchema::with_dialect(dialect);
+    let mut resolver = crate::resolver::Resolver::new(
+        scope,
+        mapping_schema.map_or(&empty_schema as &dyn Schema, |schema| schema),
+        false,
+    );
     for source_name in source_names {
         let Some(source) = scope.sources.get(&source_name) else {
             continue;
@@ -660,7 +666,15 @@ fn expanded_star_columns(
             }
         }
 
-        columns.extend(source_columns(source, mapping_schema, dialect));
+        match &source.expression {
+            // The resolver derives PIVOT and UNPIVOT outputs from the IN list.
+            Expression::Pivot(_) | Expression::Unpivot(_) => columns.extend(
+                resolver
+                    .get_source_columns(&source_name)
+                    .unwrap_or_default(),
+            ),
+            _ => columns.extend(source_columns(source, mapping_schema, dialect)),
+        }
     }
 
     columns
