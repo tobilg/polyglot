@@ -1,6 +1,7 @@
 use polyglot_sql::{
-    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionNullability,
-    QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind, ValidationSchema,
+    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionFact,
+    ProjectionNullability, QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind,
+    ValidationSchema,
 };
 use serde_json::json;
 
@@ -79,6 +80,40 @@ fn analyze_query_set_operation_types_454() {
                 Some(if right == "INTEGER" { "INT" } else { "FLOAT" })
             );
         }
+    }
+}
+
+#[test]
+fn analyze_query_constant_projections_through_sources_have_no_upstream() {
+    for (sql, with_schema) in [
+        ("(SELECT 'x' AS src, CAST(a AS INT) AS v FROM x) UNION ALL (SELECT 'y' AS src, CAST(b AS INT) AS v FROM y)", true),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", false),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", true),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", false),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", true),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::PostgreSQL,
+                schema: with_schema.then(schema),
+            },
+        )
+        .unwrap();
+        assert!(
+            analysis.projections[0].upstream.is_empty(),
+            "{sql}: {:?}",
+            analysis.projections[0].upstream
+        );
+        assert!(
+            analysis.projections[1]
+                .upstream
+                .iter()
+                .any(|reference| reference.table.as_deref() == Some("x") && reference.column == "a"),
+            "{sql}: {:?}",
+            analysis.projections[1].upstream
+        );
     }
 }
 
@@ -562,6 +597,39 @@ fn analyze_query_column_uses_do_not_leak_ctes_or_non_lateral_sources() {
         derived.references[1].reference.confidence,
         ReferenceConfidence::Unknown
     );
+}
+
+#[test]
+fn analyze_query_column_uses_resolve_lateral_outer_references() {
+    use polyglot_sql::ColumnUseContext;
+    for sql in [
+        "SELECT c.id, l.n FROM customers c, LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+        "SELECT c.id, l.n FROM customers c CROSS JOIN LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+    ] {
+        let analysis = column_use_analysis(sql, true);
+        assert!(analysis.projections[1].upstream.is_empty(), "{sql}");
+        let mut base_tables: Vec<_> = analysis.base_tables.iter().map(|t| t.name.as_str()).collect();
+        base_tables.sort();
+        assert_eq!(base_tables, ["customers", "orders"], "{sql}");
+        let filter = analysis
+            .column_uses
+            .iter()
+            .find(|fact| fact.scope_path == "root.derived[0]" && fact.context == ColumnUseContext::Filter)
+            .unwrap();
+        let references: Vec<_> = filter
+            .references
+            .iter()
+            .map(|r| (r.reference.table.as_deref(), r.reference.column.as_str(), r.reference.confidence))
+            .collect();
+        assert_eq!(
+            references,
+            [
+                (Some("orders"), "customer_id", ReferenceConfidence::Resolved),
+                (Some("customers"), "id", ReferenceConfidence::Resolved),
+            ],
+            "{sql}"
+        );
+    }
 }
 
 #[test]
@@ -1274,6 +1342,487 @@ fn analyze_query_follows_cte_lineage() {
     assert_eq!(analysis.base_tables[0].name, "users");
 }
 
+fn path_kind_analysis(sql: &str, dialect: DialectType) -> polyglot_sql::QueryAnalysis {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{
+            "name": "orders",
+            "schema": "s",
+            "columns": [
+                {"name": "order_id", "type": "INT"},
+                {"name": "customer_id", "type": "INT"},
+                {"name": "amount", "type": "DECIMAL(10,2)"},
+                {"name": "status", "type": "TEXT"},
+                {"name": "ordered_at", "type": "TIMESTAMP"},
+                {"name": "payload", "type": "TEXT"}
+            ]
+        }]
+    }))
+    .unwrap();
+    analyze_query(
+        sql,
+        AnalyzeQueryOptions {
+            dialect,
+            schema: Some(schema),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+fn path_kinds(projection: &polyglot_sql::ProjectionFact) -> Vec<(String, Option<TransformKind>)> {
+    projection
+        .upstream
+        .iter()
+        .map(|reference| {
+            (
+                reference.column.to_ascii_lowercase(),
+                reference.path_transform_kind,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn analyze_query_reports_path_transform_kind_through_query_scopes() {
+    use TransformKind::*;
+    let aggregate = "SELECT customer_id, SUM(amount) AS total FROM s.orders GROUP BY customer_id";
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        for sql in [
+            format!("SELECT t.customer_id, t.total FROM ({aggregate}) AS t"),
+            format!("WITH c AS ({aggregate}) SELECT customer_id, total FROM c"),
+            format!("SELECT customer_id, total + 1 AS total FROM ({aggregate}) AS t"),
+            "WITH a AS (SELECT customer_id, CAST(amount AS INT) AS amt FROM s.orders), \
+             b AS (SELECT customer_id, amt * 2 AS amt2 FROM a) \
+             SELECT customer_id, amt2 FROM b"
+                .to_string(),
+        ] {
+            let analysis = path_kind_analysis(&sql, dialect);
+            let total = &analysis.projections[1];
+            let expected = if sql.contains("amt2") {
+                Expression
+            } else {
+                Aggregation
+            };
+            assert_eq!(
+                path_kinds(&analysis.projections[0]),
+                vec![("customer_id".into(), Some(Direct))],
+                "{dialect}: {sql}"
+            );
+            assert_eq!(
+                path_kinds(total),
+                vec![("amount".into(), Some(expected))],
+                "{dialect}: {sql}"
+            );
+            assert_ne!(total.transform_kind, Aggregation, "{dialect}: {sql}");
+        }
+
+        let analysis = path_kind_analysis(
+            "WITH a AS (SELECT CAST(amount AS INT) AS amt FROM s.orders) SELECT amt FROM a",
+            dialect,
+        );
+        assert_eq!(analysis.projections[0].transform_kind, Direct);
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![("amount".into(), Some(Cast))]
+        );
+    }
+}
+
+#[test]
+fn analyze_query_reports_path_transform_kind_per_set_operation_branch() {
+    use TransformKind::*;
+    let union =
+        "SELECT amount AS x FROM s.orders UNION ALL SELECT SUM(order_id) AS x FROM s.orders";
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        for sql in [
+            format!("SELECT t.x FROM ({union}) AS t"),
+            format!("WITH u AS ({union}) SELECT x FROM u"),
+            union.to_string(),
+        ] {
+            let analysis = path_kind_analysis(&sql, dialect);
+            assert_eq!(
+                path_kinds(&analysis.projections[0]),
+                vec![
+                    ("amount".into(), Some(Direct)),
+                    ("order_id".into(), Some(Aggregation))
+                ],
+                "{dialect}: {sql}"
+            );
+        }
+
+        let analysis = path_kind_analysis(
+            &format!("{union} UNION ALL SELECT amount + 1 FROM s.orders"),
+            dialect,
+        );
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![
+                ("amount".into(), Some(Expression)),
+                ("order_id".into(), Some(Aggregation))
+            ],
+            "{dialect}: paths that reach one column keep the strongest kind"
+        );
+
+        let analysis = path_kind_analysis(union, dialect);
+        let branches = &analysis.set_operations[0].branches;
+        assert_eq!(
+            path_kinds(&branches[0].projections[0]),
+            vec![("amount".into(), Some(Direct))]
+        );
+        assert_eq!(
+            path_kinds(&branches[1].projections[0]),
+            vec![("order_id".into(), Some(Aggregation))]
+        );
+    }
+}
+
+#[test]
+fn analyze_query_path_transform_kind_is_json_additive() {
+    let analysis = path_kind_analysis(
+        "SELECT t.total FROM (SELECT SUM(amount) AS total FROM s.orders) AS t WHERE t.total > 0",
+        DialectType::PostgreSQL,
+    );
+    let mut value = serde_json::to_value(&analysis).unwrap();
+    assert_eq!(
+        value["projections"][0]["upstream"][0]["pathTransformKind"],
+        "aggregation"
+    );
+    assert!(value["columnUses"][0]["references"][0]
+        .get("pathTransformKind")
+        .is_none());
+    let upstream = &value["projections"][0]["upstream"][0];
+    assert_eq!(upstream["pathFunctions"], json!(["SUM"]));
+    assert!(upstream.get("pathWindow").is_none());
+    for field in ["pathFunctions", "pathWindow"] {
+        assert!(value["columnUses"][0]["references"][0].get(field).is_none());
+    }
+    value["projections"][0]["upstream"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("pathTransformKind");
+    let decoded: polyglot_sql::QueryAnalysis = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.projections[0].upstream[0].path_transform_kind, None);
+    assert_eq!(decoded.projections[0].upstream[0].path_functions, ["SUM"]);
+}
+
+fn path_functions(projection: &polyglot_sql::ProjectionFact) -> Vec<(String, Vec<String>, bool)> {
+    projection
+        .upstream
+        .iter()
+        .map(|reference| {
+            (
+                reference.column.to_ascii_lowercase(),
+                reference.path_functions.clone(),
+                reference.path_window,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn analyze_query_reports_path_functions_and_windows() {
+    let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    for dialect in [DialectType::PostgreSQL, DialectType::Snowflake] {
+        let analysis = path_kind_analysis(
+            "WITH t AS (SELECT customer_id, SUM(amount) AS total, COUNT(DISTINCT order_id) AS n \
+             FROM s.orders GROUP BY customer_id) \
+             SELECT customer_id, ROUND(total, 2) AS total, n FROM t",
+            dialect,
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[0]),
+            vec![("customer_id".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[1]),
+            vec![("amount".into(), names(&["ROUND", "SUM"]), false)],
+            "{dialect}"
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[2]),
+            vec![("order_id".into(), names(&["COUNT"]), false)],
+            "{dialect}"
+        );
+
+        let analysis = path_kind_analysis(
+            "SELECT SUM(amount) OVER (PARTITION BY customer_id) AS running, \
+             ROW_NUMBER() OVER (ORDER BY ordered_at) AS rn, \
+             CAST(amount AS INT) AS amt, CASE WHEN amount > 0 THEN amount END AS pos, \
+             UPPER(status) || 'x' AS st \
+             FROM s.orders",
+            dialect,
+        );
+        let running = path_functions(&analysis.projections[0]);
+        assert!(running
+            .iter()
+            .all(|(_, functions, window)| *functions == names(&["SUM"]) && *window));
+        assert_eq!(
+            analysis.projections[0].upstream[0].path_transform_kind,
+            Some(TransformKind::Aggregation)
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[1]),
+            vec![("ordered_at".into(), names(&["ROW_NUMBER"]), true)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[2]),
+            vec![("amount".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[3]),
+            vec![("amount".into(), Vec::new(), false)]
+        );
+        assert_eq!(
+            path_functions(&analysis.projections[4]),
+            vec![("status".into(), names(&["UPPER"]), false)]
+        );
+    }
+
+    let analysis = path_kind_analysis(
+        "SELECT IFF(amount > 0, amount, 0) AS pos FROM s.orders",
+        DialectType::Snowflake,
+    );
+    assert_eq!(
+        path_functions(&analysis.projections[0]),
+        vec![("amount".into(), names(&["IFF"]), false)]
+    );
+}
+
+#[test]
+fn analyze_query_merges_path_functions_of_set_operation_branches() {
+    let analysis = path_kind_analysis(
+        "SELECT x FROM (SELECT amount AS x FROM s.orders \
+         UNION ALL SELECT ABS(amount) AS x FROM s.orders) AS u",
+        DialectType::PostgreSQL,
+    );
+    assert_eq!(
+        path_functions(&analysis.projections[0]),
+        vec![("amount".into(), vec!["ABS".to_string()], false)]
+    );
+    assert_eq!(
+        analysis.projections[0].upstream[0].path_transform_kind,
+        Some(TransformKind::Expression)
+    );
+}
+
+#[test]
+fn path_transforms_respect_scalar_query_scopes() {
+    for dialect in [
+        DialectType::PostgreSQL,
+        DialectType::Snowflake,
+        DialectType::DuckDB,
+    ] {
+        for sql in [
+            "SELECT (SELECT amount FROM s.orders WHERE ABS(order_id) > 0 LIMIT 1) AS value",
+            "SELECT (SELECT amount FROM s.orders ORDER BY ABS(order_id) LIMIT 1) AS value",
+            "SELECT (SELECT amount FROM (SELECT amount, SUM(order_id) OVER () AS unused FROM s.orders) AS q LIMIT 1) AS value",
+        ] {
+            let analysis = path_kind_analysis(sql, dialect);
+            let upstream = &analysis.projections[0].upstream;
+            assert_eq!(upstream.len(), 1, "{dialect}: {sql}");
+            assert!(upstream[0].path_functions.is_empty(), "{dialect}: {sql}: {upstream:?}");
+            assert!(!upstream[0].path_window, "{dialect}: {sql}");
+            assert_eq!(upstream[0].path_transform_kind, Some(TransformKind::Direct), "{dialect}: {sql}");
+        }
+        let analysis = path_kind_analysis(
+            "SELECT (SELECT amount FROM s.orders UNION ALL SELECT SUM(order_id) FROM s.orders LIMIT 1) AS value", dialect);
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![
+                ("amount".into(), Some(TransformKind::Direct)),
+                ("order_id".into(), Some(TransformKind::Aggregation)),
+            ]
+        );
+    }
+}
+
+#[test]
+fn path_transforms_include_operations_inside_casts() {
+    for dialect in [
+        DialectType::PostgreSQL,
+        DialectType::Snowflake,
+        DialectType::DuckDB,
+    ] {
+        for (value, expected) in [
+            ("SUM(amount)", TransformKind::Aggregation),
+            ("SUM(amount) OVER ()", TransformKind::Aggregation),
+            ("amount * 2", TransformKind::Expression),
+            ("amount", TransformKind::Direct),
+        ] {
+            let inline = path_kind_analysis(
+                &format!("SELECT CAST({value} AS BIGINT) AS v FROM s.orders"),
+                dialect,
+            );
+            let scoped = path_kind_analysis(&format!("WITH t AS (SELECT {value} AS v FROM s.orders) SELECT CAST(v AS BIGINT) AS v FROM t"), dialect);
+            assert_eq!(inline.projections[0].transform_kind, TransformKind::Cast);
+            assert_eq!(
+                path_kinds(&inline.projections[0]),
+                path_kinds(&scoped.projections[0])
+            );
+            assert_eq!(
+                inline.projections[0].upstream[0].path_transform_kind,
+                Some(if expected == TransformKind::Direct {
+                    TransformKind::Cast
+                } else {
+                    expected
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn path_function_names_preserve_quoted_identity() {
+    let analysis = path_kind_analysis(
+        r#"SELECT "Foo"(amount) + "foo"(amount) + foo(amount) FROM s.orders"#,
+        DialectType::PostgreSQL,
+    );
+    assert_eq!(
+        analysis.projections[0].upstream[0].path_functions,
+        ["\"Foo\"", "\"foo\"", "FOO"]
+    );
+}
+
+#[test]
+fn star_modifiers_apply_to_join_using_outputs() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name": "a", "columns": [{"name": "id", "type": "INT"}, {"name": "av", "type": "INT"}]},
+        {"name": "b", "columns": [{"name": "id", "type": "INT"}, {"name": "bv", "type": "INT"}]}
+    ]}))
+    .unwrap();
+    for (modifier, name, constant) in [
+        ("RENAME (id AS joined_id)", "joined_id", false),
+        ("REPLACE (42 AS id)", "id", true),
+    ] {
+        let sql = format!("SELECT * {modifier} FROM a FULL OUTER JOIN b USING (id)");
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect: DialectType::DuckDB,
+                schema: Some(schema.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let projection = analysis
+            .projections
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {name}: {sql}: {:?}", analysis.projections));
+        assert_eq!(analysis.projections.len(), 3);
+        if constant {
+            assert_eq!(projection.transform_kind, TransformKind::Constant, "{sql}");
+            assert!(
+                projection.upstream.is_empty(),
+                "{sql}: {:?}",
+                projection.upstream
+            );
+        }
+    }
+}
+
+#[test]
+fn schema_less_star_replace_then_rename_keeps_replacement_lineage() {
+    let dialect = DialectType::Snowflake;
+    let expression = polyglot_sql::parse_one(
+        "SELECT * REPLACE (b * 2 AS a) RENAME (a AS renamed) FROM t",
+        dialect,
+    )
+    .unwrap();
+    let node =
+        polyglot_sql::lineage::lineage("renamed", &expression, Some(dialect), false).unwrap();
+    let leaves: Vec<_> = node
+        .walk()
+        .filter(|n| n.downstream.is_empty())
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(leaves, ["t.b"]);
+
+    let ambiguous = polyglot_sql::parse_one(
+        "SELECT t.* REPLACE (t.b AS a), u.* REPLACE (u.c AS a) FROM t JOIN u ON t.id = u.id",
+        dialect,
+    )
+    .unwrap();
+    assert!(polyglot_sql::lineage::lineage("a", &ambiguous, Some(dialect), false).is_err());
+}
+
+#[test]
+fn star_exclusion_matches_escaped_qualified_identifiers() {
+    let analysis = analyze_query(
+        r#"WITH t AS (SELECT 1 AS "a""b", 2 AS keep) SELECT * EXCLUDE (t."a""b") FROM t"#,
+        AnalyzeQueryOptions {
+            dialect: DialectType::Snowflake,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(analysis.projections.len(), 1, "{:?}", analysis.projections);
+    assert_eq!(analysis.projections[0].name.as_deref(), Some("keep"));
+}
+
+#[test]
+fn identifier_table_names_preserve_quoted_components() {
+    for (literal, catalog, schema, name) in [
+        (r#""table.with.dot""#, None, None, "table.with.dot"),
+        (
+            r#""db.with.dot"."s.with.dot"."t.with.dot""#,
+            Some("db.with.dot"),
+            Some("s.with.dot"),
+            "t.with.dot",
+        ),
+        (r#"db.s."a""b""#, Some("db"), Some("s"), "a\"b"),
+        (r#"db.."a.b""#, Some("db"), Some("PUBLIC"), "a.b"),
+        (
+            r#" "db.1" . s . "a""b""" "#,
+            Some("db.1"),
+            Some("s"),
+            "a\"b\"",
+        ),
+        (r#""таблица.1""#, None, None, "таблица.1"),
+    ] {
+        let sql = format!("SELECT o.id FROM IDENTIFIER('{literal}') AS o");
+        let expression = polyglot_sql::parse_one(&sql, DialectType::Snowflake).unwrap();
+        let scope = polyglot_sql::scope::build_scope(&expression);
+        let source = scope
+            .sources
+            .get("o")
+            .unwrap_or_else(|| panic!("missing table: {sql}"));
+        let polyglot_sql::Expression::Table(table) = &source.expression else {
+            panic!("not a table: {sql}")
+        };
+        assert_eq!(
+            table.catalog.as_ref().map(|p| p.name.as_str()),
+            catalog,
+            "{sql}"
+        );
+        assert_eq!(
+            table.schema.as_ref().map(|p| p.name.as_str()),
+            schema,
+            "{sql}"
+        );
+        assert_eq!(table.name.name, name, "{sql}");
+        assert!(table.name.quoted, "{sql}");
+    }
+}
+
+#[test]
+fn malformed_identifier_table_literals_stay_unresolved() {
+    for literal in [
+        "",
+        "db.",
+        "a.b.c.d",
+        r#""unclosed"#,
+        r#""t"junk"#,
+        "t extra",
+        r#""""#,
+    ] {
+        let sql = format!("SELECT o.id FROM IDENTIFIER('{literal}') AS o");
+        let expression = polyglot_sql::parse_one(&sql, DialectType::Snowflake).unwrap();
+        let scope = polyglot_sql::scope::build_scope(&expression);
+        assert!(!scope.sources.contains_key("o"), "{sql}");
+    }
+}
+
 #[test]
 fn analyze_query_reports_top_level_cte_facts() {
     let analysis = analyze_query(
@@ -1725,6 +2274,218 @@ fn analyze_query_expands_unqualified_star_with_schema() {
     assert_eq!(
         expanded,
         vec!["amount", "customer_id", "id", "total", "user_id"]
+    );
+}
+
+#[test]
+fn analyze_query_applies_star_except_replace_rename() {
+    let analyze = |dialect, sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap()
+    };
+
+    for (dialect, sql) in [
+        (
+            DialectType::Snowflake,
+            "SELECT * EXCLUDE (total) FROM orders",
+        ),
+        (DialectType::BigQuery, "SELECT * EXCEPT (total) FROM orders"),
+        (
+            DialectType::ClickHouse,
+            "SELECT * EXCEPT (total) FROM orders",
+        ),
+        (DialectType::DuckDB, "SELECT * EXCLUDE (total) FROM orders"),
+    ] {
+        let analysis = analyze(dialect, sql);
+        // Snowflake normalizes unquoted schema columns to upper case.
+        let names: Vec<_> = analysis
+            .projections
+            .iter()
+            .filter_map(|projection| projection.name.as_deref())
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(names, ["id", "user_id", "customer_id", "amount"], "{sql}");
+        let expanded: Vec<_> = analysis.star_projections[0]
+            .expanded_columns
+            .iter()
+            .map(|column| column.to_lowercase())
+            .collect();
+        assert_eq!(expanded, names, "{sql}");
+    }
+
+    let analysis = analyze(
+        DialectType::BigQuery,
+        "SELECT * REPLACE (amount * 2 AS amount) FROM orders",
+    );
+    assert_eq!(analysis.projections.len(), 5);
+    let amount = &analysis.projections[3];
+    assert_eq!(amount.name.as_deref(), Some("amount"));
+    assert_eq!(amount.transform_kind, TransformKind::Expression);
+    assert_eq!(amount.upstream.len(), 1);
+    assert_eq!(amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(amount.upstream[0].column, "amount");
+
+    let analysis = analyze(
+        DialectType::Snowflake,
+        "SELECT * RENAME (amount AS order_amount) FROM orders",
+    );
+    let names: Vec<_> = analysis
+        .projections
+        .iter()
+        .filter_map(|projection| projection.name.as_deref())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ID", "USER_ID", "CUSTOMER_ID", "ORDER_AMOUNT", "TOTAL"]
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns, names);
+    let order_amount = &analysis.projections[3];
+    assert_eq!(order_amount.transform_kind, TransformKind::Direct);
+    assert_eq!(order_amount.upstream.len(), 1);
+    assert_eq!(order_amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(order_amount.upstream[0].column, "AMOUNT");
+
+    // A quoted RENAME target keeps its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * RENAME (amount AS "order_amount") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "order_amount", "TOTAL"]
+    );
+
+    // A quoted EXCLUDE name matches with its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("TOTAL") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "AMOUNT"]
+    );
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("total") FROM orders"#,
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns.len(), 5);
+
+    // The columns that a pattern removes are not known.
+    let analysis = analyze(
+        DialectType::ClickHouse,
+        "SELECT * EXCEPT ('^tot.*') FROM orders",
+    );
+    assert!(analysis.star_projections[0].expanded_columns.is_empty());
+}
+
+#[test]
+fn analyze_query_expands_stars_over_derived_tables_and_ctes() {
+    for (sql, expected) in [
+        (
+            "SELECT * FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT t.* EXCEPT (t.total) FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+        (
+            "WITH c AS (SELECT * FROM orders) SELECT * FROM c",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT * EXCEPT (o.total) FROM orders o",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.star_projections[0].expanded_columns, expected,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn analyze_query_expands_stars_over_pivot_and_unpivot() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name": "payments", "schema": "s", "columns": [
+            {"name": "order_id", "type": "INT"},
+            {"name": "method", "type": "TEXT"},
+            {"name": "amount", "type": "INT"}
+        ]},
+        {"name": "customers", "schema": "s", "columns": [
+            {"name": "customer_id", "type": "INT"},
+            {"name": "first_name", "type": "TEXT"},
+            {"name": "last_name", "type": "TEXT"}
+        ]}
+    ]}))
+    .unwrap();
+    let analyze = |sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    let upstream = |projection: &ProjectionFact| {
+        projection
+            .upstream
+            .iter()
+            .map(|reference| {
+                format!(
+                    "{}.{}",
+                    reference.table.as_deref().unwrap_or("?"),
+                    reference.column
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
+         PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["order_id", "card", "coupon"]
+    );
+    assert_eq!(upstream(&analysis.projections[0]), ["s.payments.order_id"]);
+    assert_eq!(
+        upstream(&analysis.projections[1]),
+        ["s.payments.amount", "s.payments.method"]
+    );
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT customer_id, first_name, last_name FROM s.customers) \
+         UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["customer_id", "name_kind", "name_value"]
+    );
+    assert_eq!(
+        upstream(&analysis.projections[0]),
+        ["s.customers.customer_id"]
     );
 }
 
@@ -2414,6 +3175,90 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
             analysis.projections[0].upstream
         );
     }
+}
+
+#[test]
+fn analyze_query_resolves_clickhouse_array_join_aliases_with_schema() {
+    for sql in [
+        "SELECT item FROM t ARRAY JOIN arr AS item",
+        "SELECT item FROM t LEFT ARRAY JOIN arr AS item",
+        "SELECT item FROM t ARRAY JOIN t.arr AS item WHERE item > 0",
+        "SELECT arr FROM t ARRAY JOIN arr",
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::ClickHouse,
+                schema: Some(unnest_analysis_schema()),
+            },
+        )
+        .unwrap();
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].table.as_deref(), Some("t"), "{sql}");
+        assert_eq!(upstream[0].column, "arr", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        for fact in &analysis.column_uses {
+            assert_eq!(fact.references[0].reference.column, "arr", "{sql}");
+        }
+    }
+}
+
+#[test]
+fn analyze_query_resolves_snowflake_identifier_tables() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{"schema": "s", "name": "orders", "columns": [{"name": "id", "type": "INT"}]}]
+    }))
+    .unwrap();
+    let analyze = |sql: &str| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::Snowflake,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    for sql in [
+        "SELECT id FROM IDENTIFIER('s.orders')",
+        "SELECT o.id FROM IDENTIFIER('s.orders') AS o",
+    ] {
+        let analysis = analyze(sql);
+        let plain = analyze(&sql.replace("IDENTIFIER('s.orders')", "s.orders"));
+        assert_eq!(analysis.base_tables.len(), 1, "{sql}");
+        assert_eq!(
+            analysis.base_tables[0].schema.as_deref(),
+            Some("s"),
+            "{sql}"
+        );
+        assert_eq!(
+            analysis.base_tables[0].table.as_deref(),
+            Some("orders"),
+            "{sql}"
+        );
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].column, "id", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        assert_eq!(
+            serde_json::to_value(upstream).unwrap(),
+            serde_json::to_value(&plain.projections[0].upstream).unwrap(),
+            "{sql}"
+        );
+    }
+    let analysis = analyze("SELECT id FROM IDENTIFIER($t)");
+    assert!(analysis.base_tables.is_empty());
 }
 
 #[test]

@@ -1056,6 +1056,9 @@ fn expand_stars(
 
     for expr in &select.expressions {
         match expr {
+            Expression::Star(star) if star.has_except_pattern() => {
+                new_selections.push(expr.clone());
+            }
             Expression::Star(star) => {
                 has_star = true;
                 if let Some(table) = &star.table {
@@ -1069,28 +1072,34 @@ fn expand_stars(
                         }
                         for col_name in &columns {
                             let normalized = normalize_column_name(col_name, resolver.dialect);
-                            if coalesced_columns.contains(&normalized) {
+                            if star.excludes(col_name, resolver.dialect)
+                                || coalesced_columns.contains(&normalized)
+                            {
                                 continue;
                             }
                             if let Some(tables) = column_tables.get(&normalized) {
                                 if tables.contains(table_name) {
                                     coalesced_columns.insert(normalized);
                                     let coalesce = make_coalesce(col_name, tables);
-                                    new_selections.push(Expression::Alias(Box::new(Alias {
-                                        this: coalesce,
-                                        alias: Identifier::new(col_name),
-                                        column_aliases: vec![],
-                                        alias_explicit_as: false,
-                                        alias_keyword: None,
-                                        pre_alias_comments: vec![],
-                                        trailing_comments: vec![],
-                                        inferred_type: None,
-                                    })));
+                                    if let Some(expanded) =
+                                        star.expand_column(col_name, coalesce, resolver.dialect)
+                                    {
+                                        new_selections.push(match expanded {
+                                            Expression::Alias(_) => expanded,
+                                            _ => Expression::Alias(Box::new(Alias::new(
+                                                expanded,
+                                                Identifier::new(col_name),
+                                            ))),
+                                        });
+                                    }
                                     continue;
                                 }
                             }
-                            new_selections
-                                .push(create_qualified_column(col_name, Some(table_name)));
+                            new_selections.extend(star.expand_column(
+                                col_name,
+                                create_qualified_column(col_name, Some(table_name)),
+                                resolver.dialect,
+                            ));
                         }
                     }
                 } else {
@@ -1101,8 +1110,10 @@ fn expand_stars(
                             }
                             for col_name in &columns {
                                 let normalized = normalize_column_name(col_name, resolver.dialect);
-                                if coalesced_columns.contains(&normalized) {
-                                    // Already emitted as COALESCE, skip
+                                if star.excludes(col_name, resolver.dialect)
+                                    || coalesced_columns.contains(&normalized)
+                                {
+                                    // Excluded, or already emitted as COALESCE
                                     continue;
                                 }
                                 if let Some(tables) = column_tables.get(&normalized) {
@@ -1110,21 +1121,25 @@ fn expand_stars(
                                         // Emit COALESCE and mark as coalesced
                                         coalesced_columns.insert(normalized);
                                         let coalesce = make_coalesce(col_name, tables);
-                                        new_selections.push(Expression::Alias(Box::new(Alias {
-                                            this: coalesce,
-                                            alias: Identifier::new(col_name),
-                                            column_aliases: vec![],
-                                            alias_explicit_as: false,
-                                            alias_keyword: None,
-                                            pre_alias_comments: vec![],
-                                            trailing_comments: vec![],
-                                            inferred_type: None,
-                                        })));
+                                        if let Some(expanded) =
+                                            star.expand_column(col_name, coalesce, resolver.dialect)
+                                        {
+                                            new_selections.push(match expanded {
+                                                Expression::Alias(_) => expanded,
+                                                _ => Expression::Alias(Box::new(Alias::new(
+                                                    expanded,
+                                                    Identifier::new(col_name),
+                                                ))),
+                                            });
+                                        }
                                         continue;
                                     }
                                 }
-                                new_selections
-                                    .push(create_qualified_column(col_name, Some(source_name)));
+                                new_selections.extend(star.expand_column(
+                                    col_name,
+                                    create_qualified_column(col_name, Some(source_name)),
+                                    resolver.dialect,
+                                ));
                             }
                         }
                     }
@@ -3409,6 +3424,63 @@ mod tests {
         assert!(sql.contains("users.id"));
         assert!(sql.contains("users.name"));
         assert!(sql.contains("users.email"));
+    }
+
+    #[test]
+    fn test_expand_stars_applies_except_replace_rename() {
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        for (dialect, sql, expected) in [
+            (
+                DialectType::Snowflake,
+                "SELECT * EXCLUDE (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * EXCEPT (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::Snowflake,
+                "SELECT t.* EXCLUDE (b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * EXCEPT (t.b) FROM t",
+                "SELECT t.a AS a, t.c AS c FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * REPLACE (b * 2 AS b) FROM t",
+                "SELECT t.a AS a, t.b * 2 AS b, t.c AS c FROM t",
+            ),
+            (
+                DialectType::Snowflake,
+                "SELECT * RENAME (b AS d) FROM t",
+                "SELECT t.a AS a, t.b AS d, t.c AS c FROM t",
+            ),
+        ] {
+            let expr = crate::dialects::Dialect::get(dialect)
+                .parse(sql)
+                .expect("parse")
+                .remove(0);
+            let result =
+                qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+            assert_eq!(gen(&result), expected, "{sql}");
+        }
     }
 
     #[test]

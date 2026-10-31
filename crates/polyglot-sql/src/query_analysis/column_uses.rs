@@ -112,11 +112,22 @@ impl Collector<'_> {
                     && (filter_branch
                         || (index == 1
                             && matches!(query, Expression::Except(_) | Expression::Intersect(_))));
+                // A lateral derived table sees the sources that precede it.
+                let lateral = child.is_lateral.then(|| {
+                    let mut lateral = frame.clone();
+                    lateral
+                        .selected
+                        .sources
+                        .retain(|name, _| child.lateral_sources.contains_key(name));
+                    lateral
+                });
+                let lateral_outer: Vec<_> =
+                    lateral.iter().chain(ancestors.iter().copied()).collect();
                 self.scope(
                     child,
                     qualified,
                     &format!("{path}.{kind}[{index}]"),
-                    if correlated { &outer } else { ancestors },
+                    if correlated { &outer } else { &lateral_outer },
                     &ctes,
                     is_filter,
                 );
@@ -660,6 +671,9 @@ fn unresolved(column: &Column, confidence: ReferenceConfidence) -> ColumnUseRefe
             column: column.name.name.clone(),
             unqualified: column.table.is_none(),
             confidence,
+            path_transform_kind: None,
+            path_functions: Vec::new(),
+            path_window: false,
         },
         span: column.span.or(column.name.span).map(source_span),
     }
@@ -670,7 +684,7 @@ fn use_references(
     span: Option<QuerySourceSpan>,
     unqualified: bool,
 ) -> Vec<ColumnUseReferenceFact> {
-    terminal_references_from_lineage(node)
+    terminal_references_from_lineage(node, None)
         .into_iter()
         .map(|mut reference| {
             reference.unqualified = unqualified;

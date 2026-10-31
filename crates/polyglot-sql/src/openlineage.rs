@@ -14,6 +14,7 @@ use crate::{mapping_schema_from_validation_schema_with_dialect, Error, Result, V
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub const OPENLINEAGE_SCHEMA_URL: &str = "https://openlineage.io/spec/2-0-2/OpenLineage.json";
@@ -457,7 +458,10 @@ fn output_fields_for_query(
     dialect: DialectType,
     warnings: &mut Vec<OpenLineageWarning>,
 ) -> Result<Vec<OutputField>> {
-    let select = leftmost_select(query).ok_or_else(|| {
+    // A star over a CTE is not in the schema. Expand it from the CTE output columns.
+    let mut query = query.clone();
+    lineage::expand_cte_stars(&mut query, schema);
+    let select = leftmost_select(&query).ok_or_else(|| {
         Error::unsupported(
             "OpenLineage output field extraction for non-SELECT query",
             dialect.to_string(),
@@ -467,7 +471,7 @@ fn output_fields_for_query(
     let mut fields = Vec::new();
     for (idx, expr) in select.expressions.iter().enumerate() {
         if is_star_expr(expr) {
-            expand_star_output_fields(select, expr, schema, warnings, &mut fields);
+            expand_star_output_fields(select, expr, schema, dialect, warnings, &mut fields);
             continue;
         }
 
@@ -861,6 +865,7 @@ fn expand_star_output_fields(
     select: &Select,
     star_expr: &Expression,
     schema: Option<&dyn Schema>,
+    dialect: DialectType,
     warnings: &mut Vec<OpenLineageWarning>,
     fields: &mut Vec<OutputField>,
 ) {
@@ -873,48 +878,128 @@ fn expand_star_output_fields(
     };
 
     let qualifier = star_qualifier(star_expr);
+    let star = match star_expr {
+        Expression::Star(star) => Some(star),
+        _ => None,
+    };
+    if star.is_some_and(|star| star.has_except_pattern()) {
+        warnings.push(OpenLineageWarning::new(
+            "W_STAR_EXCEPT_PATTERN",
+            "SELECT * EXCEPT with a pattern cannot be expanded into OpenLineage column lineage",
+        ));
+        return;
+    }
     let sources = select_source_tables(select);
-    for (alias, qname) in sources {
-        if qualifier
-            .as_ref()
-            .map(|q| q != &alias && q != &qname)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        match schema.column_names(&qname) {
-            Ok(columns) => {
-                for name in columns {
-                    fields.push(OutputField {
-                        lineage_name: name.clone(),
-                        name,
-                        expression: None,
-                        star_source_table: Some(qname.clone()),
-                    });
+    for (alias, source) in sources {
+        let (columns, star_source_table) = match source {
+            StarSource::Table(qname) => {
+                if qualifier
+                    .as_ref()
+                    .map(|q| q != &alias && q != &qname)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                match schema.column_names(&qname) {
+                    Ok(columns) => (columns, Some(qname)),
+                    Err(err) => {
+                        warnings.push(OpenLineageWarning::new(
+                            "W_STAR_SCHEMA_LOOKUP_FAILED",
+                            format!("Could not expand SELECT * for table '{qname}': {err}"),
+                        ));
+                        continue;
+                    }
                 }
             }
-            Err(err) => warnings.push(OpenLineageWarning::new(
-                "W_STAR_SCHEMA_LOOKUP_FAILED",
-                format!("Could not expand SELECT * for table '{}': {}", qname, err),
-            )),
+            StarSource::Derived(query) => {
+                if qualifier.as_ref().is_some_and(|q| q != &alias) {
+                    continue;
+                }
+                let columns =
+                    lineage::output_columns_with_schema(&query, Some(schema), Some(dialect))
+                        .ok()
+                        .and_then(|output| {
+                            output
+                                .columns
+                                .into_iter()
+                                .map(|column| match column {
+                                    lineage::OutputColumn::Named { name, .. } => Some(name),
+                                    _ => None,
+                                })
+                                .collect::<Option<Vec<_>>>()
+                        });
+                let Some(columns) = columns else {
+                    warnings.push(OpenLineageWarning::new(
+                        "W_STAR_SCHEMA_LOOKUP_FAILED",
+                        format!("Could not expand SELECT * for source '{alias}'"),
+                    ));
+                    continue;
+                };
+                (columns, None)
+            }
+        };
+
+        for name in columns {
+            if star.is_some_and(|star| star.excludes(&name, Some(dialect))) {
+                continue;
+            }
+            let output_name = star
+                .and_then(|star| star.renamed(&name, Some(dialect)))
+                .map_or_else(|| name.clone(), |new| new.name);
+            if let Some(replacement) = star.and_then(|star| star.replacement(&name, Some(dialect)))
+            {
+                fields.push(OutputField {
+                    lineage_name: output_name.clone(),
+                    name: output_name,
+                    expression: Some(Expression::Alias(Box::new(replacement.clone()))),
+                    star_source_table: None,
+                });
+                continue;
+            }
+            // Derived table columns resolve through the lineage of the whole query.
+            let (lineage_name, expression) = match &star_source_table {
+                Some(_) => (name, None),
+                None if alias.is_empty() => (output_name.clone(), Some(Expression::column(name))),
+                None => (
+                    output_name.clone(),
+                    Some(Expression::qualified_column(alias.as_str(), name)),
+                ),
+            };
+            fields.push(OutputField {
+                name: output_name,
+                lineage_name,
+                expression,
+                star_source_table: star_source_table.clone(),
+            });
         }
     }
 }
 
-fn select_source_tables(select: &Select) -> Vec<(String, String)> {
+/// A FROM or JOIN source that a star can expand.
+enum StarSource<'a> {
+    Table(String),
+    Derived(Box<Cow<'a, Expression>>),
+}
+
+fn select_source_tables(select: &Select) -> Vec<(String, StarSource<'_>)> {
     let mut result = Vec::new();
+    let with = select.with.as_ref();
     if let Some(from) = &select.from {
         for expr in &from.expressions {
-            collect_source_table(expr, &mut result);
+            collect_source_table(expr, with, &mut result);
         }
     }
     for join in &select.joins {
-        collect_source_table(&join.this, &mut result);
+        collect_source_table(&join.this, with, &mut result);
     }
     result
 }
 
-fn collect_source_table(expr: &Expression, result: &mut Vec<(String, String)>) {
+fn collect_source_table<'a>(
+    expr: &'a Expression,
+    with: Option<&With>,
+    result: &mut Vec<(String, StarSource<'a>)>,
+) {
     match expr {
         Expression::Table(table) => {
             let qname = table_ref_qualified_name(table);
@@ -923,10 +1008,36 @@ fn collect_source_table(expr: &Expression, result: &mut Vec<(String, String)>) {
                 .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| table.name.name.clone());
-            result.push((alias, qname));
+            result.push((alias, StarSource::Table(qname)));
         }
-        Expression::Alias(alias) => collect_source_table(&alias.this, result),
-        Expression::Paren(paren) => collect_source_table(&paren.this, result),
+        Expression::Subquery(subquery) => {
+            if let Some(alias) = &subquery.alias {
+                result.push((
+                    alias.name.clone(),
+                    StarSource::Derived(Box::new(Cow::Borrowed(&subquery.this))),
+                ));
+            }
+        }
+        Expression::Pivot(_) | Expression::Unpivot(_) => {
+            let alias = match expr {
+                Expression::Pivot(pivot) => pivot.alias.as_ref(),
+                Expression::Unpivot(unpivot) => unpivot.alias.as_ref(),
+                _ => None,
+            };
+            // A PIVOT or UNPIVOT expands as the derived table `SELECT * FROM <pivot>`.
+            let mut query = Select::new();
+            query.with = with.cloned();
+            query.expressions = vec![Expression::star()];
+            query.from = Some(From {
+                expressions: vec![expr.clone()],
+            });
+            result.push((
+                alias.map(|a| a.name.clone()).unwrap_or_default(),
+                StarSource::Derived(Box::new(Cow::Owned(Expression::Select(Box::new(query))))),
+            ));
+        }
+        Expression::Alias(alias) => collect_source_table(&alias.this, with, result),
+        Expression::Paren(paren) => collect_source_table(&paren.this, with, result),
         _ => {}
     }
 }
@@ -1445,5 +1556,235 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
         let result = openlineage_column_lineage("SELECT * FROM t", &opts).expect("lineage");
         assert!(result.facet.fields.contains_key("a"));
         assert!(result.facet.fields.contains_key("b"));
+    }
+
+    #[test]
+    fn select_star_applies_except_replace_rename() {
+        let schema: ValidationSchema = serde_json::from_value(json!({
+            "tables": [{
+                "name": "orders",
+                "schema": "s",
+                "columns": [
+                    {"name": "order_id", "type": "INT"},
+                    {"name": "amount", "type": "INT"},
+                    {"name": "payload", "type": "TEXT"}
+                ]
+            }]
+        }))
+        .expect("schema");
+        let lineage = |dialect, sql| {
+            let mut opts = options();
+            opts.dialect = dialect;
+            opts.schema = Some(schema.clone());
+            openlineage_column_lineage(sql, &opts).expect("lineage")
+        };
+
+        for (dialect, sql) in [
+            (
+                DialectType::Snowflake,
+                "SELECT * EXCLUDE (payload) FROM s.orders",
+            ),
+            (
+                DialectType::BigQuery,
+                "SELECT * EXCEPT (payload) FROM s.orders",
+            ),
+            (
+                DialectType::ClickHouse,
+                "SELECT * EXCEPT (payload) FROM s.orders",
+            ),
+        ] {
+            let result = lineage(dialect, sql);
+            // Snowflake normalizes unquoted schema columns to upper case.
+            let fields: Vec<_> = result
+                .facet
+                .fields
+                .keys()
+                .map(|f| f.to_lowercase())
+                .collect();
+            assert_eq!(fields, vec!["amount", "order_id"], "{sql}");
+        }
+
+        let result = lineage(
+            DialectType::BigQuery,
+            "SELECT * REPLACE (amount * 2 AS amount) FROM s.orders",
+        );
+        let inputs = &result.facet.fields["amount"].input_fields;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "s.orders");
+        assert_eq!(inputs[0].field, "amount");
+        assert_eq!(inputs[0].transformations[0].subtype, "TRANSFORMATION");
+
+        let result = lineage(
+            DialectType::Snowflake,
+            "SELECT * RENAME (amount AS order_amount) FROM s.orders",
+        );
+        assert!(!result.facet.fields.contains_key("AMOUNT"));
+        let inputs = &result.facet.fields["ORDER_AMOUNT"].input_fields;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "s.orders");
+        assert_eq!(inputs[0].field, "AMOUNT");
+        assert_eq!(inputs[0].transformations[0].subtype, "IDENTITY");
+
+        let result = lineage(
+            DialectType::Snowflake,
+            r#"SELECT * RENAME (amount AS "order_amount") FROM s.orders"#,
+        );
+        assert!(result.facet.fields.contains_key("order_amount"));
+
+        let result = lineage(
+            DialectType::ClickHouse,
+            "SELECT * EXCEPT ('^pay.*') FROM s.orders",
+        );
+        assert!(result.facet.fields.is_empty());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.code == "W_STAR_EXCEPT_PATTERN"));
+    }
+
+    #[test]
+    fn select_star_expands_pivot_and_unpivot_fields() {
+        let mut opts = options();
+        opts.dialect = DialectType::Snowflake;
+        opts.schema = Some(
+            serde_json::from_value(json!({"tables": [
+                {"name": "payments", "schema": "s", "columns": [
+                    {"name": "order_id", "type": "INT"},
+                    {"name": "method", "type": "TEXT"},
+                    {"name": "amount", "type": "INT"}
+                ]},
+                {"name": "customers", "schema": "s", "columns": [
+                    {"name": "customer_id", "type": "INT"},
+                    {"name": "first_name", "type": "TEXT"},
+                    {"name": "last_name", "type": "TEXT"}
+                ]}
+            ]}))
+            .expect("schema"),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
+                 PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+                vec![
+                    ("card", vec!["amount", "method"]),
+                    ("coupon", vec!["amount", "method"]),
+                    ("order_id", vec!["order_id"]),
+                ],
+            ),
+            (
+                "SELECT * FROM (SELECT customer_id, first_name, last_name FROM s.customers) \
+                 UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+                vec![
+                    ("customer_id", vec!["customer_id"]),
+                    ("name_kind", vec!["first_name", "last_name"]),
+                    ("name_value", vec!["first_name", "last_name"]),
+                ],
+            ),
+        ] {
+            let result = openlineage_column_lineage(sql, &opts).expect("lineage");
+            assert!(result.warnings.is_empty(), "{sql}: {:?}", result.warnings);
+            let fields: Vec<_> = result
+                .facet
+                .fields
+                .iter()
+                .map(|(name, field)| {
+                    let inputs: Vec<_> = field
+                        .input_fields
+                        .iter()
+                        .map(|f| f.field.as_str())
+                        .collect();
+                    (name.as_str(), inputs)
+                })
+                .collect();
+            assert_eq!(fields, expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn select_star_expands_cte_fields() {
+        let mut opts = options();
+        opts.schema = Some(
+            serde_json::from_value(json!({
+                "tables": [{
+                    "name": "orders",
+                    "schema": "s",
+                    "columns": [
+                        {"name": "order_id", "type": "INT"},
+                        {"name": "amount", "type": "INT"}
+                    ]
+                }]
+            }))
+            .expect("schema"),
+        );
+
+        for (sql, fields) in [
+            (
+                "WITH c AS (SELECT * FROM s.orders) SELECT * FROM c",
+                vec!["amount", "order_id"],
+            ),
+            (
+                "WITH a AS (SELECT * FROM s.orders), c AS (SELECT * FROM a) SELECT c.* FROM c",
+                vec!["amount", "order_id"],
+            ),
+            (
+                "WITH c AS (SELECT order_id, amount FROM s.orders) SELECT * FROM c WHERE amount > 0",
+                vec!["amount", "order_id"],
+            ),
+        ] {
+            let result = openlineage_column_lineage(sql, &opts).expect("lineage");
+            assert!(result.warnings.is_empty(), "{sql}: {:?}", result.warnings);
+            assert_eq!(
+                result.facet.fields.keys().collect::<Vec<_>>(),
+                fields,
+                "{sql}"
+            );
+            for field in fields {
+                let inputs = &result.facet.fields[field].input_fields;
+                assert_eq!(inputs.len(), 1, "{sql}: {field}");
+                assert_eq!(inputs[0].name, "s.orders", "{sql}: {field}");
+                assert_eq!(inputs[0].field, field, "{sql}: {field}");
+                assert_eq!(
+                    inputs[0].transformations[0].subtype, "IDENTITY",
+                    "{sql}: {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn select_star_expands_derived_table_fields() {
+        let mut opts = options();
+        opts.schema = Some(
+            serde_json::from_value(json!({
+                "tables": [{
+                    "name": "customers",
+                    "schema": "s",
+                    "columns": [
+                        {"name": "customer_id", "type": "INT"},
+                        {"name": "created_at", "type": "TIMESTAMP"}
+                    ]
+                }]
+            }))
+            .expect("schema"),
+        );
+
+        for sql in [
+            "SELECT * FROM (SELECT * FROM s.customers) sbq",
+            "SELECT sbq.* FROM (SELECT * FROM s.customers) sbq",
+            "SELECT *, created_at AS dbt_updated_at FROM (SELECT * FROM s.customers) sbq",
+        ] {
+            let result = openlineage_column_lineage(sql, &opts).expect("lineage");
+            for field in ["customer_id", "created_at"] {
+                let inputs = &result.facet.fields[field].input_fields;
+                assert_eq!(inputs.len(), 1, "{sql}: {field}");
+                assert_eq!(inputs[0].name, "s.customers", "{sql}: {field}");
+                assert_eq!(inputs[0].field, field, "{sql}: {field}");
+                assert_eq!(
+                    inputs[0].transformations[0].subtype, "IDENTITY",
+                    "{sql}: {field}"
+                );
+            }
+        }
     }
 }

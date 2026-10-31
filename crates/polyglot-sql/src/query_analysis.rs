@@ -13,7 +13,9 @@ use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_schema_aware_expression;
 use crate::schema::{MappingSchema, Schema};
 use crate::scope::{build_scope, Scope, SourceInfo, SourceKind};
-use crate::traversal::{contains_aggregate, ExpressionWalk};
+use crate::traversal::{
+    contains_aggregate, is_aggregate, is_arithmetic, is_comparison, is_logical, ExpressionWalk,
+};
 use crate::validation::{mapping_schema_from_validation_schema_with_dialect, ValidationSchema};
 use crate::{parse_one_with_options, ComplexityGuardOptions, Error, ParseOptions, Result};
 use serde::{Deserialize, Serialize};
@@ -166,6 +168,21 @@ pub struct ColumnReferenceFact {
     pub column: String,
     pub unqualified: bool,
     pub confidence: ReferenceConfidence,
+    /// Strongest transform on the lineage path from this reference to the
+    /// projection output, through CTEs, derived tables, and set-operation
+    /// branches. Steps rank `Direct < Star < Cast < Expression < Aggregation`;
+    /// a `Constant` step has no upstream reference. Only projection upstream
+    /// references carry this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_transform_kind: Option<TransformKind>,
+    /// Function names on the same path, from the output to the source, in the
+    /// dialect spelling (`ROUND`, `SUM`, `ROW_NUMBER`). Operators, `CASE`, and
+    /// casts are not functions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_functions: Vec<String>,
+    /// True when a step on the path is a window function.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub path_window: bool,
 }
 
 /// Compact fact about a relation visible in the root scope.
@@ -263,12 +280,6 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
         options.dialect,
         options.complexity_guard,
     )?;
-    let star_projections = star_projection_facts(
-        &original_expression,
-        mapping_schema.as_ref(),
-        options.dialect,
-    );
-
     if let Some(schema) = mapping_schema.as_ref() {
         use crate::optimizer::qualify_columns::QualifyColumnsError;
         expression = match qualify_schema_aware_expression(
@@ -296,6 +307,12 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
     crate::lineage::expand_cte_stars(
         &mut expression,
         mapping_schema.as_ref().map(|schema| schema as &dyn Schema),
+    );
+    let star_projections = star_projection_facts(
+        &original_expression,
+        &expression,
+        mapping_schema.as_ref(),
+        options.dialect,
     );
     annotate_types(
         &mut expression,
@@ -572,13 +589,16 @@ fn top_level_cte_facts(
         .collect()
 }
 
+/// `resolved` is `expression` after qualification and CTE star expansion. Its
+/// sources give the columns of derived tables and CTEs that select a star.
 fn star_projection_facts(
     expression: &Expression,
+    resolved: &Expression,
     mapping_schema: Option<&MappingSchema>,
     dialect: DialectType,
 ) -> Vec<StarProjectionFact> {
-    let scope = build_scope(expression);
-    let ordered_sources = ordered_source_names_for_query(expression);
+    let scope = build_scope(resolved);
+    let ordered_sources = ordered_source_names_for_query(resolved);
 
     select_expressions_for_query(expression)
         .iter()
@@ -590,13 +610,26 @@ fn star_projection_facts(
             }
 
             let table = projection_star_table(inner);
-            let expanded_columns = expanded_star_columns(
-                table.as_deref(),
-                &scope,
-                &ordered_sources,
-                mapping_schema,
-                dialect,
-            );
+            let mut expanded_columns = match inner {
+                Expression::Star(star) if star.has_except_pattern() => Vec::new(),
+                _ => expanded_star_columns(
+                    table.as_deref(),
+                    &scope,
+                    &ordered_sources,
+                    mapping_schema,
+                    dialect,
+                ),
+            };
+            if let Expression::Star(star) = inner {
+                expanded_columns = expanded_columns
+                    .into_iter()
+                    .filter(|column| !star.excludes(column, Some(dialect)))
+                    .map(|column| {
+                        star.renamed(&column, Some(dialect))
+                            .map_or(column, |new| new.name)
+                    })
+                    .collect();
+            }
 
             Some(StarProjectionFact {
                 index,
@@ -625,6 +658,12 @@ fn expanded_star_columns(
 
     source_names.dedup();
 
+    let empty_schema = MappingSchema::with_dialect(dialect);
+    let mut resolver = crate::resolver::Resolver::new(
+        scope,
+        mapping_schema.map_or(&empty_schema as &dyn Schema, |schema| schema),
+        false,
+    );
     for source_name in source_names {
         let Some(source) = scope.sources.get(&source_name) else {
             continue;
@@ -644,7 +683,15 @@ fn expanded_star_columns(
             }
         }
 
-        columns.extend(source_columns(source, mapping_schema, dialect));
+        match &source.expression {
+            // The resolver derives PIVOT and UNPIVOT outputs from the IN list.
+            Expression::Pivot(_) | Expression::Unpivot(_) => columns.extend(
+                resolver
+                    .get_source_columns(&source_name)
+                    .unwrap_or_default(),
+            ),
+            _ => columns.extend(source_columns(source, mapping_schema, dialect)),
+        }
     }
 
     columns
@@ -1068,15 +1115,20 @@ fn projection_fact(
 ) -> ProjectionFact {
     let inner = unwrap_projection_alias(projection);
     let is_star = projection_is_star(inner);
+    let kind = transform_kind(inner);
     let mut lineage = nullability_context.lineage.borrow_mut();
     let prepared = lineage
         .entry(scope as *const Scope)
         .or_insert_with(|| ScopedLineage::new(scope.clone(), &[], dialect));
+    // A traced node whose leaves are constants has no upstream columns.
     let mut upstream = prepared
         .output(index)
+        .ok()
+        .filter(|node| !node.downstream.is_empty())
         .map(|node| {
             let uncertain = lineage_uncertainty(&node, nullability_context.uncertain_columns);
-            let mut references = terminal_references_from_lineage(&node);
+            let mut references =
+                terminal_references_from_lineage(&node, Some(&PathTransform::new(dialect)));
             if let Some(confidence) = uncertain {
                 for reference in &mut references {
                     reference.confidence = confidence;
@@ -1084,12 +1136,22 @@ fn projection_fact(
             }
             references
         })
-        .ok()
-        .filter(|refs| !refs.is_empty())
         .unwrap_or_else(|| fallback_column_references(inner, scope));
     if let Some(confidence) = expression_uncertainty(inner, nullability_context.uncertain_columns) {
         for reference in &mut upstream {
             reference.confidence = confidence;
+        }
+    }
+    // A fallback reference has no traced path, so it takes the projection step.
+    if upstream
+        .iter()
+        .any(|reference| reference.path_transform_kind.is_none())
+    {
+        let projection_path = PathTransform::new(dialect).step(inner);
+        for reference in &mut upstream {
+            if reference.path_transform_kind.is_none() {
+                projection_path.apply(reference);
+            }
         }
     }
     if let Some(schema) = nullability_context.mapping_schema {
@@ -1135,7 +1197,7 @@ fn projection_fact(
         name,
         is_star,
         star_table: projection_star_table(inner),
-        transform_kind: transform_kind(inner),
+        transform_kind: kind,
         transform_function,
         cast_type: cast_type(inner, dialect),
         type_hint: projection
@@ -1730,22 +1792,191 @@ impl NullabilityContext<'_> {
     }
 }
 
-fn terminal_references_from_lineage(node: &LineageNode) -> Vec<ColumnReferenceFact> {
+/// Pass a path to report the transforms of each reference on its lineage path.
+fn terminal_references_from_lineage(
+    node: &LineageNode,
+    path: Option<&PathTransform>,
+) -> Vec<ColumnReferenceFact> {
     let mut refs = Vec::new();
-    collect_terminal_references(node, &mut refs);
+    collect_terminal_references(node, path, &mut refs);
     dedupe_column_refs(refs)
 }
 
-fn collect_terminal_references(node: &LineageNode, refs: &mut Vec<ColumnReferenceFact>) {
+fn collect_terminal_references(
+    node: &LineageNode,
+    path: Option<&PathTransform>,
+    refs: &mut Vec<ColumnReferenceFact>,
+) {
+    // A set-operation node only routes to its branches; each branch is a step.
+    let stepped;
+    let path = match path {
+        Some(path) if !is_set_operation(&node.expression) => {
+            stepped = path.step(unwrap_projection_alias(&node.expression));
+            Some(&stepped)
+        }
+        path => path,
+    };
     if node.downstream.is_empty() {
-        if let Some(reference) = column_reference_from_lineage_node(node) {
+        if let Some(mut reference) = column_reference_from_lineage_node(node) {
+            if let Some(path) = path {
+                path.apply(&mut reference);
+            }
             refs.push(reference);
         }
         return;
     }
 
     for child in &node.downstream {
-        collect_terminal_references(child, refs);
+        collect_terminal_references(child, path, refs);
+    }
+}
+
+/// The transforms on one lineage path, from the projection output to a source column.
+#[derive(Clone)]
+struct PathTransform {
+    dialect: DialectType,
+    kind: TransformKind,
+    functions: Vec<String>,
+    window: bool,
+}
+
+impl PathTransform {
+    fn new(dialect: DialectType) -> Self {
+        Self {
+            dialect,
+            kind: TransformKind::Direct,
+            functions: Vec::new(),
+            window: false,
+        }
+    }
+
+    /// Add the projection expression of one scope on the path.
+    fn step(&self, expression: &Expression) -> Self {
+        let mut next = self.clone();
+        // Nested queries are separate lineage steps. Their filters and unused
+        // outputs must not contribute transforms to this projection.
+        for node in crate::scope::walk_in_scope(expression, false) {
+            next.kind = combine_transform_kinds(next.kind, path_node_kind(node));
+            if matches!(node, Expression::WindowFunction(_)) {
+                next.window = true;
+            } else if let Some(name) = function_name(node, self.dialect) {
+                if !next.functions.contains(&name) {
+                    next.functions.push(name);
+                }
+            }
+        }
+        next
+    }
+
+    fn apply(&self, reference: &mut ColumnReferenceFact) {
+        reference.path_transform_kind = Some(self.kind);
+        reference.path_functions = self.functions.clone();
+        reference.path_window = self.window;
+    }
+}
+
+/// Unlike the legacy outer-expression kind, path metadata includes transforms
+/// inside casts and other wrappers, without crossing query scope boundaries.
+fn path_node_kind(node: &Expression) -> TransformKind {
+    if is_aggregate(node) {
+        return TransformKind::Aggregation;
+    }
+    match node {
+        Expression::Column(_)
+        | Expression::Identifier(_)
+        | Expression::Alias(_)
+        | Expression::Paren(_)
+        | Expression::Annotated(_)
+        | Expression::Subquery(_)
+        | Expression::Select(_)
+        | Expression::Union(_)
+        | Expression::Intersect(_)
+        | Expression::Except(_)
+        | Expression::Cte(_) => TransformKind::Direct,
+        Expression::Star(_) => TransformKind::Star,
+        Expression::Cast(_) | Expression::TryCast(_) | Expression::SafeCast(_) => {
+            TransformKind::Cast
+        }
+        Expression::Literal(_)
+        | Expression::Boolean(_)
+        | Expression::Null(_)
+        | Expression::DataType(_) => TransformKind::Constant,
+        _ => TransformKind::Expression,
+    }
+}
+
+/// The name of a function call node, as the dialect writes it.
+fn function_name(node: &Expression, dialect: DialectType) -> Option<String> {
+    match node {
+        Expression::Function(function) => {
+            if !function.qualified_name.is_empty() {
+                return function
+                    .qualified_name
+                    .iter()
+                    .map(|identifier| {
+                        crate::generate(&Expression::Identifier(identifier.clone()), dialect).ok()
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|parts| parts.join("."));
+            }
+            if function.quoted {
+                return crate::generate(
+                    &Expression::Identifier(Identifier::quoted(&function.name)),
+                    dialect,
+                )
+                .ok();
+            }
+            if function.name.contains('.') {
+                return Some(function.name.clone());
+            }
+            use crate::generator::NormalizeFunctions;
+            Some(
+                match Dialect::get(dialect).generator_config().normalize_functions {
+                    NormalizeFunctions::Upper => function.name.to_uppercase(),
+                    NormalizeFunctions::Lower => function.name.to_lowercase(),
+                    NormalizeFunctions::None => function.name.clone(),
+                },
+            )
+        }
+        Expression::AggregateFunction(function) => Some(function.name.to_uppercase()),
+        Expression::Column(_)
+        | Expression::Identifier(_)
+        | Expression::Literal(_)
+        | Expression::Alias(_)
+        | Expression::Paren(_)
+        | Expression::Star(_)
+        | Expression::Cast(_)
+        | Expression::TryCast(_)
+        | Expression::SafeCast(_)
+        | Expression::Subquery(_)
+        | Expression::Exists(_)
+        | Expression::Select(_)
+        | Expression::Case(_) => None,
+        node if is_arithmetic(node) || is_comparison(node) || is_logical(node) => None,
+        // A typed node (`Sum`, `Coalesce`) has no name field; its SQL starts with it.
+        _ => {
+            let sql = crate::generate(node, dialect).ok()?;
+            let (name, _) = sql.split_once('(')?;
+            let is_name =
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            is_name.then(|| name.to_uppercase())
+        }
+    }
+}
+
+fn combine_transform_kinds(left: TransformKind, right: TransformKind) -> TransformKind {
+    let rank = |kind| match kind {
+        TransformKind::Constant => 0,
+        TransformKind::Direct => 1,
+        TransformKind::Star => 2,
+        TransformKind::Cast => 3,
+        TransformKind::Expression => 4,
+        TransformKind::Aggregation => 5,
+    };
+    if rank(right) > rank(left) {
+        right
+    } else {
+        left
     }
 }
 
@@ -1768,6 +1999,9 @@ fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnRefere
                 column: column.name.name.clone(),
                 unqualified: column.table.is_none(),
                 confidence,
+                path_transform_kind: None,
+                path_functions: Vec::new(),
+                path_window: false,
             })
         }
         Expression::Star(_) => Some(ColumnReferenceFact {
@@ -1782,6 +2016,9 @@ fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnRefere
             } else {
                 ReferenceConfidence::Resolved
             },
+            path_transform_kind: None,
+            path_functions: Vec::new(),
+            path_window: false,
         }),
         _ => None,
     }
@@ -1866,6 +2103,9 @@ fn fallback_column_references(expression: &Expression, scope: &Scope) -> Vec<Col
                 column: column.name.name.clone(),
                 unqualified: column.table.is_none(),
                 confidence,
+                path_transform_kind: None,
+                path_functions: Vec::new(),
+                path_window: false,
             });
         }
     }
@@ -1874,7 +2114,7 @@ fn fallback_column_references(expression: &Expression, scope: &Scope) -> Vec<Col
 }
 
 fn dedupe_column_refs(refs: Vec<ColumnReferenceFact>) -> Vec<ColumnReferenceFact> {
-    let mut seen = HashSet::new();
+    let mut seen = HashMap::new();
     let mut deduped = Vec::new();
 
     for reference in refs {
@@ -1887,7 +2127,22 @@ fn dedupe_column_refs(refs: Vec<ColumnReferenceFact>) -> Vec<ColumnReferenceFact
             reference.unqualified,
             format!("{:?}", reference.confidence),
         );
-        if seen.insert(key) {
+        if let Some(&index) = seen.get(&key) {
+            // Paths that reach the same column keep the strongest kind and all functions.
+            let existing: &mut ColumnReferenceFact = &mut deduped[index];
+            if let (Some(left), Some(right)) =
+                (existing.path_transform_kind, reference.path_transform_kind)
+            {
+                existing.path_transform_kind = Some(combine_transform_kinds(left, right));
+            }
+            for function in reference.path_functions {
+                if !existing.path_functions.contains(&function) {
+                    existing.path_functions.push(function);
+                }
+            }
+            existing.path_window |= reference.path_window;
+        } else {
+            seen.insert(key, deduped.len());
             deduped.push(reference);
         }
     }

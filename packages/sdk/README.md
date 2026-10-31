@@ -701,7 +701,21 @@ Types propagate through CTE and derived-table outputs. `transformKind` and
 `castType` describe the current projection, not transformations earlier in its
 lineage: a passthrough of a cast column is still `direct`, with the cast's result
 type in `typeHint`. Compact `upstream` references identify base dependencies;
-use the full lineage API to inspect intermediate CTEs and expressions.
+each one carries `pathTransformKind`, the strongest transform on its path to
+the projection (`direct` < `star` < `cast` < `expression` < `aggregation`), so
+that passthrough reports `cast` there. Set-operation branches rank separately,
+and paths that reach the same column keep the strongest kind. `pathFunctions`
+lists the function names on the path, from the output to the source, in the
+dialect spelling (`["ROUND", "SUM"]`). Operators, `CASE`, and casts are not
+functions. Quoted function names retain their quoting and case. Metadata is
+collected per projection step: `COALESCE(UPPER(a), LOWER(b))` associates all
+three function names with both inputs. Nested query filters and unrelated
+outputs are separate scopes and do not contribute to that step. Operations
+inside casts contribute to the strongest path kind, even though the outer
+projection's `transformKind` remains `cast`.
+`pathWindow` is `true` when a step is a window function, so
+`SUM(x) OVER (...)` reports `aggregation` with `pathWindow`. Use the full
+lineage API to inspect intermediate CTEs and expressions.
 For set operations, `typeHint` describes the dialect's combined output type
 after positional or name alignment. For example, Snowflake INTEGER/FLOAT
 branches produce `FLOAT`. The combined `castType` is present only when every

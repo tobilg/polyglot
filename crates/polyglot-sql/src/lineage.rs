@@ -7,7 +7,9 @@
 
 use crate::dialects::DialectType;
 use crate::error::{ColumnResolutionReason, ColumnResolutionTarget};
-use crate::expressions::{DataType, Expression, Identifier, JoinKind, NamedWindow, Select, With};
+use crate::expressions::{
+    DataType, Expression, Identifier, JoinKind, NamedWindow, Select, Star, With,
+};
 #[cfg(feature = "generate")]
 use crate::generator::Generator;
 use crate::optimizer::annotate_types::annotate_types;
@@ -655,13 +657,21 @@ fn rewrite_stars_in_select(
         match expr {
             Expression::Star(star) => {
                 let qual = star.table.as_ref();
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &sources, resolved_ctes, schema)
-                {
+                let expanded = (!star.has_except_pattern())
+                    .then(|| expand_star_from_sources(qual, &sources, resolved_ctes, schema))
+                    .flatten();
+                if let Some(expanded) = expanded {
                     for (src_alias, col_name) in &expanded {
                         let table_id = Identifier::new(src_alias);
-                        new_expressions.push(make_column_expr(col_name, Some(&table_id)));
-                        result_columns.push(col_name.clone());
+                        let column = make_column_expr(col_name, Some(&table_id));
+                        if let Some(expression) =
+                            star.expand_column(col_name, column, schema.and_then(|s| s.dialect()))
+                        {
+                            if let Some(name) = get_expression_output_name(&expression) {
+                                result_columns.push(name);
+                            }
+                            new_expressions.push(expression);
+                        }
                     }
                 } else {
                     new_expressions.push(expr.clone());
@@ -1826,9 +1836,19 @@ fn attach_pivot_dependencies(
         return false;
     };
 
-    for col_ref in input_columns {
+    // A generated output aggregates its inputs for each value of the pivot field.
+    let aggregation = pivot_output_aggregation(pivot, scope, col_name, dialect);
+    let field_columns = match aggregation {
+        Some(_) => pivot_field_columns(pivot, dialect),
+        None => Vec::new(),
+    };
+    let mut step = aggregation.map(|aggregation| {
+        LineageNode::new(node.name.clone(), aggregation.clone(), node.source.clone())
+    });
+    let target = step.as_mut().unwrap_or(&mut *node);
+    for col_ref in input_columns.iter().chain(&field_columns) {
         attach_pivot_input_column(
-            node,
+            target,
             context,
             scope_id,
             dialect,
@@ -1839,6 +1859,7 @@ fn attach_pivot_dependencies(
             depth,
         );
     }
+    node.downstream.extend(step);
     true
 }
 
@@ -1854,8 +1875,33 @@ fn attach_unpivot_dependencies(
     depth: usize,
 ) -> bool {
     let mapping = unpivot_column_mapping(unpivot, dialect);
-    let Some(input_columns) = mapping.get(&normalize_column_name(col_name, dialect)) else {
-        return false;
+    let normalized = normalize_column_name(col_name, dialect);
+    let Some(input_columns) = mapping.get(&normalized) else {
+        // A column outside the UNPIVOT passes through from the input.
+        let unpivoted = unpivot
+            .columns
+            .iter()
+            .flat_map(unpivot_entry_columns)
+            .any(|column| normalize_column_name(&column.column, dialect) == normalized);
+        if unpivoted {
+            return false;
+        }
+        let col_ref = SimpleColumnRef {
+            table: None,
+            column: col_name.to_string(),
+        };
+        attach_pivot_input_column(
+            node,
+            context,
+            scope_id,
+            dialect,
+            &unpivot.this,
+            &col_ref,
+            trim_selects,
+            all_cte_scopes,
+            depth,
+        );
+        return true;
     };
 
     for col_ref in input_columns {
@@ -1934,6 +1980,46 @@ fn pivot_lineage_column_mapping(
     }
 
     mapping
+}
+
+/// The aggregation that computes the generated pivot output `col_name`.
+fn pivot_output_aggregation<'a>(
+    pivot: &'a crate::expressions::Pivot,
+    scope: &Scope,
+    col_name: &str,
+    dialect: Option<DialectType>,
+) -> Option<&'a Expression> {
+    let mut name = normalize_column_name(col_name, dialect);
+    // Pivot alias columns rename the outputs by position.
+    if let Some(pre_columns) = pre_pivot_output_columns(&pivot.this, scope) {
+        if let Some((_, pre)) = pivot_output_columns(pivot, &pre_columns, dialect)
+            .into_iter()
+            .find(|(post, _)| normalize_column_name(post, dialect) == name)
+        {
+            name = normalize_column_name(&pre, dialect);
+        }
+    }
+    let aggregations = pivot_aggregation_expressions(pivot);
+    pivot_generated_output_columns(pivot, dialect)
+        .iter()
+        .position(|output| normalize_column_name(output, dialect) == name)
+        .and_then(|index| aggregations.get(index % aggregations.len()))
+}
+
+/// The columns of the pivot field (`FOR method IN (...)`).
+fn pivot_field_columns(
+    pivot: &crate::expressions::Pivot,
+    dialect: Option<DialectType>,
+) -> Vec<SimpleColumnRef> {
+    pivot
+        .fields
+        .iter()
+        .filter_map(|field| match field {
+            Expression::In(in_expr) => Some(&in_expr.this),
+            _ => None,
+        })
+        .flat_map(|expr| find_column_refs_in_expr(expr, dialect))
+        .collect()
 }
 
 fn pre_pivot_output_columns(source: &Expression, scope: &Scope) -> Option<Vec<String>> {
@@ -2936,7 +3022,7 @@ fn find_select_expr_by_name(
         [] => {}
     }
 
-    if let Some(expression) = synthesize_star_passthrough_expr(select, name) {
+    if let Some(expression) = synthesize_star_passthrough_expr(select, name, dialect) {
         return Ok(expression);
     }
 
@@ -3131,14 +3217,19 @@ fn find_select_expr(
     }
 }
 
-fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expression> {
+fn synthesize_star_passthrough_expr(
+    select: &Select,
+    name: &str,
+    dialect: Option<DialectType>,
+) -> Option<Expression> {
     let sources = get_select_sources(select);
     if sources.is_empty() {
         return None;
     }
 
-    let mut candidate_aliases = Vec::new();
+    let mut candidates = Vec::new();
     let mut seen = HashSet::new();
+    let mut replacement = None;
 
     for expr in &select.expressions {
         let aliases = match star_passthrough_source_aliases(expr, &sources) {
@@ -3147,18 +3238,51 @@ fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expre
             StarPassthroughSources::Aliases(aliases) => aliases,
         };
 
+        // Apply the star modifiers: the output `name` may read another column, or none.
+        let column = match passthrough_star(expr) {
+            Some(star) if star.has_except_pattern() => return None,
+            Some(star) => {
+                let column = match star.source_column(name, dialect) {
+                    Some(column) => column,
+                    None => continue,
+                };
+                if let Some(alias) = star.replacement(&column, dialect) {
+                    if replacement.is_some() {
+                        return None;
+                    }
+                    let mut alias = alias.clone();
+                    if let Some(renamed) = star.renamed(&column, dialect) {
+                        alias.alias = renamed;
+                    }
+                    replacement = Some(Expression::Alias(Box::new(alias)));
+                    continue;
+                }
+                column
+            }
+            None => name.to_string(),
+        };
+
         for alias in aliases {
-            if seen.insert(alias.clone()) {
-                candidate_aliases.push(alias);
+            if seen.insert((alias.clone(), column.clone())) {
+                candidates.push((alias, column.clone()));
             }
         }
     }
 
-    match candidate_aliases.as_slice() {
-        [alias] => {
+    match (replacement, candidates.as_slice()) {
+        (Some(replacement), []) => Some(replacement),
+        (None, [(alias, column)]) => {
             let table = Identifier::new(alias.clone());
-            Some(make_column_expr(name, Some(&table)))
+            Some(make_column_expr(column, Some(&table)))
         }
+        _ => None,
+    }
+}
+
+fn passthrough_star(expr: &Expression) -> Option<&Star> {
+    match expr {
+        Expression::Star(star) => Some(star),
+        Expression::Annotated(annotated) => passthrough_star(&annotated.this),
         _ => None,
     }
 }
@@ -6604,6 +6728,42 @@ SELECT json_data FROM transform_cte
     }
 
     #[test]
+    fn test_lineage_schema_less_star_passthrough_applies_modifiers() {
+        let leaves = |dialect, sql, column| {
+            let expr = parse_dialect(sql, dialect);
+            lineage(column, &expr, Some(dialect), false).map(|node| {
+                node.walk()
+                    .filter(|node| node.downstream.is_empty())
+                    .map(|node| node.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        let sql = "SELECT * EXCLUDE (b) FROM (SELECT * FROM t) s";
+        assert!(leaves(DialectType::Snowflake, sql, "b").is_err());
+        assert_eq!(
+            leaves(DialectType::Snowflake, sql, "a").unwrap(),
+            vec!["t.a"]
+        );
+
+        let sql = "SELECT * RENAME (a AS d) FROM (SELECT * FROM t) s";
+        assert_eq!(
+            leaves(DialectType::Snowflake, sql, "d").unwrap(),
+            vec!["t.a"]
+        );
+        assert!(leaves(DialectType::Snowflake, sql, "a").is_err());
+
+        let sql = "SELECT * REPLACE (a * 2 AS a) FROM (SELECT * FROM t) s";
+        let expr = parse_dialect(sql, DialectType::BigQuery);
+        let node = lineage("a", &expr, Some(DialectType::BigQuery), false).unwrap();
+        assert!(matches!(node.expression, Expression::Alias(_)));
+        assert_eq!(
+            leaves(DialectType::BigQuery, sql, "a").unwrap(),
+            vec!["t.a"]
+        );
+    }
+
+    #[test]
     fn test_lineage_cte_select_star_renamed_column() {
         // dbt standard pattern: CTE with column rename + outer SELECT *
         // This is the primary use case for dbt projects (jaffle-shop etc.)
@@ -6816,6 +6976,38 @@ SELECT json_data FROM transform_cte
         assert!(
             sql.contains("SELECT b.right_name FROM b"),
             "expected the differently named right arm to still be expanded, got {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_cte_stars_applies_except_replace_rename() {
+        let mut expr = parse_dialect(
+            "WITH a AS (SELECT 1 AS x, 2 AS y, 3 AS z), \
+             b AS (SELECT * EXCLUDE (y) RENAME (x AS w) FROM a) \
+             SELECT * FROM b",
+            DialectType::Snowflake,
+        );
+
+        expand_cte_stars(&mut expr, None);
+
+        assert_eq!(
+            crate::generate(&expr, DialectType::Snowflake).unwrap(),
+            "WITH a AS (SELECT 1 AS x, 2 AS y, 3 AS z), \
+             b AS (SELECT a.x AS w, a.z FROM a) \
+             SELECT b.w, b.z FROM b"
+        );
+
+        let mut expr = parse_dialect(
+            "WITH a AS (SELECT 1 AS x, 2 AS y) \
+             SELECT * REPLACE (y + 1 AS y) FROM a",
+            DialectType::BigQuery,
+        );
+
+        expand_cte_stars(&mut expr, None);
+
+        assert_eq!(
+            crate::generate(&expr, DialectType::BigQuery).unwrap(),
+            "WITH a AS (SELECT 1 AS x, 2 AS y) SELECT a.x, y + 1 AS y FROM a"
         );
     }
 
@@ -7611,6 +7803,41 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         .unwrap();
         assert_lineage_contains(&second, "produce.q2");
         assert_lineage_contains(&second, "produce.q4");
+    }
+
+    #[test]
+    fn test_lineage_pivot_output_reads_aggregation_and_field() {
+        let expr = parse_dialect(
+            "SELECT order_id, card FROM (SELECT order_id, method, amount FROM payments) \
+             PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+            DialectType::Snowflake,
+        );
+        let node = lineage("card", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_lineage_contains(&node, "payments.amount");
+        assert_lineage_contains(&node, "payments.method");
+        assert!(node
+            .walk()
+            .any(|step| crate::traversal::contains_aggregate(&step.expression)));
+
+        let node = lineage("order_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_eq!(
+            lineage_names(&node)
+                .iter()
+                .filter(|name| name.starts_with("payments."))
+                .collect::<Vec<_>>(),
+            ["payments.order_id"]
+        );
+    }
+
+    #[test]
+    fn test_lineage_unpivot_passthrough_resolves_input_column() {
+        let expr = parse_dialect(
+            "SELECT customer_id FROM (SELECT customer_id, first_name, last_name FROM customers) \
+             UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+            DialectType::Snowflake,
+        );
+        let node = lineage("customer_id", &expr, Some(DialectType::Snowflake), false).unwrap();
+        assert_lineage_contains(&node, "customers.customer_id");
     }
 
     #[test]

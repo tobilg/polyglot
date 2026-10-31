@@ -3681,6 +3681,186 @@ pub struct Star {
     pub span: Option<Span>,
 }
 
+impl Star {
+    /// Apply EXCEPT, REPLACE, and RENAME to the expanded `column` named `name`.
+    /// Returns `None` when EXCEPT removes the column.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn expand_column(
+        &self,
+        name: &str,
+        column: Expression,
+        dialect: Option<crate::dialects::DialectType>,
+    ) -> Option<Expression> {
+        if self.excludes(name, dialect) {
+            return None;
+        }
+        let renamed = self.renamed(name, dialect);
+        if let Some(replacement) = self.replacement(name, dialect) {
+            let mut replacement = replacement.clone();
+            if let Some(alias) = renamed {
+                replacement.alias = alias;
+            }
+            return Some(Expression::Alias(Box::new(replacement)));
+        }
+        Some(match renamed {
+            Some(alias) => Expression::Alias(Box::new(Alias::new(column, alias))),
+            None => column,
+        })
+    }
+
+    /// Whether EXCEPT holds a ClickHouse pattern string (`EXCEPT ('re')`).
+    /// The columns it removes are not known, so the star stays unexpanded.
+    #[cfg(any(feature = "semantic", test))]
+    pub(crate) fn has_except_pattern(&self) -> bool {
+        self.except.iter().flatten().any(is_except_pattern)
+    }
+
+    /// Whether EXCEPT / EXCLUDE removes the column `name`.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn excludes(
+        &self,
+        name: &str,
+        dialect: Option<crate::dialects::DialectType>,
+    ) -> bool {
+        self.except
+            .iter()
+            .flatten()
+            .any(|column| star_modifier_matches(column, name, dialect))
+    }
+
+    /// The new name RENAME gives to the column `name`. With a known dialect,
+    /// the name gets the identifier normalization that schema columns get.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn renamed(
+        &self,
+        name: &str,
+        dialect: Option<crate::dialects::DialectType>,
+    ) -> Option<Identifier> {
+        let (_, new) = self
+            .rename
+            .iter()
+            .flatten()
+            .find(|(old, _)| star_modifier_matches(old, name, dialect))?;
+        Some(match dialect {
+            Some(_) => crate::optimizer::normalize_identifiers::normalize_identifier(
+                new.clone(),
+                crate::optimizer::normalize_identifiers::get_normalization_strategy(dialect),
+            ),
+            None => new.clone(),
+        })
+    }
+
+    /// The REPLACE expression for the column `name`.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn replacement(
+        &self,
+        name: &str,
+        dialect: Option<crate::dialects::DialectType>,
+    ) -> Option<&Alias> {
+        self.replace
+            .iter()
+            .flatten()
+            .find(|replacement| star_modifier_matches(&replacement.alias, name, dialect))
+    }
+
+    /// The source column that the star outputs as `output`, after RENAME and
+    /// EXCEPT. Returns `None` when the star does not output `output`.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn source_column(
+        &self,
+        output: &str,
+        dialect: Option<crate::dialects::DialectType>,
+    ) -> Option<String> {
+        let renames = self.rename.iter().flatten();
+        let column = match renames
+            .clone()
+            .find(|(_, new)| star_modifier_matches(new, output, dialect))
+        {
+            Some((old, _)) => old.name.clone(),
+            None if renames
+                .clone()
+                .any(|(old, _)| star_modifier_matches(old, output, dialect)) =>
+            {
+                return None
+            }
+            None => output.to_string(),
+        };
+        (!self.excludes(&column, dialect)).then_some(column)
+    }
+}
+
+/// A pattern string keeps its quotes in the name (see `parse_star_except_name`).
+#[cfg(any(feature = "semantic", test))]
+fn is_except_pattern(identifier: &Identifier) -> bool {
+    !identifier.quoted && identifier.name.starts_with('\'')
+}
+
+/// Match a modifier name to the column `name`. A quoted name matches with
+/// its case, unless the dialect ignores case. An unquoted name ignores case,
+/// unless the dialect is case sensitive. A qualified name such as `t.col`
+/// matches on its column part, as in sqlglot. A pattern string never matches.
+#[cfg(feature = "semantic")]
+fn star_modifier_matches(
+    identifier: &Identifier,
+    name: &str,
+    dialect: Option<crate::dialects::DialectType>,
+) -> bool {
+    use crate::optimizer::normalize_identifiers::{
+        get_normalization_strategy, NormalizationStrategy,
+    };
+    use std::borrow::Cow;
+    if is_except_pattern(identifier) {
+        return false;
+    }
+    let text = identifier.name.as_str();
+    let (column, quoted) = if identifier.quoted {
+        (Cow::Borrowed(text), true)
+    } else if let Some(quote) = text.chars().last().filter(|c| matches!(c, '"' | '`')) {
+        // A qualified name keeps the quotes of its parts: `t."col"`.
+        let body = &text[..text.len() - 1];
+        let mut chars = body.char_indices().rev().peekable();
+        let mut opening = None;
+        while let Some((index, ch)) = chars.next() {
+            if ch == quote {
+                if chars.peek().is_some_and(|(_, next)| *next == quote) {
+                    chars.next(); // Skip an escaped quote inside the identifier.
+                } else {
+                    opening = Some(index);
+                    break;
+                }
+            }
+        }
+        match opening {
+            Some(open) => (
+                Cow::Owned(
+                    body[open + 1..].replace(&format!("{quote}{quote}"), &quote.to_string()),
+                ),
+                true,
+            ),
+            None => (Cow::Borrowed(text), false),
+        }
+    } else {
+        (
+            Cow::Borrowed(text.rsplit_once('.').map_or(text, |(_, column)| column)),
+            false,
+        )
+    };
+    let strategy = dialect.map(|dialect| get_normalization_strategy(Some(dialect)));
+    let exact = match strategy {
+        Some(NormalizationStrategy::CaseSensitive) => true,
+        Some(
+            NormalizationStrategy::CaseInsensitive
+            | NormalizationStrategy::CaseInsensitiveUppercase,
+        ) => false,
+        _ => quoted,
+    };
+    if exact {
+        column == name
+    } else {
+        column.eq_ignore_ascii_case(name)
+    }
+}
+
 /// Represent a complete SELECT statement.
 ///
 /// This is the most feature-rich AST node, covering the full surface area of
