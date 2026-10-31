@@ -3242,14 +3242,22 @@ fn synthesize_star_passthrough_expr(
         let column = match passthrough_star(expr) {
             Some(star) if star.has_except_pattern() => return None,
             Some(star) => {
-                if let Some(alias) = star.replacement(name, dialect) {
-                    replacement = Some(Expression::Alias(Box::new(alias.clone())));
-                    continue;
-                }
-                match star.source_column(name, dialect) {
+                let column = match star.source_column(name, dialect) {
                     Some(column) => column,
                     None => continue,
+                };
+                if let Some(alias) = star.replacement(&column, dialect) {
+                    if replacement.is_some() {
+                        return None;
+                    }
+                    let mut alias = alias.clone();
+                    if let Some(renamed) = star.renamed(&column, dialect) {
+                        alias.alias = renamed;
+                    }
+                    replacement = Some(Expression::Alias(Box::new(alias)));
+                    continue;
                 }
+                column
             }
             None => name.to_string(),
         };

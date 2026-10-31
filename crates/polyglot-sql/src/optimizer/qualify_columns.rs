@@ -1081,16 +1081,17 @@ fn expand_stars(
                                 if tables.contains(table_name) {
                                     coalesced_columns.insert(normalized);
                                     let coalesce = make_coalesce(col_name, tables);
-                                    new_selections.push(Expression::Alias(Box::new(Alias {
-                                        this: coalesce,
-                                        alias: Identifier::new(col_name),
-                                        column_aliases: vec![],
-                                        alias_explicit_as: false,
-                                        alias_keyword: None,
-                                        pre_alias_comments: vec![],
-                                        trailing_comments: vec![],
-                                        inferred_type: None,
-                                    })));
+                                    if let Some(expanded) =
+                                        star.expand_column(col_name, coalesce, resolver.dialect)
+                                    {
+                                        new_selections.push(match expanded {
+                                            Expression::Alias(_) => expanded,
+                                            _ => Expression::Alias(Box::new(Alias::new(
+                                                expanded,
+                                                Identifier::new(col_name),
+                                            ))),
+                                        });
+                                    }
                                     continue;
                                 }
                             }
@@ -1120,16 +1121,17 @@ fn expand_stars(
                                         // Emit COALESCE and mark as coalesced
                                         coalesced_columns.insert(normalized);
                                         let coalesce = make_coalesce(col_name, tables);
-                                        new_selections.push(Expression::Alias(Box::new(Alias {
-                                            this: coalesce,
-                                            alias: Identifier::new(col_name),
-                                            column_aliases: vec![],
-                                            alias_explicit_as: false,
-                                            alias_keyword: None,
-                                            pre_alias_comments: vec![],
-                                            trailing_comments: vec![],
-                                            inferred_type: None,
-                                        })));
+                                        if let Some(expanded) =
+                                            star.expand_column(col_name, coalesce, resolver.dialect)
+                                        {
+                                            new_selections.push(match expanded {
+                                                Expression::Alias(_) => expanded,
+                                                _ => Expression::Alias(Box::new(Alias::new(
+                                                    expanded,
+                                                    Identifier::new(col_name),
+                                                ))),
+                                            });
+                                        }
                                         continue;
                                     }
                                 }

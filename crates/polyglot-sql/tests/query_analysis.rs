@@ -1684,6 +1684,146 @@ fn path_function_names_preserve_quoted_identity() {
 }
 
 #[test]
+fn star_modifiers_apply_to_join_using_outputs() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name": "a", "columns": [{"name": "id", "type": "INT"}, {"name": "av", "type": "INT"}]},
+        {"name": "b", "columns": [{"name": "id", "type": "INT"}, {"name": "bv", "type": "INT"}]}
+    ]}))
+    .unwrap();
+    for (modifier, name, constant) in [
+        ("RENAME (id AS joined_id)", "joined_id", false),
+        ("REPLACE (42 AS id)", "id", true),
+    ] {
+        let sql = format!("SELECT * {modifier} FROM a FULL OUTER JOIN b USING (id)");
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect: DialectType::DuckDB,
+                schema: Some(schema.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let projection = analysis
+            .projections
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {name}: {sql}: {:?}", analysis.projections));
+        assert_eq!(analysis.projections.len(), 3);
+        if constant {
+            assert_eq!(projection.transform_kind, TransformKind::Constant, "{sql}");
+            assert!(
+                projection.upstream.is_empty(),
+                "{sql}: {:?}",
+                projection.upstream
+            );
+        }
+    }
+}
+
+#[test]
+fn schema_less_star_replace_then_rename_keeps_replacement_lineage() {
+    let dialect = DialectType::Snowflake;
+    let expression = polyglot_sql::parse_one(
+        "SELECT * REPLACE (b * 2 AS a) RENAME (a AS renamed) FROM t",
+        dialect,
+    )
+    .unwrap();
+    let node =
+        polyglot_sql::lineage::lineage("renamed", &expression, Some(dialect), false).unwrap();
+    let leaves: Vec<_> = node
+        .walk()
+        .filter(|n| n.downstream.is_empty())
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(leaves, ["t.b"]);
+
+    let ambiguous = polyglot_sql::parse_one(
+        "SELECT t.* REPLACE (t.b AS a), u.* REPLACE (u.c AS a) FROM t JOIN u ON t.id = u.id",
+        dialect,
+    )
+    .unwrap();
+    assert!(polyglot_sql::lineage::lineage("a", &ambiguous, Some(dialect), false).is_err());
+}
+
+#[test]
+fn star_exclusion_matches_escaped_qualified_identifiers() {
+    let analysis = analyze_query(
+        r#"WITH t AS (SELECT 1 AS "a""b", 2 AS keep) SELECT * EXCLUDE (t."a""b") FROM t"#,
+        AnalyzeQueryOptions {
+            dialect: DialectType::Snowflake,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(analysis.projections.len(), 1, "{:?}", analysis.projections);
+    assert_eq!(analysis.projections[0].name.as_deref(), Some("keep"));
+}
+
+#[test]
+fn identifier_table_names_preserve_quoted_components() {
+    for (literal, catalog, schema, name) in [
+        (r#""table.with.dot""#, None, None, "table.with.dot"),
+        (
+            r#""db.with.dot"."s.with.dot"."t.with.dot""#,
+            Some("db.with.dot"),
+            Some("s.with.dot"),
+            "t.with.dot",
+        ),
+        (r#"db.s."a""b""#, Some("db"), Some("s"), "a\"b"),
+        (r#"db.."a.b""#, Some("db"), Some("PUBLIC"), "a.b"),
+        (
+            r#" "db.1" . s . "a""b""" "#,
+            Some("db.1"),
+            Some("s"),
+            "a\"b\"",
+        ),
+        (r#""таблица.1""#, None, None, "таблица.1"),
+    ] {
+        let sql = format!("SELECT o.id FROM IDENTIFIER('{literal}') AS o");
+        let expression = polyglot_sql::parse_one(&sql, DialectType::Snowflake).unwrap();
+        let scope = polyglot_sql::scope::build_scope(&expression);
+        let source = scope
+            .sources
+            .get("o")
+            .unwrap_or_else(|| panic!("missing table: {sql}"));
+        let polyglot_sql::Expression::Table(table) = &source.expression else {
+            panic!("not a table: {sql}")
+        };
+        assert_eq!(
+            table.catalog.as_ref().map(|p| p.name.as_str()),
+            catalog,
+            "{sql}"
+        );
+        assert_eq!(
+            table.schema.as_ref().map(|p| p.name.as_str()),
+            schema,
+            "{sql}"
+        );
+        assert_eq!(table.name.name, name, "{sql}");
+        assert!(table.name.quoted, "{sql}");
+    }
+}
+
+#[test]
+fn malformed_identifier_table_literals_stay_unresolved() {
+    for literal in [
+        "",
+        "db.",
+        "a.b.c.d",
+        r#""unclosed"#,
+        r#""t"junk"#,
+        "t extra",
+        r#""""#,
+    ] {
+        let sql = format!("SELECT o.id FROM IDENTIFIER('{literal}') AS o");
+        let expression = polyglot_sql::parse_one(&sql, DialectType::Snowflake).unwrap();
+        let scope = polyglot_sql::scope::build_scope(&expression);
+        assert!(!scope.sources.contains_key("o"), "{sql}");
+    }
+}
+
+#[test]
 fn analyze_query_reports_top_level_cte_facts() {
     let analysis = analyze_query(
         "WITH base(order_id, amount) AS (SELECT id, amount FROM orders), \

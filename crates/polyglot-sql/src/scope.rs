@@ -1017,15 +1017,7 @@ fn identifier_table(expr: &Expression) -> Option<TableRef> {
     let Literal::String(name) = literal.as_ref() else {
         return None;
     };
-    let mut parts: Vec<Identifier> = name
-        .split('.')
-        .map(
-            |part| match part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
-                Some(quoted) => Identifier::quoted(quoted),
-                None => Identifier::new(part),
-            },
-        )
-        .collect();
+    let mut parts = identifier_table_parts(name)?;
     let mut table = TableRef::new("");
     table.name = parts.pop().filter(|part| !part.is_empty())?;
     table.schema = parts.pop();
@@ -1035,6 +1027,53 @@ fn identifier_table(expr: &Expression) -> Option<TableRef> {
         table.column_aliases = alias.column_aliases.clone();
     }
     parts.is_empty().then_some(table)
+}
+
+/// Split a literal object name without treating quoted dots as separators.
+fn identifier_table_parts(name: &str) -> Option<Vec<Identifier>> {
+    let mut chars = name.chars().peekable();
+    let mut parts = Vec::new();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let quoted = chars.next_if_eq(&'"').is_some();
+        let mut part = String::new();
+        if quoted {
+            loop {
+                match chars.next()? {
+                    '"' if chars.next_if_eq(&'"').is_some() => part.push('"'),
+                    '"' => break,
+                    ch => part.push(ch),
+                }
+            }
+        } else {
+            while let Some(ch) =
+                chars.next_if(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$'))
+            {
+                part.push(ch);
+            }
+            if part.starts_with(|c: char| c.is_ascii_digit() || c == '$') {
+                return None;
+            }
+        }
+        // Snowflake's db..table notation refers to the PUBLIC schema.
+        if part.is_empty() {
+            if quoted || parts.len() != 1 || chars.peek() != Some(&'.') {
+                return None;
+            }
+            part.push_str("PUBLIC");
+        }
+        parts.push(if quoted {
+            Identifier::quoted(part)
+        } else {
+            Identifier::new(part)
+        });
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        match chars.next() {
+            None => return Some(parts),
+            Some('.') if parts.len() < 3 => {}
+            _ => return None,
+        }
+    }
 }
 
 fn is_query_like_relation(expr: &Expression) -> bool {
