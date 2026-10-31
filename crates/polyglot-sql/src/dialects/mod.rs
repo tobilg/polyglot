@@ -4398,6 +4398,14 @@ impl Dialect {
                     transformed
                 };
 
+                let transformed = if target == DialectType::ClickHouse
+                    && self.dialect_type != DialectType::ClickHouse
+                {
+                    Self::nullable_clickhouse_cast_types(transformed)?
+                } else {
+                    transformed
+                };
+
                 Self::reject_strict_unsupported(&transformed, self.dialect_type, target, opts)?;
 
                 let mut sql = target_dialect.generate_with_transpile_options(
@@ -4617,6 +4625,78 @@ impl Dialect {
             type_result?;
         }
         Ok(())
+    }
+
+    /// Other dialects' types are nullable; ClickHouse types are not unless wrapped,
+    /// and `CAST(NULL AS String)` fails there with "Cannot convert NULL to a
+    /// non-nullable type". As in Python sqlglot, standard cast target types from
+    /// another dialect become `Nullable(T)`. Custom type names are ClickHouse's
+    /// own (`DateTime64(6)` built for `TIME_STR_TO_TIME`), and composite types
+    /// (`Array`, `Map`, `Tuple`) can't be `Nullable`; both are left alone.
+    fn nullable_clickhouse_cast_types(expr: Expression) -> Result<Expression> {
+        fn nullable(to: DataType) -> DataType {
+            // The PostgreSQL reader keeps these standard types as custom names.
+            let to = match to {
+                DataType::Custom { name } if name.eq_ignore_ascii_case("DOUBLE PRECISION") => {
+                    DataType::Double {
+                        precision: None,
+                        scale: None,
+                    }
+                }
+                DataType::Custom { name } if name.eq_ignore_ascii_case("REAL") => DataType::Float {
+                    precision: None,
+                    scale: None,
+                    real_spelling: true,
+                },
+                other => other,
+            };
+            // Blob is written as `Nullable(String)` already.
+            let scalar = matches!(
+                to,
+                DataType::Boolean
+                    | DataType::TinyInt { .. }
+                    | DataType::SmallInt { .. }
+                    | DataType::Int { .. }
+                    | DataType::BigInt { .. }
+                    | DataType::Int128 { .. }
+                    | DataType::UInt8 { .. }
+                    | DataType::UInt16 { .. }
+                    | DataType::UInt32 { .. }
+                    | DataType::UInt64 { .. }
+                    | DataType::UInt128 { .. }
+                    | DataType::Float { .. }
+                    | DataType::Double { .. }
+                    | DataType::Decimal { .. }
+                    | DataType::Char { .. }
+                    | DataType::VarChar { .. }
+                    | DataType::String { .. }
+                    | DataType::Text
+                    | DataType::TextWithLength { .. }
+                    | DataType::Binary { .. }
+                    | DataType::VarBinary { .. }
+                    | DataType::Date
+                    | DataType::Time { .. }
+                    | DataType::Timestamp { .. }
+                    | DataType::Json
+                    | DataType::JsonB
+                    | DataType::Uuid
+                    | DataType::Enum { .. }
+            );
+            if scalar {
+                DataType::Nullable {
+                    inner: Box::new(to),
+                }
+            } else {
+                to
+            }
+        }
+        transform_recursive(expr, &|e| match e {
+            Expression::Cast(mut c) => {
+                c.to = nullable(std::mem::replace(&mut c.to, DataType::Unknown));
+                Ok(Expression::Cast(c))
+            }
+            _ => Ok(e),
+        })
     }
 
     fn reject_clickhouse_session_semantics(

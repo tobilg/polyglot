@@ -28552,6 +28552,7 @@ impl Generator {
                             self.write_keyword("STRING");
                         }
                     }
+                    Some(DialectType::ClickHouse) => self.write_clickhouse_type("String"),
                     Some(DialectType::Dremio) => {
                         // Dremio maps CHAR to VARCHAR
                         self.write_keyword("VARCHAR");
@@ -28573,6 +28574,7 @@ impl Generator {
             } => {
                 // Dialect-specific varchar type mappings
                 match self.config.dialect {
+                    Some(DialectType::ClickHouse) => self.write_clickhouse_type("String"),
                     Some(DialectType::Oracle) => {
                         self.write_keyword("VARCHAR2");
                         if let Some(n) = length {

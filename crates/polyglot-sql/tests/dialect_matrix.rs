@@ -1585,7 +1585,7 @@ mod strict_unsupported_regressions {
 
         assert_eq!(
             output,
-            vec!["SELECT dateTrunc('MONTH', CAST('2025-01-05' AS DATE))"]
+            vec!["SELECT dateTrunc('MONTH', CAST('2025-01-05' AS Nullable(DATE)))"]
         );
     }
 
@@ -1970,7 +1970,9 @@ mod strict_unsupported_regressions {
         .expect("permissive transpilation should keep decimal division best effort");
         assert_eq!(
             decimal,
-            vec!["SELECT CAST(1 AS Decimal(18, 4)) / CAST(3 AS Decimal(18, 4))"]
+            vec![
+                "SELECT CAST(1 AS Nullable(Decimal(18, 4))) / CAST(3 AS Nullable(Decimal(18, 4)))"
+            ]
         );
     }
 
@@ -2080,7 +2082,7 @@ mod strict_unsupported_regressions {
         .expect("fixed-point Snowflake MEDIAN has an exact ClickHouse lowering");
         assert_eq!(
             decimal,
-            vec!["SELECT medianExactWeightedInterpolatedOrNull(CAST(value AS Decimal(10, 2)), 1) FROM events"]
+            vec!["SELECT medianExactWeightedInterpolatedOrNull(CAST(value AS Nullable(Decimal(10, 2))), 1) FROM events"]
         );
 
         let integer = transpile_with_level(
@@ -2092,7 +2094,7 @@ mod strict_unsupported_regressions {
         .expect("integer medians can retain an interpolated half value through Decimal scale");
         assert_eq!(
             integer,
-            vec!["SELECT medianExactWeightedInterpolatedOrNull(CAST(CAST(value AS Decimal(10, 0)) AS Decimal(11, 1)), 1) FROM events"]
+            vec!["SELECT medianExactWeightedInterpolatedOrNull(CAST(CAST(value AS Nullable(Decimal(10, 0))) AS Nullable(Decimal(11, 1))), 1) FROM events"]
         );
     }
 
@@ -2145,7 +2147,10 @@ mod strict_unsupported_regressions {
             UnsupportedLevel::Raise,
         )
         .expect("ClickHouse Decimal ROUND matches Snowflake's default mode");
-        assert_eq!(decimal, vec!["SELECT ROUND(CAST(2.5 AS Decimal(10, 1)))"]);
+        assert_eq!(
+            decimal,
+            vec!["SELECT ROUND(CAST(2.5 AS Nullable(Decimal(10, 1))))"]
+        );
 
         let half_even = transpile_with_level(
             "SELECT ROUND(CAST(2.5 AS NUMBER(10, 1)), 0, 'HALF_TO_EVEN')",
@@ -2156,7 +2161,7 @@ mod strict_unsupported_regressions {
         .expect("Snowflake HALF_TO_EVEN can use ClickHouse roundBankers");
         assert_eq!(
             half_even,
-            vec!["SELECT roundBankers(CAST(2.5 AS Decimal(10, 1)), 0)"]
+            vec!["SELECT roundBankers(CAST(2.5 AS Nullable(Decimal(10, 1))), 0)"]
         );
     }
 
