@@ -1538,6 +1538,84 @@ fn analyze_query_merges_path_functions_of_set_operation_branches() {
 }
 
 #[test]
+fn path_transforms_respect_scalar_query_scopes() {
+    for dialect in [
+        DialectType::PostgreSQL,
+        DialectType::Snowflake,
+        DialectType::DuckDB,
+    ] {
+        for sql in [
+            "SELECT (SELECT amount FROM s.orders WHERE ABS(order_id) > 0 LIMIT 1) AS value",
+            "SELECT (SELECT amount FROM s.orders ORDER BY ABS(order_id) LIMIT 1) AS value",
+            "SELECT (SELECT amount FROM (SELECT amount, SUM(order_id) OVER () AS unused FROM s.orders) AS q LIMIT 1) AS value",
+        ] {
+            let analysis = path_kind_analysis(sql, dialect);
+            let upstream = &analysis.projections[0].upstream;
+            assert_eq!(upstream.len(), 1, "{dialect}: {sql}");
+            assert!(upstream[0].path_functions.is_empty(), "{dialect}: {sql}: {upstream:?}");
+            assert!(!upstream[0].path_window, "{dialect}: {sql}");
+            assert_eq!(upstream[0].path_transform_kind, Some(TransformKind::Direct), "{dialect}: {sql}");
+        }
+        let analysis = path_kind_analysis(
+            "SELECT (SELECT amount FROM s.orders UNION ALL SELECT SUM(order_id) FROM s.orders LIMIT 1) AS value", dialect);
+        assert_eq!(
+            path_kinds(&analysis.projections[0]),
+            vec![
+                ("amount".into(), Some(TransformKind::Direct)),
+                ("order_id".into(), Some(TransformKind::Aggregation)),
+            ]
+        );
+    }
+}
+
+#[test]
+fn path_transforms_include_operations_inside_casts() {
+    for dialect in [
+        DialectType::PostgreSQL,
+        DialectType::Snowflake,
+        DialectType::DuckDB,
+    ] {
+        for (value, expected) in [
+            ("SUM(amount)", TransformKind::Aggregation),
+            ("SUM(amount) OVER ()", TransformKind::Aggregation),
+            ("amount * 2", TransformKind::Expression),
+            ("amount", TransformKind::Direct),
+        ] {
+            let inline = path_kind_analysis(
+                &format!("SELECT CAST({value} AS BIGINT) AS v FROM s.orders"),
+                dialect,
+            );
+            let scoped = path_kind_analysis(&format!("WITH t AS (SELECT {value} AS v FROM s.orders) SELECT CAST(v AS BIGINT) AS v FROM t"), dialect);
+            assert_eq!(inline.projections[0].transform_kind, TransformKind::Cast);
+            assert_eq!(
+                path_kinds(&inline.projections[0]),
+                path_kinds(&scoped.projections[0])
+            );
+            assert_eq!(
+                inline.projections[0].upstream[0].path_transform_kind,
+                Some(if expected == TransformKind::Direct {
+                    TransformKind::Cast
+                } else {
+                    expected
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn path_function_names_preserve_quoted_identity() {
+    let analysis = path_kind_analysis(
+        r#"SELECT "Foo"(amount) + "foo"(amount) + foo(amount) FROM s.orders"#,
+        DialectType::PostgreSQL,
+    );
+    assert_eq!(
+        analysis.projections[0].upstream[0].path_functions,
+        ["\"Foo\"", "\"foo\"", "FOO"]
+    );
+}
+
+#[test]
 fn analyze_query_reports_top_level_cte_facts() {
     let analysis = analyze_query(
         "WITH base(order_id, amount) AS (SELECT id, amount FROM orders), \

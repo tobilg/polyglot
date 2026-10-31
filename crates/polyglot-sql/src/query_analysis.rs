@@ -14,7 +14,7 @@ use crate::optimizer::qualify_schema_aware_expression;
 use crate::schema::{MappingSchema, Schema};
 use crate::scope::{build_scope, Scope, SourceInfo, SourceKind};
 use crate::traversal::{
-    contains_aggregate, is_arithmetic, is_comparison, is_logical, ExpressionWalk,
+    contains_aggregate, is_aggregate, is_arithmetic, is_comparison, is_logical, ExpressionWalk,
 };
 use crate::validation::{mapping_schema_from_validation_schema_with_dialect, ValidationSchema};
 use crate::{parse_one_with_options, ComplexityGuardOptions, Error, ParseOptions, Result};
@@ -1112,11 +1112,15 @@ fn projection_fact(
         }
     }
     // A fallback reference has no traced path, so it takes the projection step.
-    let projection_path = PathTransform::new(dialect).step(inner);
-    for reference in &mut upstream {
-        if reference.path_transform_kind.is_none() {
-            projection_path.apply(reference);
-            reference.path_transform_kind = Some(kind);
+    if upstream
+        .iter()
+        .any(|reference| reference.path_transform_kind.is_none())
+    {
+        let projection_path = PathTransform::new(dialect).step(inner);
+        for reference in &mut upstream {
+            if reference.path_transform_kind.is_none() {
+                projection_path.apply(reference);
+            }
         }
     }
     if let Some(schema) = nullability_context.mapping_schema {
@@ -1818,8 +1822,10 @@ impl PathTransform {
     /// Add the projection expression of one scope on the path.
     fn step(&self, expression: &Expression) -> Self {
         let mut next = self.clone();
-        next.kind = combine_transform_kinds(self.kind, transform_kind(expression));
-        for node in expression.dfs() {
+        // Nested queries are separate lineage steps. Their filters and unused
+        // outputs must not contribute transforms to this projection.
+        for node in crate::scope::walk_in_scope(expression, false) {
+            next.kind = combine_transform_kinds(next.kind, path_node_kind(node));
             if matches!(node, Expression::WindowFunction(_)) {
                 next.window = true;
             } else if let Some(name) = function_name(node, self.dialect) {
@@ -1838,10 +1844,69 @@ impl PathTransform {
     }
 }
 
+/// Unlike the legacy outer-expression kind, path metadata includes transforms
+/// inside casts and other wrappers, without crossing query scope boundaries.
+fn path_node_kind(node: &Expression) -> TransformKind {
+    if is_aggregate(node) {
+        return TransformKind::Aggregation;
+    }
+    match node {
+        Expression::Column(_)
+        | Expression::Identifier(_)
+        | Expression::Alias(_)
+        | Expression::Paren(_)
+        | Expression::Annotated(_)
+        | Expression::Subquery(_)
+        | Expression::Select(_)
+        | Expression::Union(_)
+        | Expression::Intersect(_)
+        | Expression::Except(_)
+        | Expression::Cte(_) => TransformKind::Direct,
+        Expression::Star(_) => TransformKind::Star,
+        Expression::Cast(_) | Expression::TryCast(_) | Expression::SafeCast(_) => {
+            TransformKind::Cast
+        }
+        Expression::Literal(_)
+        | Expression::Boolean(_)
+        | Expression::Null(_)
+        | Expression::DataType(_) => TransformKind::Constant,
+        _ => TransformKind::Expression,
+    }
+}
+
 /// The name of a function call node, as the dialect writes it.
 fn function_name(node: &Expression, dialect: DialectType) -> Option<String> {
     match node {
-        Expression::Function(function) => Some(function.name.to_uppercase()),
+        Expression::Function(function) => {
+            if !function.qualified_name.is_empty() {
+                return function
+                    .qualified_name
+                    .iter()
+                    .map(|identifier| {
+                        crate::generate(&Expression::Identifier(identifier.clone()), dialect).ok()
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|parts| parts.join("."));
+            }
+            if function.quoted {
+                return crate::generate(
+                    &Expression::Identifier(Identifier::quoted(&function.name)),
+                    dialect,
+                )
+                .ok();
+            }
+            if function.name.contains('.') {
+                return Some(function.name.clone());
+            }
+            use crate::generator::NormalizeFunctions;
+            Some(
+                match Dialect::get(dialect).generator_config().normalize_functions {
+                    NormalizeFunctions::Upper => function.name.to_uppercase(),
+                    NormalizeFunctions::Lower => function.name.to_lowercase(),
+                    NormalizeFunctions::None => function.name.clone(),
+                },
+            )
+        }
         Expression::AggregateFunction(function) => Some(function.name.to_uppercase()),
         Expression::Column(_)
         | Expression::Identifier(_)
