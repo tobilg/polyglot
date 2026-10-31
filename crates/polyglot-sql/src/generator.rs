@@ -16283,9 +16283,11 @@ impl Generator {
                 } else {
                     std::borrow::Cow::Borrowed(n.as_str())
                 };
-                // Normalize numbers starting with decimal point to have leading zero
-                // e.g., .25 -> 0.25 (matches sqlglot behavior)
-                if n.starts_with('.') {
+                // DuckDB counts a leading zero toward DECIMAL precision; at 39
+                // digits, adding it can even turn an exact decimal into DOUBLE.
+                if matches!(self.config.dialect, Some(DialectType::DuckDB)) {
+                    self.write(&n);
+                } else if n.starts_with('.') {
                     self.write("0");
                     self.write(&n);
                 } else if n.starts_with("-.") {
