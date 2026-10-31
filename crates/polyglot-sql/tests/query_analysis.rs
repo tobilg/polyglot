@@ -1,6 +1,7 @@
 use polyglot_sql::{
-    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionNullability,
-    QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind, ValidationSchema,
+    analyze_query, scope::SourceKind, AnalyzeQueryOptions, DialectType, ProjectionFact,
+    ProjectionNullability, QueryShape, ReferenceConfidence, SetOperationBranchRole, TransformKind,
+    ValidationSchema,
 };
 use serde_json::json;
 
@@ -2066,6 +2067,218 @@ fn analyze_query_expands_unqualified_star_with_schema() {
     assert_eq!(
         expanded,
         vec!["amount", "customer_id", "id", "total", "user_id"]
+    );
+}
+
+#[test]
+fn analyze_query_applies_star_except_replace_rename() {
+    let analyze = |dialect, sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap()
+    };
+
+    for (dialect, sql) in [
+        (
+            DialectType::Snowflake,
+            "SELECT * EXCLUDE (total) FROM orders",
+        ),
+        (DialectType::BigQuery, "SELECT * EXCEPT (total) FROM orders"),
+        (
+            DialectType::ClickHouse,
+            "SELECT * EXCEPT (total) FROM orders",
+        ),
+        (DialectType::DuckDB, "SELECT * EXCLUDE (total) FROM orders"),
+    ] {
+        let analysis = analyze(dialect, sql);
+        // Snowflake normalizes unquoted schema columns to upper case.
+        let names: Vec<_> = analysis
+            .projections
+            .iter()
+            .filter_map(|projection| projection.name.as_deref())
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(names, ["id", "user_id", "customer_id", "amount"], "{sql}");
+        let expanded: Vec<_> = analysis.star_projections[0]
+            .expanded_columns
+            .iter()
+            .map(|column| column.to_lowercase())
+            .collect();
+        assert_eq!(expanded, names, "{sql}");
+    }
+
+    let analysis = analyze(
+        DialectType::BigQuery,
+        "SELECT * REPLACE (amount * 2 AS amount) FROM orders",
+    );
+    assert_eq!(analysis.projections.len(), 5);
+    let amount = &analysis.projections[3];
+    assert_eq!(amount.name.as_deref(), Some("amount"));
+    assert_eq!(amount.transform_kind, TransformKind::Expression);
+    assert_eq!(amount.upstream.len(), 1);
+    assert_eq!(amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(amount.upstream[0].column, "amount");
+
+    let analysis = analyze(
+        DialectType::Snowflake,
+        "SELECT * RENAME (amount AS order_amount) FROM orders",
+    );
+    let names: Vec<_> = analysis
+        .projections
+        .iter()
+        .filter_map(|projection| projection.name.as_deref())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ID", "USER_ID", "CUSTOMER_ID", "ORDER_AMOUNT", "TOTAL"]
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns, names);
+    let order_amount = &analysis.projections[3];
+    assert_eq!(order_amount.transform_kind, TransformKind::Direct);
+    assert_eq!(order_amount.upstream.len(), 1);
+    assert_eq!(order_amount.upstream[0].table.as_deref(), Some("orders"));
+    assert_eq!(order_amount.upstream[0].column, "AMOUNT");
+
+    // A quoted RENAME target keeps its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * RENAME (amount AS "order_amount") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "order_amount", "TOTAL"]
+    );
+
+    // A quoted EXCLUDE name matches with its case.
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("TOTAL") FROM orders"#,
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["ID", "USER_ID", "CUSTOMER_ID", "AMOUNT"]
+    );
+    let analysis = analyze(
+        DialectType::Snowflake,
+        r#"SELECT * EXCLUDE ("total") FROM orders"#,
+    );
+    assert_eq!(analysis.star_projections[0].expanded_columns.len(), 5);
+
+    // The columns that a pattern removes are not known.
+    let analysis = analyze(
+        DialectType::ClickHouse,
+        "SELECT * EXCEPT ('^tot.*') FROM orders",
+    );
+    assert!(analysis.star_projections[0].expanded_columns.is_empty());
+}
+
+#[test]
+fn analyze_query_expands_stars_over_derived_tables_and_ctes() {
+    for (sql, expected) in [
+        (
+            "SELECT * FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT t.* EXCEPT (t.total) FROM (SELECT * FROM orders) t",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+        (
+            "WITH c AS (SELECT * FROM orders) SELECT * FROM c",
+            vec!["id", "user_id", "customer_id", "amount", "total"],
+        ),
+        (
+            "SELECT * EXCEPT (o.total) FROM orders o",
+            vec!["id", "user_id", "customer_id", "amount"],
+        ),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.star_projections[0].expanded_columns, expected,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn analyze_query_expands_stars_over_pivot_and_unpivot() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name": "payments", "schema": "s", "columns": [
+            {"name": "order_id", "type": "INT"},
+            {"name": "method", "type": "TEXT"},
+            {"name": "amount", "type": "INT"}
+        ]},
+        {"name": "customers", "schema": "s", "columns": [
+            {"name": "customer_id", "type": "INT"},
+            {"name": "first_name", "type": "TEXT"},
+            {"name": "last_name", "type": "TEXT"}
+        ]}
+    ]}))
+    .unwrap();
+    let analyze = |sql| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::BigQuery,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    let upstream = |projection: &ProjectionFact| {
+        projection
+            .upstream
+            .iter()
+            .map(|reference| {
+                format!(
+                    "{}.{}",
+                    reference.table.as_deref().unwrap_or("?"),
+                    reference.column
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
+         PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["order_id", "card", "coupon"]
+    );
+    assert_eq!(upstream(&analysis.projections[0]), ["s.payments.order_id"]);
+    assert_eq!(
+        upstream(&analysis.projections[1]),
+        ["s.payments.amount", "s.payments.method"]
+    );
+
+    let analysis = analyze(
+        "SELECT * FROM (SELECT customer_id, first_name, last_name FROM s.customers) \
+         UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
+    );
+    assert_eq!(
+        analysis.star_projections[0].expanded_columns,
+        ["customer_id", "name_kind", "name_value"]
+    );
+    assert_eq!(
+        upstream(&analysis.projections[0]),
+        ["s.customers.customer_id"]
     );
 }
 

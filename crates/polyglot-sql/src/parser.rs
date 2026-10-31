@@ -47577,32 +47577,7 @@ impl Parser {
             if self.match_token(TokenType::LParen) {
                 // EXCLUDE (col1, col2) or EXCEPT (A.COL_1, B.COL_2)
                 loop {
-                    let start = self.peek().span;
-                    // ClickHouse: allow string literals in EXCEPT ('col_regex')
-                    // and keywords like 'key', 'index' as column names
-                    let col = if self.check(TokenType::String) {
-                        self.advance_text()?
-                    } else if self.is_safe_keyword_as_identifier() {
-                        self.advance_text()?
-                    } else {
-                        self.expect_identifier()?
-                    };
-                    // Handle qualified column names like A.COL_1
-                    if self.match_token(TokenType::Dot) {
-                        let subcol = if self.is_safe_keyword_as_identifier() {
-                            self.advance_text()?
-                        } else {
-                            self.expect_identifier()?
-                        };
-                        columns.push(
-                            Identifier::new(format!("{}.{}", col, subcol))
-                                .with_span(start.through(self.previous().span)),
-                        );
-                    } else {
-                        columns.push(
-                            Identifier::new(col).with_span(start.through(self.previous().span)),
-                        );
-                    }
+                    columns.push(self.parse_star_except_name(true)?);
                     if !self.match_token(TokenType::Comma) {
                         break;
                     }
@@ -47612,16 +47587,7 @@ impl Parser {
                 // EXCLUDE col (single column, Snowflake) or EXCEPT col1, col2 (ClickHouse)
                 // or EXCEPT 'regex' (ClickHouse)
                 loop {
-                    let start = self.peek().span;
-                    let col = if self.check(TokenType::String) {
-                        self.advance_text()?
-                    } else if self.is_safe_keyword_as_identifier() {
-                        self.advance_text()?
-                    } else {
-                        self.expect_identifier()?
-                    };
-                    columns
-                        .push(Identifier::new(col).with_span(start.through(self.previous().span)));
+                    columns.push(self.parse_star_except_name(false)?);
                     // ClickHouse allows comma-separated columns without parens: EXCEPT col1, col2
                     // But only if the next token after comma looks like a column name
                     if !matches!(
@@ -47653,8 +47619,7 @@ impl Parser {
                 loop {
                     let expr = self.parse_expression()?;
                     self.expect(TokenType::As)?;
-                    let alias =
-                        self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?;
+                    let alias = self.expect_identifier_or_keyword_with_quoted()?;
                     replacements.push(Alias::new(expr, alias));
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -47669,7 +47634,7 @@ impl Parser {
                 // Multiple entries require parens: REPLACE(expr1 AS name1, expr2 AS name2)
                 let expr = self.parse_expression()?;
                 self.expect(TokenType::As)?;
-                let alias = self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?;
+                let alias = self.expect_identifier_or_keyword_with_quoted()?;
                 replacements.push(Alias::new(expr, alias));
             } else {
                 return Err(self.parse_error("Expected LParen after REPLACE"));
@@ -47682,9 +47647,9 @@ impl Parser {
             let mut renames = Vec::new();
             if self.match_token(TokenType::LParen) {
                 loop {
-                    let old_name = self.parse_unquoted_identifier(Self::expect_identifier)?;
+                    let old_name = self.expect_identifier_with_quoted()?;
                     self.expect(TokenType::As)?;
-                    let new_name = self.parse_unquoted_identifier(Self::expect_identifier)?;
+                    let new_name = self.expect_identifier_with_quoted()?;
                     renames.push((old_name, new_name));
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -47693,9 +47658,9 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
             } else {
                 // Single rename without parens
-                let old_name = self.parse_unquoted_identifier(Self::expect_identifier)?;
+                let old_name = self.expect_identifier_with_quoted()?;
                 self.expect(TokenType::As)?;
-                let new_name = self.parse_unquoted_identifier(Self::expect_identifier)?;
+                let new_name = self.expect_identifier_with_quoted()?;
                 renames.push((old_name, new_name));
             }
             rename = Some(renames);
@@ -47709,6 +47674,34 @@ impl Parser {
             trailing_comments: star_trailing_comments,
             span: None,
         })
+    }
+
+    /// Parse one EXCEPT / EXCLUDE name. A single name keeps its quotes. A
+    /// qualified name (`A.COL_1`, only inside parentheses) and a ClickHouse
+    /// pattern string (`'col_regex'`) keep their source text, quotes included.
+    fn parse_star_except_name(&mut self, allow_qualified: bool) -> Result<Identifier> {
+        let start = self.peek().span;
+        if self.check(TokenType::String) {
+            let token = self.advance()?;
+            let text = if self.source.is_some() {
+                self.source_text_range(token.span.start, token.span.end)
+            } else {
+                format!("'{}'", token.text.replace('\'', "''"))
+            };
+            return Ok(Identifier::new(text).with_span(token.span));
+        }
+        let first = self.expect_identifier_or_safe_keyword_with_quoted()?;
+        if !allow_qualified || !self.match_token(TokenType::Dot) {
+            return Ok(first);
+        }
+        let column = self.expect_identifier_or_safe_keyword_with_quoted()?;
+        let span = start.through(self.previous().span);
+        let text = if self.source.is_some() {
+            self.source_text_range(span.start, span.end)
+        } else {
+            format!("{}.{}", first.name, column.name)
+        };
+        Ok(Identifier::new(text).with_span(span))
     }
 
     // === Helper methods ===
@@ -69202,6 +69195,54 @@ OPTIONS (
         } else {
             panic!("Expected Star expression");
         }
+    }
+
+    #[test]
+    fn test_star_modifiers_keep_quotes() {
+        for (dialect, sql) in [
+            (
+                crate::DialectType::Snowflake,
+                r#"SELECT * EXCLUDE ("Mixed", "a.b", o."payload", o.col) FROM t AS o"#,
+            ),
+            (
+                crate::DialectType::BigQuery,
+                "SELECT * EXCEPT (`Mixed`, o.col) FROM t AS o",
+            ),
+            (
+                crate::DialectType::DuckDB,
+                r#"SELECT * EXCLUDE ("Mixed") FROM t"#,
+            ),
+            (
+                crate::DialectType::ClickHouse,
+                "SELECT * EXCEPT ('^pay.*') FROM t",
+            ),
+            (
+                crate::DialectType::ClickHouse,
+                r#"SELECT * EXCEPT (payload, "Mixed") FROM t"#,
+            ),
+            (
+                crate::DialectType::Snowflake,
+                r#"SELECT * RENAME (a AS "Mixed", "B" AS c) FROM t"#,
+            ),
+            (
+                crate::DialectType::Snowflake,
+                r#"SELECT * REPLACE (a + 1 AS "A") FROM t"#,
+            ),
+        ] {
+            let ast = crate::parse_one(sql, dialect).unwrap();
+            assert_eq!(crate::generate(&ast, dialect).unwrap(), sql);
+        }
+
+        // A pattern without parentheses stays a pattern.
+        let ast = crate::parse_one(
+            "SELECT * EXCEPT '^pay.*' FROM t",
+            crate::DialectType::ClickHouse,
+        )
+        .unwrap();
+        let Expression::Star(star) = &ast.as_select().unwrap().expressions[0] else {
+            panic!("Expected Star expression");
+        };
+        assert!(star.has_except_pattern());
     }
 
     #[test]

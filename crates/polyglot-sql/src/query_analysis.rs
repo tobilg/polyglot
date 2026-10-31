@@ -280,12 +280,6 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
         options.dialect,
         options.complexity_guard,
     )?;
-    let star_projections = star_projection_facts(
-        &original_expression,
-        mapping_schema.as_ref(),
-        options.dialect,
-    );
-
     if let Some(schema) = mapping_schema.as_ref() {
         use crate::optimizer::qualify_columns::QualifyColumnsError;
         expression = match qualify_schema_aware_expression(
@@ -313,6 +307,12 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
     crate::lineage::expand_cte_stars(
         &mut expression,
         mapping_schema.as_ref().map(|schema| schema as &dyn Schema),
+    );
+    let star_projections = star_projection_facts(
+        &original_expression,
+        &expression,
+        mapping_schema.as_ref(),
+        options.dialect,
     );
     annotate_types(
         &mut expression,
@@ -589,13 +589,16 @@ fn top_level_cte_facts(
         .collect()
 }
 
+/// `resolved` is `expression` after qualification and CTE star expansion. Its
+/// sources give the columns of derived tables and CTEs that select a star.
 fn star_projection_facts(
     expression: &Expression,
+    resolved: &Expression,
     mapping_schema: Option<&MappingSchema>,
     dialect: DialectType,
 ) -> Vec<StarProjectionFact> {
-    let scope = build_scope(expression);
-    let ordered_sources = ordered_source_names_for_query(expression);
+    let scope = build_scope(resolved);
+    let ordered_sources = ordered_source_names_for_query(resolved);
 
     select_expressions_for_query(expression)
         .iter()
@@ -607,13 +610,26 @@ fn star_projection_facts(
             }
 
             let table = projection_star_table(inner);
-            let expanded_columns = expanded_star_columns(
-                table.as_deref(),
-                &scope,
-                &ordered_sources,
-                mapping_schema,
-                dialect,
-            );
+            let mut expanded_columns = match inner {
+                Expression::Star(star) if star.has_except_pattern() => Vec::new(),
+                _ => expanded_star_columns(
+                    table.as_deref(),
+                    &scope,
+                    &ordered_sources,
+                    mapping_schema,
+                    dialect,
+                ),
+            };
+            if let Expression::Star(star) = inner {
+                expanded_columns = expanded_columns
+                    .into_iter()
+                    .filter(|column| !star.excludes(column, Some(dialect)))
+                    .map(|column| {
+                        star.renamed(&column, Some(dialect))
+                            .map_or(column, |new| new.name)
+                    })
+                    .collect();
+            }
 
             Some(StarProjectionFact {
                 index,
@@ -642,6 +658,12 @@ fn expanded_star_columns(
 
     source_names.dedup();
 
+    let empty_schema = MappingSchema::with_dialect(dialect);
+    let mut resolver = crate::resolver::Resolver::new(
+        scope,
+        mapping_schema.map_or(&empty_schema as &dyn Schema, |schema| schema),
+        false,
+    );
     for source_name in source_names {
         let Some(source) = scope.sources.get(&source_name) else {
             continue;
@@ -661,7 +683,15 @@ fn expanded_star_columns(
             }
         }
 
-        columns.extend(source_columns(source, mapping_schema, dialect));
+        match &source.expression {
+            // The resolver derives PIVOT and UNPIVOT outputs from the IN list.
+            Expression::Pivot(_) | Expression::Unpivot(_) => columns.extend(
+                resolver
+                    .get_source_columns(&source_name)
+                    .unwrap_or_default(),
+            ),
+            _ => columns.extend(source_columns(source, mapping_schema, dialect)),
+        }
     }
 
     columns
