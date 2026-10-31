@@ -1020,12 +1020,46 @@ struct LineageScopeContext {
 /// The caller selects the lexical owner and checks ambiguous/open sources first.
 /// This keeps CTE, derived-table, virtual-source and set-operation tracing shared
 /// with projection lineage, without manufacturing SELECT projections.
-#[cfg(feature = "generate")]
 pub(crate) struct ScopedLineage {
     context: LineageScopeContext,
     root: ScopeId,
     ctes: Vec<ScopeId>,
     dialect: Option<DialectType>,
+}
+
+impl ScopedLineage {
+    /// Prepare and scope `sql` once, for the lineage of many output columns.
+    /// Each column gets the result of `lineage_with_schema` (with a schema)
+    /// or `lineage` (without one).
+    pub(crate) fn for_query(
+        sql: &Expression,
+        schema: Option<&dyn Schema>,
+        dialect: Option<DialectType>,
+    ) -> Result<Self> {
+        let prepared = prepare_lineage_expression(sql, schema, dialect, schema.is_some())?;
+        let (context, root) = LineageScopeContext::from_scope(build_scope(&prepared));
+        Ok(Self {
+            context,
+            root,
+            ctes: Vec::new(),
+            dialect,
+        })
+    }
+
+    pub(crate) fn named(&self, column: &str) -> Result<LineageNode> {
+        to_node_inner(
+            ColumnRef::Name(column),
+            &self.context,
+            self.root,
+            self.dialect,
+            "",
+            "",
+            "",
+            false,
+            &self.ctes,
+            0,
+        )
+    }
 }
 
 #[cfg(feature = "generate")]
