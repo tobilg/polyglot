@@ -5,7 +5,7 @@
 //!
 //! Ported from sqlglot's optimizer/scope.py
 
-use crate::expressions::Expression;
+use crate::expressions::{Expression, Identifier, JoinKind, Literal, TableRef};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -680,13 +680,15 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
             // Register relations in order. CTE declarations are available for
             // FROM lookup, but only selected preceding bindings are lateral inputs.
             let mut preceding_sources = HashSet::new();
-            for table in select
-                .from
-                .iter()
-                .flat_map(|from| &from.expressions)
-                .chain(select.joins.iter().map(|join| &join.this))
-            {
+            for table in select.from.iter().flat_map(|from| &from.expressions) {
                 add_relation_to_scope(table, current_scope, &mut preceding_sources);
+            }
+            for join in &select.joins {
+                if matches!(join.kind, JoinKind::Array | JoinKind::LeftArray) {
+                    add_array_join_to_scope(&join.this, current_scope, &mut preceding_sources);
+                } else {
+                    add_relation_to_scope(&join.this, current_scope, &mut preceding_sources);
+                }
             }
 
             // Process table-generating lateral views (Hive/Spark style UDTFs).
@@ -986,8 +988,53 @@ fn add_table_to_scope(
             Some(name)
         }
         Expression::Paren(paren) => add_table_to_scope(&paren.this, scope, preceding_sources),
-        _ => None,
+        _ => identifier_table(expr).and_then(|table| {
+            add_table_to_scope(
+                &Expression::Table(Box::new(table)),
+                scope,
+                preceding_sources,
+            )
+        }),
     }
+}
+
+/// Snowflake `IDENTIFIER('db.schema.table')` names a table with a string literal.
+fn identifier_table(expr: &Expression) -> Option<TableRef> {
+    let (function, alias) = match expr {
+        Expression::Function(function) => (function, None),
+        Expression::Alias(alias) => match &alias.this {
+            Expression::Function(function) => (function, Some(alias)),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !function.name.eq_ignore_ascii_case("IDENTIFIER") {
+        return None;
+    }
+    let [Expression::Literal(literal)] = function.args.as_slice() else {
+        return None;
+    };
+    let Literal::String(name) = literal.as_ref() else {
+        return None;
+    };
+    let mut parts: Vec<Identifier> = name
+        .split('.')
+        .map(
+            |part| match part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+                Some(quoted) => Identifier::quoted(quoted),
+                None => Identifier::new(part),
+            },
+        )
+        .collect();
+    let mut table = TableRef::new("");
+    table.name = parts.pop().filter(|part| !part.is_empty())?;
+    table.schema = parts.pop();
+    table.catalog = parts.pop();
+    if let Some(alias) = alias {
+        table.alias = Some(alias.alias.clone());
+        table.column_aliases = alias.column_aliases.clone();
+    }
+    parts.is_empty().then_some(table)
 }
 
 fn is_query_like_relation(expr: &Expression) -> bool {
@@ -1048,6 +1095,24 @@ fn add_lateral_view_to_scope(lateral_view: &crate::expressions::LateralView, sco
             alias,
             Expression::LateralView(Box::new(lateral_view.clone())),
         );
+    }
+}
+
+/// ClickHouse `ARRAY JOIN arr AS item` binds each aliased array as a virtual source.
+fn add_array_join_to_scope(
+    expr: &Expression,
+    scope: &mut Scope,
+    preceding_sources: &mut HashSet<String>,
+) {
+    let items = match expr {
+        Expression::Tuple(tuple) => tuple.expressions.as_slice(),
+        item => std::slice::from_ref(item),
+    };
+    for item in items {
+        if let Expression::Alias(alias) = item {
+            scope.add_virtual_source(alias.alias.name.clone(), item.clone());
+            preceding_sources.insert(alias.alias.name.clone());
+        }
     }
 }
 
@@ -1538,6 +1603,49 @@ mod tests {
         let scope = parse_and_build_scope("SELECT n.a FROM t, (SELECT t.a) n");
         assert!(!scope.derived_table_scopes[0].is_lateral);
         assert!(scope.derived_table_scopes[0].lateral_sources.is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_array_join_aliases_are_virtual_sources() {
+        for (sql, aliases) in [
+            ("SELECT item FROM t ARRAY JOIN arr AS item", &["item"][..]),
+            (
+                "SELECT a, b FROM t LEFT ARRAY JOIN arr AS a, t.nested AS b",
+                &["a", "b"],
+            ),
+            ("SELECT arr FROM t ARRAY JOIN arr", &[]),
+        ] {
+            let ast = crate::parse_one(sql, crate::dialects::DialectType::ClickHouse).unwrap();
+            let scope = build_scope(&ast);
+            let mut virtual_sources: Vec<_> = scope
+                .sources
+                .iter()
+                .filter(|(_, source)| source.kind == SourceKind::Virtual)
+                .map(|(name, _)| name.as_str())
+                .collect();
+            virtual_sources.sort();
+            assert_eq!(virtual_sources, aliases, "{sql}");
+            assert_eq!(scope.sources.len(), aliases.len() + 1, "{sql}");
+        }
+    }
+
+    #[test]
+    fn test_snowflake_identifier_string_is_a_table_source() {
+        let ast = crate::parse_one(
+            "SELECT o.id FROM IDENTIFIER('db.s.orders') AS o, IDENTIFIER('customers'), IDENTIFIER($t)",
+            crate::dialects::DialectType::Snowflake,
+        )
+        .unwrap();
+        let scope = build_scope(&ast);
+        assert_eq!(scope.sources.len(), 2);
+        let Expression::Table(orders) = &scope.sources["o"].expression else {
+            panic!("expected a table source");
+        };
+        assert_eq!(orders.catalog.as_ref().unwrap().name, "db");
+        assert_eq!(orders.schema.as_ref().unwrap().name, "s");
+        assert_eq!(orders.name.name, "orders");
+        assert_eq!(scope.sources["o"].kind, SourceKind::Table);
+        assert!(scope.sources.contains_key("customers"));
     }
 
     #[test]

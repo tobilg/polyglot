@@ -84,6 +84,40 @@ fn analyze_query_set_operation_types_454() {
 }
 
 #[test]
+fn analyze_query_constant_projections_through_sources_have_no_upstream() {
+    for (sql, with_schema) in [
+        ("(SELECT 'x' AS src, CAST(a AS INT) AS v FROM x) UNION ALL (SELECT 'y' AS src, CAST(b AS INT) AS v FROM y)", true),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", false),
+        ("SELECT 'x' AS src, CAST(a AS INT) AS v FROM x UNION ALL SELECT 'y' AS src, CAST(b AS INT) AS v FROM y", true),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", false),
+        ("SELECT t.src, t.v FROM (SELECT 'x' AS src, a AS v FROM x) AS t", true),
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::PostgreSQL,
+                schema: with_schema.then(schema),
+            },
+        )
+        .unwrap();
+        assert!(
+            analysis.projections[0].upstream.is_empty(),
+            "{sql}: {:?}",
+            analysis.projections[0].upstream
+        );
+        assert!(
+            analysis.projections[1]
+                .upstream
+                .iter()
+                .any(|reference| reference.table.as_deref() == Some("x") && reference.column == "a"),
+            "{sql}: {:?}",
+            analysis.projections[1].upstream
+        );
+    }
+}
+
+#[test]
 fn analyze_query_set_operation_consumers_and_parameters_454() {
     let mut failures = Vec::new();
     for (dialect, sql, expected) in [
@@ -563,6 +597,39 @@ fn analyze_query_column_uses_do_not_leak_ctes_or_non_lateral_sources() {
         derived.references[1].reference.confidence,
         ReferenceConfidence::Unknown
     );
+}
+
+#[test]
+fn analyze_query_column_uses_resolve_lateral_outer_references() {
+    use polyglot_sql::ColumnUseContext;
+    for sql in [
+        "SELECT c.id, l.n FROM customers c, LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+        "SELECT c.id, l.n FROM customers c CROSS JOIN LATERAL (SELECT COUNT(*) AS n FROM orders o WHERE o.customer_id = c.id) l",
+    ] {
+        let analysis = column_use_analysis(sql, true);
+        assert!(analysis.projections[1].upstream.is_empty(), "{sql}");
+        let mut base_tables: Vec<_> = analysis.base_tables.iter().map(|t| t.name.as_str()).collect();
+        base_tables.sort();
+        assert_eq!(base_tables, ["customers", "orders"], "{sql}");
+        let filter = analysis
+            .column_uses
+            .iter()
+            .find(|fact| fact.scope_path == "root.derived[0]" && fact.context == ColumnUseContext::Filter)
+            .unwrap();
+        let references: Vec<_> = filter
+            .references
+            .iter()
+            .map(|r| (r.reference.table.as_deref(), r.reference.column.as_str(), r.reference.confidence))
+            .collect();
+        assert_eq!(
+            references,
+            [
+                (Some("orders"), "customer_id", ReferenceConfidence::Resolved),
+                (Some("customers"), "id", ReferenceConfidence::Resolved),
+            ],
+            "{sql}"
+        );
+    }
 }
 
 #[test]
@@ -2968,6 +3035,90 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
             analysis.projections[0].upstream
         );
     }
+}
+
+#[test]
+fn analyze_query_resolves_clickhouse_array_join_aliases_with_schema() {
+    for sql in [
+        "SELECT item FROM t ARRAY JOIN arr AS item",
+        "SELECT item FROM t LEFT ARRAY JOIN arr AS item",
+        "SELECT item FROM t ARRAY JOIN t.arr AS item WHERE item > 0",
+        "SELECT arr FROM t ARRAY JOIN arr",
+    ] {
+        let analysis = analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::ClickHouse,
+                schema: Some(unnest_analysis_schema()),
+            },
+        )
+        .unwrap();
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].table.as_deref(), Some("t"), "{sql}");
+        assert_eq!(upstream[0].column, "arr", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        for fact in &analysis.column_uses {
+            assert_eq!(fact.references[0].reference.column, "arr", "{sql}");
+        }
+    }
+}
+
+#[test]
+fn analyze_query_resolves_snowflake_identifier_tables() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [{"schema": "s", "name": "orders", "columns": [{"name": "id", "type": "INT"}]}]
+    }))
+    .unwrap();
+    let analyze = |sql: &str| {
+        analyze_query(
+            sql,
+            AnalyzeQueryOptions {
+                complexity_guard: None,
+                dialect: DialectType::Snowflake,
+                schema: Some(schema.clone()),
+            },
+        )
+        .unwrap()
+    };
+    for sql in [
+        "SELECT id FROM IDENTIFIER('s.orders')",
+        "SELECT o.id FROM IDENTIFIER('s.orders') AS o",
+    ] {
+        let analysis = analyze(sql);
+        let plain = analyze(&sql.replace("IDENTIFIER('s.orders')", "s.orders"));
+        assert_eq!(analysis.base_tables.len(), 1, "{sql}");
+        assert_eq!(
+            analysis.base_tables[0].schema.as_deref(),
+            Some("s"),
+            "{sql}"
+        );
+        assert_eq!(
+            analysis.base_tables[0].table.as_deref(),
+            Some("orders"),
+            "{sql}"
+        );
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].column, "id", "{sql}");
+        assert_eq!(
+            upstream[0].confidence,
+            ReferenceConfidence::Resolved,
+            "{sql}"
+        );
+        assert_eq!(
+            serde_json::to_value(upstream).unwrap(),
+            serde_json::to_value(&plain.projections[0].upstream).unwrap(),
+            "{sql}"
+        );
+    }
+    let analysis = analyze("SELECT id FROM IDENTIFIER($t)");
+    assert!(analysis.base_tables.is_empty());
 }
 
 #[test]

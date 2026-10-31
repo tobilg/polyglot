@@ -1120,8 +1120,11 @@ fn projection_fact(
     let prepared = lineage
         .entry(scope as *const Scope)
         .or_insert_with(|| ScopedLineage::new(scope.clone(), &[], dialect));
+    // A traced node whose leaves are constants has no upstream columns.
     let mut upstream = prepared
         .output(index)
+        .ok()
+        .filter(|node| !node.downstream.is_empty())
         .map(|node| {
             let uncertain = lineage_uncertainty(&node, nullability_context.uncertain_columns);
             let mut references =
@@ -1133,8 +1136,6 @@ fn projection_fact(
             }
             references
         })
-        .ok()
-        .filter(|refs| !refs.is_empty())
         .unwrap_or_else(|| fallback_column_references(inner, scope));
     if let Some(confidence) = expression_uncertainty(inner, nullability_context.uncertain_columns) {
         for reference in &mut upstream {
