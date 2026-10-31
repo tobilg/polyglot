@@ -4452,7 +4452,7 @@ impl Generator {
     fn should_handle_tsql_distinct_null_ordering(&self, select: &Select) -> bool {
         matches!(
             self.config.dialect,
-            Some(DialectType::TSQL) | Some(DialectType::Fabric)
+            Some(DialectType::TSQL) | Some(DialectType::Fabric) | Some(DialectType::MySQL)
         ) && !self.config.null_ordering_supported
             && select.distinct
             && select.order_by.as_ref().is_some_and(|order_by| {
@@ -4703,7 +4703,7 @@ impl Generator {
     fn resolve_tsql_null_ordering_for_select(&self, select: &Select) -> Option<Select> {
         if !matches!(
             self.config.dialect,
-            Some(DialectType::TSQL) | Some(DialectType::Fabric)
+            Some(DialectType::TSQL) | Some(DialectType::Fabric) | Some(DialectType::MySQL)
         ) || self.config.null_ordering_supported
         {
             return None;
@@ -4726,6 +4726,18 @@ impl Generator {
                             .or_else(|| {
                                 Self::resolve_single_subquery_star_projection(select, index)
                             })
+                    {
+                        if resolved != ordered.this {
+                            ordered.this = resolved;
+                            changed = true;
+                        }
+                    }
+                }
+
+                // MySQL cannot use a select-list alias inside every ordering expression.
+                if self.config.dialect == Some(DialectType::MySQL) {
+                    if let Some(resolved) =
+                        Self::resolve_distinct_order_projection(&select.expressions, &ordered.this)
                     {
                         if resolved != ordered.this {
                             ordered.this = resolved;
@@ -7795,8 +7807,27 @@ impl Generator {
         // BigQuery: CORRESPONDING/STRICT CORRESPONDING -> BY NAME, BY (cols) -> ON (cols)
         // DuckDB/Snowflake: BY NAME
         if union.corresponding || union.by_name {
+            let native_corresponding =
+                union.corresponding && matches!(self.config.dialect, Some(DialectType::Trino));
+            if !native_corresponding
+                && !matches!(
+                    self.config.dialect,
+                    None | Some(
+                        DialectType::Generic
+                            | DialectType::DuckDB
+                            | DialectType::Snowflake
+                            | DialectType::BigQuery
+                    )
+                )
+            {
+                self.unsupported("BY NAME/CORRESPONDING requires known, unambiguous output columns for positional lowering")?;
+            }
             self.write_space();
-            self.write_keyword("BY NAME");
+            self.write_keyword(if native_corresponding {
+                "CORRESPONDING"
+            } else {
+                "BY NAME"
+            });
         }
         if !union.on_columns.is_empty() {
             self.write_space();
@@ -7961,8 +7992,27 @@ impl Generator {
         // BigQuery: CORRESPONDING/STRICT CORRESPONDING -> BY NAME, BY (cols) -> ON (cols)
         // DuckDB/Snowflake: BY NAME
         if intersect.corresponding || intersect.by_name {
+            let native_corresponding =
+                intersect.corresponding && matches!(self.config.dialect, Some(DialectType::Trino));
+            if !native_corresponding
+                && !matches!(
+                    self.config.dialect,
+                    None | Some(
+                        DialectType::Generic
+                            | DialectType::DuckDB
+                            | DialectType::Snowflake
+                            | DialectType::BigQuery
+                    )
+                )
+            {
+                self.unsupported("BY NAME/CORRESPONDING requires known, unambiguous output columns for positional lowering")?;
+            }
             self.write_space();
-            self.write_keyword("BY NAME");
+            self.write_keyword(if native_corresponding {
+                "CORRESPONDING"
+            } else {
+                "BY NAME"
+            });
         }
         if !intersect.on_columns.is_empty() {
             self.write_space();
@@ -8160,8 +8210,27 @@ impl Generator {
         // BigQuery: CORRESPONDING/STRICT CORRESPONDING -> BY NAME, BY (cols) -> ON (cols)
         // DuckDB/Snowflake: BY NAME
         if except.corresponding || except.by_name {
+            let native_corresponding =
+                except.corresponding && matches!(self.config.dialect, Some(DialectType::Trino));
+            if !native_corresponding
+                && !matches!(
+                    self.config.dialect,
+                    None | Some(
+                        DialectType::Generic
+                            | DialectType::DuckDB
+                            | DialectType::Snowflake
+                            | DialectType::BigQuery
+                    )
+                )
+            {
+                self.unsupported("BY NAME/CORRESPONDING requires known, unambiguous output columns for positional lowering")?;
+            }
             self.write_space();
-            self.write_keyword("BY NAME");
+            self.write_keyword(if native_corresponding {
+                "CORRESPONDING"
+            } else {
+                "BY NAME"
+            });
         }
         if !except.on_columns.is_empty() {
             self.write_space();
@@ -18783,6 +18852,19 @@ impl Generator {
     }
 
     fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
+        if self.config.dialect == Some(DialectType::ClickHouse)
+            && self
+                .config
+                .source_dialect
+                .is_some_and(|source| source != DialectType::ClickHouse)
+            && matches!(cast.this, Expression::Null(_))
+            && matches!(
+                cast.to,
+                DataType::Array { .. } | DataType::Map { .. } | DataType::Struct { .. }
+            )
+        {
+            self.unsupported("ClickHouse cannot represent a NULL Array/Map/Tuple using Nullable")?;
+        }
         self.validate_cast_to_hana(cast)?;
         if self.config.dialect == Some(DialectType::Vertica) {
             Self::validate_vertica_cast_type(&cast.to)?;
@@ -21420,7 +21502,21 @@ impl Generator {
                 if i > 0 {
                     self.write(", ");
                 }
-                self.generate_ordered(ordered)?;
+                if self.config.dialect == Some(DialectType::MySQL)
+                    && over.frame.as_ref().is_some_and(|frame| {
+                        matches!(frame.kind, WindowFrameKind::Range | WindowFrameKind::Groups)
+                    })
+                    && Self::ordered_requires_tsql_null_ordering_emulation(ordered)
+                {
+                    self.unsupported(
+                        "NULL ordering emulation is not supported with RANGE/GROUPS window frames",
+                    )?;
+                    let mut fallback = ordered.clone();
+                    fallback.nulls_first = None;
+                    self.generate_ordered(&fallback)?;
+                } else {
+                    self.generate_ordered(ordered)?;
+                }
             }
             has_content = true;
         }
@@ -27455,24 +27551,24 @@ impl Generator {
     }
 
     fn generate_ordered(&mut self, ordered: &Ordered) -> Result<()> {
-        let unsupported_tsql_null_ordering = ordered.nulls_first.is_some()
+        let unsupported_null_ordering = ordered.nulls_first.is_some()
             && !self.config.null_ordering_supported
             && matches!(
                 self.config.dialect,
-                Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                Some(DialectType::TSQL) | Some(DialectType::Fabric) | Some(DialectType::MySQL)
             );
         let random_ordering = matches!(ordered.this, Expression::Rand(_) | Expression::Random(_));
-        let emulate_tsql_null_ordering = if let Some(nulls_first) = ordered.nulls_first {
+        let emulate_null_ordering = if let Some(nulls_first) = ordered.nulls_first {
             let target_default_nulls_first = !ordered.desc;
 
-            unsupported_tsql_null_ordering
+            unsupported_null_ordering
                 && nulls_first != target_default_nulls_first
                 && !random_ordering
         } else {
             false
         };
 
-        if emulate_tsql_null_ordering {
+        if emulate_null_ordering {
             if Self::is_integer_ordering_literal(&ordered.this) {
                 let nulls_order = if ordered.nulls_first == Some(true) {
                     "NULLS FIRST"
@@ -27520,7 +27616,7 @@ impl Generator {
             self.write_keyword("ASC");
         }
         if let Some(nulls_first) = ordered.nulls_first {
-            if !unsupported_tsql_null_ordering
+            if !unsupported_null_ordering
                 && (self.config.null_ordering_supported
                     || !matches!(self.config.dialect, Some(DialectType::Fabric)))
             {
@@ -28198,6 +28294,71 @@ impl Generator {
             return Ok(());
         }
 
+        if self.config.dialect == Some(DialectType::ClickHouse) {
+            // A generator without source metadata is also used for native
+            // ClickHouse identity generation. Only an explicit foreign source
+            // requests automatic nullability; native wrappers remain explicit.
+            let foreign = self
+                .config
+                .source_dialect
+                .is_some_and(|source| source != DialectType::ClickHouse);
+            let scalar = matches!(
+                dt,
+                DataType::Boolean
+                    | DataType::TinyInt { .. }
+                    | DataType::SmallInt { .. }
+                    | DataType::Int { .. }
+                    | DataType::BigInt { .. }
+                    | DataType::Int128
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+                    | DataType::UInt128
+                    | DataType::Float { .. }
+                    | DataType::Double { .. }
+                    | DataType::Decimal { .. }
+                    | DataType::Char { .. }
+                    | DataType::VarChar { .. }
+                    | DataType::Text
+                    | DataType::String { .. }
+                    | DataType::Date
+                    | DataType::Time { .. }
+                    | DataType::Timestamp { .. }
+                    | DataType::Uuid
+            ) || matches!(dt, DataType::Custom { name } if matches!(name.to_ascii_uppercase().as_str(),
+                "DOUBLE PRECISION" | "FLOAT8" | "DATE32" | "DATETIME" | "TIMESTAMPTZ"
+                | "DATETIME64" | "TIMESTAMPNTZ" | "UUID" | "STRING"));
+            if foreign && scalar && self.clickhouse_nullable_depth >= 0 {
+                self.write("Nullable(");
+                let saved_depth = self.clickhouse_nullable_depth;
+                self.clickhouse_nullable_depth = -1;
+                let result = self.generate_data_type_inner(dt);
+                self.clickhouse_nullable_depth = saved_depth;
+                result?;
+                self.write(")");
+                return Ok(());
+            }
+            match dt {
+                DataType::Char { .. } | DataType::VarChar { .. } | DataType::String { .. }
+                    if foreign =>
+                {
+                    self.write("String");
+                    return Ok(());
+                }
+                DataType::Custom { name }
+                    if matches!(
+                        name.to_ascii_uppercase().as_str(),
+                        "DOUBLE PRECISION" | "FLOAT8"
+                    ) =>
+                {
+                    self.write("Float64");
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
         match dt {
             DataType::Boolean => {
                 // Dialect-specific boolean type mappings
@@ -28322,7 +28483,7 @@ impl Generator {
                     _ => unreachable!(),
                 };
                 if self.config.dialect == Some(DialectType::ClickHouse) {
-                    // As with Int128, only an explicit Nullable wrapper adds nullability.
+                    // Native types retain explicit nullability; foreign scalar wrapping is handled above.
                     self.write(clickhouse);
                 } else {
                     // Do not silently discard signedness or narrow unsupported targets.

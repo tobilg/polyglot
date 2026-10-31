@@ -757,8 +757,8 @@ fn query_output_width(e: &Expression) -> Option<usize> {
 /// The source's explicit direction and NULL order (if any) carry over to each
 /// positional entry unchanged; the later cross-dialect NULL-ordering pass
 /// fills in the source dialect's implied default where the target's differs.
-/// MySQL is the exception: it has no NULLS FIRST/LAST syntax and is skipped by
-/// that pass, so compare every supported source's default against MySQL here.
+/// MySQL additionally checks placement here because a known width alone does
+/// not establish that every generated ordinal can be resolved to an expression.
 #[cfg(feature = "transpile")]
 fn expand_order_by_all(
     order_by: &mut Option<crate::expressions::OrderBy>,
@@ -800,11 +800,8 @@ fn expand_order_by_all(
         .map(|i| {
             let mut o = ob.expressions[0].clone();
             o.this = E::number(i);
-            if target == DialectType::MySQL {
-                // Matching explicit NULL placement is redundant and MySQL
-                // cannot print the NULLS FIRST/LAST syntax.
-                o.nulls_first = None;
-            }
+            // Keep explicit placement until generation. Clearing it here would
+            // make normalization substitute the source dialect's implicit default.
             o
         })
         .collect();
@@ -3440,6 +3437,7 @@ impl Dialect {
             feature = "dialect-sqlite",
             feature = "dialect-trino",
             feature = "dialect-presto",
+            feature = "dialect-athena",
             feature = "dialect-duckdb",
             feature = "dialect-redshift",
             feature = "dialect-starrocks",
@@ -3583,6 +3581,12 @@ impl Dialect {
                 let expr = transforms::explode_projection_to_unnest(expr, DialectType::Presto)?;
                 Ok(expr)
             }
+            #[cfg(feature = "dialect-athena")]
+            DialectType::Athena => {
+                let expr = transforms::eliminate_qualify(expr)?;
+                let expr = transforms::eliminate_window_clause(expr)?;
+                transforms::explode_projection_to_unnest(expr, DialectType::Athena)
+            }
             // DuckDB supports QUALIFY - no elimination needed
             // Expand POSEXPLODE to GENERATE_SUBSCRIPTS + UNNEST
             // Expand LIKE ANY / ILIKE ANY to OR chains (DuckDB doesn't support quantifiers)
@@ -3592,15 +3596,14 @@ impl Dialect {
                 let expr = transforms::expand_like_any(expr)?;
                 Ok(expr)
             }
-            // Redshift doesn't support QUALIFY, WINDOW clause, or GENERATE_DATE_ARRAY
+            // Redshift supports QUALIFY, but not WINDOW or GENERATE_DATE_ARRAY.
             #[cfg(feature = "dialect-redshift")]
             DialectType::Redshift => {
-                let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_window_clause(expr)?;
                 let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
                 Ok(expr)
             }
-            // StarRocks doesn't support BETWEEN in DELETE statements or QUALIFY
+            // StarRocks supports only restricted QUALIFY forms; lower the general form.
             #[cfg(feature = "dialect-starrocks")]
             DialectType::StarRocks => {
                 let expr = transforms::eliminate_qualify(expr)?;
@@ -4333,6 +4336,11 @@ impl Dialect {
                     normalized
                 };
 
+                let normalized = crate::transforms::lower_set_operations_by_name(
+                    normalized,
+                    self.dialect_type,
+                    target,
+                )?;
                 let transformed =
                     target_dialect.transform_with_guard(normalized, opts.complexity_guard)?;
 

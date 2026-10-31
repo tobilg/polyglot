@@ -182,9 +182,9 @@
       "description": "Collection constructors"
     },
     {
-      "sql": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) = 1",
-      "expected": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) AS _w FROM t) AS _t WHERE _w = 1",
-      "description": "QUALIFY is rewritten to a subquery"
+      "sql": "SELECT a, b FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) = 1",
+      "expected": "SELECT a, b FROM (SELECT a, b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) AS _w FROM t) AS _t WHERE _w = 1",
+      "description": "QUALIFY with explicit output columns is rewritten without leaking helpers"
     },
     {
       "sql": "CREATE LOCAL TEMPORARY TABLE t (id INT) ON COMMIT DELETE ROWS",

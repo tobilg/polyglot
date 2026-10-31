@@ -1202,339 +1202,496 @@ fn strip_data_type_params(dt: DataType) -> DataType {
     }
 }
 
-/// Eliminate QUALIFY clause by converting to a subquery with WHERE filter
-///
-/// QUALIFY is supported by Snowflake, BigQuery, and DuckDB but not by most other dialects.
-///
-/// Converts:
-/// ```sql
-/// SELECT * FROM t QUALIFY ROW_NUMBER() OVER (...) = 1
-/// ```
-/// To:
-/// ```sql
-/// SELECT * FROM (SELECT *, ROW_NUMBER() OVER (...) AS _w FROM t) _t WHERE _w = 1
-/// ```
-///
-/// Reference: `transforms.py:194-255`
+/// Lower each QUALIFY scope into a derived table and an outer filter.
+/// Window evaluation precedes QUALIFY; DISTINCT, ORDER BY and row limits follow it.
 pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
-    match expr {
-        Expression::Select(mut select) => {
-            if let Some(qualify) = select.qualify.take() {
-                // Python sqlglot approach:
-                // 1. Extract the window function from the qualify condition
-                // 2. Add it as _w alias to the inner select
-                // 3. Replace the window function reference with _w in the outer WHERE
-                // 4. Keep original select expressions in the outer query
-
-                let qualify_filter = qualify.this;
-                let window_alias_name = "_w".to_string();
-                let window_alias_ident = Identifier::new(window_alias_name.clone());
-
-                // Try to extract window function from comparison
-                // Pattern: WINDOW_FUNC = value -> inner adds WINDOW_FUNC AS _w, outer WHERE _w = value
-                let (window_expr, outer_where) =
-                    extract_window_from_condition(qualify_filter.clone(), &window_alias_ident);
-
-                if let Some(win_expr) = window_expr {
-                    // Add window function as _w alias to inner select
-                    let window_alias_expr =
-                        Expression::Alias(Box::new(crate::expressions::Alias {
-                            this: win_expr,
-                            alias: window_alias_ident.clone(),
-                            column_aliases: vec![],
-                            alias_explicit_as: false,
-                            alias_keyword: None,
-                            pre_alias_comments: vec![],
-                            trailing_comments: vec![],
-                            inferred_type: None,
-                        }));
-
-                    // For the outer SELECT, replace aliased expressions with just the alias reference
-                    // e.g., `1 AS other_id` in inner -> `other_id` in outer
-                    // Non-aliased expressions (columns, identifiers) stay as-is
-                    let outer_exprs: Vec<Expression> = select
-                        .expressions
-                        .iter()
-                        .map(|expr| {
-                            if let Expression::Alias(a) = expr {
-                                // Replace with just the alias identifier as a column reference
-                                Expression::Column(Box::new(crate::expressions::Column {
-                                    name: a.alias.clone(),
-                                    table: None,
-                                    join_mark: false,
-                                    trailing_comments: vec![],
-                                    span: None,
-                                    inferred_type: None,
-                                }))
-                            } else {
-                                expr.clone()
-                            }
-                        })
-                        .collect();
-                    select.expressions.push(window_alias_expr);
-
-                    // Create the inner subquery
-                    let inner_select = Expression::Select(select);
-                    let subquery = Subquery {
-                        this: inner_select,
-                        alias: Some(Identifier::new("_t".to_string())),
-                        column_aliases: vec![],
-                        alias_explicit_as: false,
-                        alias_keyword: None,
-                        order_by: None,
-                        limit: None,
-                        offset: None,
-                        distribute_by: None,
-                        sort_by: None,
-                        cluster_by: None,
-                        lateral: false,
-                        modifiers_inside: false,
-                        trailing_comments: vec![],
-                        inferred_type: None,
-                    };
-
-                    // Create the outer SELECT with alias-resolved expressions and WHERE _w <op> value
-                    let outer_select = Select {
-                        vertica: None,
-                        expressions: outer_exprs,
-                        from: Some(From {
-                            expressions: vec![Expression::Subquery(Box::new(subquery))],
-                        }),
-                        where_clause: Some(Where { this: outer_where }),
-                        ..Select::new()
-                    };
-
-                    return Ok(Expression::Select(Box::new(outer_select)));
-                } else {
-                    // Fallback: if we can't extract a window function, use old approach
-                    let qualify_alias = Expression::Alias(Box::new(crate::expressions::Alias {
-                        this: qualify_filter.clone(),
-                        alias: window_alias_ident.clone(),
-                        column_aliases: vec![],
-                        alias_explicit_as: false,
-                        alias_keyword: None,
-                        pre_alias_comments: vec![],
-                        trailing_comments: vec![],
-                        inferred_type: None,
-                    }));
-
-                    let original_exprs = select.expressions.clone();
-                    select.expressions.push(qualify_alias);
-
-                    let inner_select = Expression::Select(select);
-                    let subquery = Subquery {
-                        this: inner_select,
-                        alias: Some(Identifier::new("_t".to_string())),
-                        column_aliases: vec![],
-                        alias_explicit_as: false,
-                        alias_keyword: None,
-                        order_by: None,
-                        limit: None,
-                        offset: None,
-                        distribute_by: None,
-                        sort_by: None,
-                        cluster_by: None,
-                        lateral: false,
-                        modifiers_inside: false,
-                        trailing_comments: vec![],
-                        inferred_type: None,
-                    };
-
-                    let outer_select = Select {
-                        vertica: None,
-                        expressions: original_exprs,
-                        from: Some(From {
-                            expressions: vec![Expression::Subquery(Box::new(subquery))],
-                        }),
-                        where_clause: Some(Where {
-                            this: Expression::Column(Box::new(crate::expressions::Column {
-                                name: window_alias_ident,
-                                table: None,
-                                join_mark: false,
-                                trailing_comments: vec![],
-                                span: None,
-                                inferred_type: None,
-                            })),
-                        }),
-                        ..Select::new()
-                    };
-
-                    return Ok(Expression::Select(Box::new(outer_select)));
-                }
-            }
-            Ok(Expression::Select(select))
-        }
-        other => Ok(other),
-    }
+    crate::traversal::transform_all(expr, &eliminate_qualify_select)
 }
 
-/// Extract a window function from a qualify condition.
-/// Returns (window_expression, rewritten_condition) if found.
-/// The rewritten condition replaces the window function with a column reference to the alias.
-fn extract_window_from_condition(
-    condition: Expression,
-    alias: &Identifier,
-) -> (Option<Expression>, Expression) {
-    let alias_col = Expression::Column(Box::new(crate::expressions::Column {
-        name: alias.clone(),
+fn query_boundary(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::Select(_)
+            | Expression::Subquery(_)
+            | Expression::Union(_)
+            | Expression::Intersect(_)
+            | Expression::Except(_)
+    )
+}
+
+fn named_column(name: Identifier) -> Expression {
+    Expression::Column(Box::new(crate::expressions::Column {
+        name,
         table: None,
         join_mark: false,
         trailing_comments: vec![],
         span: None,
         inferred_type: None,
-    }));
+    }))
+}
 
-    // Check if condition is a simple comparison with a window function on one side
-    match condition {
-        // WINDOW_FUNC = value
-        Expression::Eq(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Eq(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Eq(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        Expression::Neq(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Neq(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Neq(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        Expression::Lt(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Lt(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Lt(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        Expression::Lte(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Lte(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Lte(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        Expression::Gt(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Gt(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Gt(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        Expression::Gte(ref op) => {
-            if is_window_expr(&op.left) {
-                (
-                    Some(op.left.clone()),
-                    Expression::Gte(Box::new(BinaryOp {
-                        left: alias_col,
-                        right: op.right.clone(),
-                        ..(**op).clone()
-                    })),
-                )
-            } else if is_window_expr(&op.right) {
-                (
-                    Some(op.right.clone()),
-                    Expression::Gte(Box::new(BinaryOp {
-                        left: op.left.clone(),
-                        right: alias_col,
-                        ..(**op).clone()
-                    })),
-                )
-            } else {
-                (None, condition)
-            }
-        }
-        // If the condition is just a window function (bare QUALIFY expression)
-        _ if is_window_expr(&condition) => (Some(condition), alias_col),
-        // Can't extract window function
-        _ => (None, condition),
+fn derived_query(query: Expression, alias: Identifier) -> Expression {
+    Expression::Subquery(Box::new(Subquery {
+        this: query,
+        alias: Some(alias),
+        column_aliases: vec![],
+        alias_explicit_as: false,
+        alias_keyword: None,
+        order_by: None,
+        limit: None,
+        offset: None,
+        distribute_by: None,
+        sort_by: None,
+        cluster_by: None,
+        lateral: false,
+        modifiers_inside: false,
+        trailing_comments: vec![],
+        inferred_type: None,
+    }))
+}
+
+fn output_identifier(expr: &Expression) -> Option<Identifier> {
+    match expr {
+        Expression::Alias(a) => Some(a.alias.clone()),
+        Expression::Column(c) if c.name.name != "*" => Some(c.name.clone()),
+        Expression::Identifier(i) => Some(i.clone()),
+        _ => None,
     }
 }
 
-/// Check if an expression is a window function
+fn same_identifier(a: &Identifier, b: &Identifier) -> bool {
+    if a.quoted || b.quoted {
+        a.name == b.name
+    } else {
+        a.name.eq_ignore_ascii_case(&b.name)
+    }
+}
+
+struct QualifyProjection {
+    expressions: Vec<Expression>,
+    bindings: Vec<(Expression, Identifier)>,
+    used_names: Vec<String>,
+    source_names: Vec<Identifier>,
+    derived_alias: Identifier,
+}
+
+fn select_relation_names(select: &Select) -> Vec<Identifier> {
+    fn collect(source: &Expression, names: &mut Vec<Identifier>) {
+        match source {
+            Expression::Table(table) => {
+                names.push(table.alias.clone().unwrap_or_else(|| table.name.clone()))
+            }
+            Expression::Subquery(query) => names.extend(query.alias.iter().cloned()),
+            Expression::Alias(alias) => names.push(alias.alias.clone()),
+            // Do not enter a derived table's private scope.
+            other => {
+                crate::ast_children::for_each_child_untracked(other, |child| collect(child, names))
+            }
+        }
+    }
+    let mut names = Vec::new();
+    if let Some(from) = &select.from {
+        for source in &from.expressions {
+            collect(source, &mut names);
+        }
+    }
+    for join in &select.joins {
+        collect(&join.this, &mut names);
+    }
+    names
+}
+
+impl QualifyProjection {
+    fn fresh(&mut self, prefix: &str) -> Identifier {
+        Identifier::new(fresh_grouped_percentile_name(&mut self.used_names, prefix))
+    }
+
+    fn reference(&mut self, expression: Expression) -> Result<Expression> {
+        // Literals and parameter occurrences are values, not references to
+        // matching projections. In particular, anonymous parameters may bind
+        // different values even when their AST nodes compare equal.
+        if matches!(
+            expression,
+            Expression::Literal(_)
+                | Expression::Boolean(_)
+                | Expression::Null(_)
+                | Expression::Parameter(_)
+                | Expression::Placeholder(_)
+                | Expression::SessionParameter(_)
+        ) {
+            return Ok(expression);
+        }
+        // Subqueries have their own bindings. In particular, do not pull their
+        // columns into this SELECT's GROUP BY/projection (SQLGlot does this).
+        if query_boundary(&expression) {
+            let mut expression = expression;
+            self.rebind_correlated_columns(&mut expression, &[])?;
+            return Ok(expression);
+        }
+        if let Some((_, name)) = self.bindings.iter().find(|(bound, _)| bound == &expression) {
+            return Ok(named_column(name.clone()));
+        }
+        if let Expression::Column(column) = &expression {
+            if column.table.is_none() {
+                if let Some((_, name)) = self
+                    .bindings
+                    .iter()
+                    .find(|(_, name)| same_identifier(&column.name, name))
+                {
+                    return Ok(named_column(name.clone()));
+                }
+            }
+        }
+        if matches!(
+            expression,
+            Expression::Column(_) | Expression::Identifier(_)
+        ) || is_window_expr(&expression)
+            || crate::traversal::is_aggregate(&expression)
+        {
+            let mut value = expression.clone();
+            if is_window_expr(&value) {
+                self.resolve_window_aliases(&mut value)?;
+            }
+            let name = match output_identifier(&expression) {
+                Some(name)
+                    if !self
+                        .used_names
+                        .iter()
+                        .any(|used| used.eq_ignore_ascii_case(&name.name)) =>
+                {
+                    self.used_names.push(name.name.clone());
+                    name
+                }
+                _ => self.fresh(if is_window_expr(&expression) {
+                    "_w"
+                } else {
+                    "_c"
+                }),
+            };
+            self.expressions
+                .push(Expression::Alias(Box::new(Alias::new(value, name.clone()))));
+            self.bindings.push((expression, name.clone()));
+            return Ok(named_column(name));
+        }
+        let mut expression = expression;
+        let mut result = Ok(());
+        crate::ast_children::for_each_child_mut(&mut expression, |child| {
+            if result.is_ok() {
+                let old = std::mem::replace(child, Expression::null());
+                match self.reference(old) {
+                    Ok(rewritten) => *child = rewritten,
+                    Err(error) => result = Err(error),
+                }
+            }
+        });
+        result?;
+        Ok(expression)
+    }
+
+    fn rebind_correlated_columns(
+        &mut self,
+        expression: &mut Expression,
+        shadowed: &[Identifier],
+    ) -> Result<()> {
+        let mut local = shadowed.to_vec();
+        if let Expression::Select(select) = expression {
+            local.extend(select_relation_names(select));
+        }
+        if let Expression::Column(column) = expression {
+            if column.table.as_ref().is_some_and(|table| {
+                self.source_names
+                    .iter()
+                    .any(|name| same_identifier(table, name))
+                    && !local.iter().any(|name| same_identifier(table, name))
+            }) {
+                let mut reference = self.reference(expression.clone())?;
+                if let Expression::Column(column) = &mut reference {
+                    column.table = Some(self.derived_alias.clone());
+                }
+                *expression = reference;
+                return Ok(());
+            }
+        }
+        let mut result = Ok(());
+        crate::ast_children::for_each_child_mut(expression, |child| {
+            if result.is_ok() {
+                result = self.rebind_correlated_columns(child, &local);
+            }
+        });
+        result
+    }
+
+    fn resolve_window_aliases(&self, expression: &mut Expression) -> Result<()> {
+        if query_boundary(expression) {
+            return Ok(());
+        }
+        if let Expression::Column(column) = expression {
+            if column.table.is_none() {
+                if let Some((value, _)) = self
+                    .bindings
+                    .iter()
+                    .find(|(_, name)| same_identifier(&column.name, name))
+                {
+                    if is_window_expr(value) {
+                        return Err(Error::unsupported(
+                            "QUALIFY window depending on another window alias",
+                            "derived-table rewrite",
+                        ));
+                    }
+                    *expression = value.clone();
+                    return Ok(());
+                }
+            }
+        }
+        let mut result = Ok(());
+        crate::ast_children::for_each_child_mut(expression, |child| {
+            if result.is_ok() {
+                result = self.resolve_window_aliases(child);
+            }
+        });
+        result
+    }
+}
+
+fn eliminate_qualify_select(expr: Expression) -> Result<Expression> {
+    let Expression::Select(mut inner) = expr else {
+        return Ok(expr);
+    };
+    let Some(qualify) = inner.qualify.take() else {
+        return Ok(Expression::Select(inner));
+    };
+    let mut projection = QualifyProjection {
+        expressions: vec![],
+        bindings: vec![],
+        used_names: vec![],
+        source_names: select_relation_names(&inner),
+        derived_alias: Identifier::new("_t"),
+    };
+    // Reserve names throughout the query, including unprojected inputs and aliases.
+    use crate::traversal::ExpressionWalk;
+    for node in Expression::Select(inner.clone()).dfs() {
+        if let Some(name) = output_identifier(node) {
+            projection.used_names.push(name.name);
+        }
+    }
+    projection
+        .used_names
+        .extend(projection.source_names.iter().map(|name| name.name.clone()));
+    projection.derived_alias = projection.fresh("_t");
+    // Expand a wildcard only when the derived source exposes a known schema.
+    // Never guess columns from a physical table or leak newly added helpers.
+    if inner
+        .expressions
+        .iter()
+        .any(|expr| matches!(expr, Expression::Star(_)))
+    {
+        let source = inner
+            .from
+            .as_ref()
+            .filter(|from| from.expressions.len() == 1 && inner.joins.is_empty())
+            .and_then(|from| from.expressions.first());
+        if let Some(source) = source {
+            if let Ok(names) =
+                crate::set_operation::query_output_identifiers(source, inner.source_dialect)
+            {
+                let mut expanded = Vec::new();
+                for expr in std::mem::take(&mut inner.expressions) {
+                    if matches!(&expr, Expression::Star(star) if star.except.is_none() && star.replace.is_none() && star.rename.is_none())
+                    {
+                        expanded.extend(names.iter().cloned().map(named_column));
+                    } else {
+                        expanded.push(expr);
+                    }
+                }
+                inner.expressions = expanded;
+            }
+        }
+    }
+    let mut outer = Select::new();
+    for expr in std::mem::take(&mut inner.expressions) {
+        if matches!(&expr, Expression::Star(_))
+            || matches!(&expr, Expression::Column(c) if c.name.name == "*")
+        {
+            return Err(Error::unsupported("QUALIFY with an unresolved wildcard projection; explicit output columns are required to hide helper columns", "derived-table rewrite"));
+        }
+        let name = output_identifier(&expr).unwrap_or_else(|| projection.fresh("_c"));
+        if projection
+            .bindings
+            .iter()
+            .any(|(_, other)| same_identifier(&name, other))
+        {
+            return Err(Error::unsupported(
+                "QUALIFY with duplicate output names",
+                "derived-table rewrite",
+            ));
+        }
+        let value = unalias_expression(&expr).clone();
+        projection.bindings.push((value, name.clone()));
+        projection
+            .expressions
+            .push(if output_identifier(&expr).is_some() {
+                expr
+            } else {
+                Expression::Alias(Box::new(Alias::new(expr, name.clone())))
+            });
+        outer.expressions.push(named_column(name));
+    }
+    outer.where_clause = Some(Where {
+        this: projection.reference(qualify.this)?,
+    });
+    outer.order_by = inner.order_by.take();
+    if let Some(order) = &mut outer.order_by {
+        for key in &mut order.expressions {
+            // An integer here addresses the unchanged outer projection by position.
+            if !matches!(&key.this, Expression::Literal(literal)
+                if matches!(literal.as_ref(), Literal::Number(number) if number.parse::<usize>().is_ok()))
+            {
+                key.this = projection.reference(key.this.clone())?;
+            }
+        }
+    }
+    outer.distinct = std::mem::take(&mut inner.distinct);
+    outer.distinct_on = inner
+        .distinct_on
+        .take()
+        .map(|expressions| {
+            expressions
+                .into_iter()
+                .map(|expr| projection.reference(expr))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?;
+    outer.limit = inner.limit.take();
+    outer.offset = inner.offset.take();
+    outer.fetch = inner.fetch.take();
+    outer.top = inner.top.take();
+    outer.with = inner.with.take();
+    outer.into = inner.into.take();
+    outer.leading_comments = std::mem::take(&mut inner.leading_comments);
+    outer.post_select_comments = std::mem::take(&mut inner.post_select_comments);
+    outer.source_dialect = inner.source_dialect;
+    inner.expressions = projection.expressions;
+    let alias = projection.derived_alias;
+    outer.from = Some(From {
+        expressions: vec![derived_query(Expression::Select(inner), alias)],
+    });
+    Ok(Expression::Select(Box::new(outer)))
+}
+
 fn is_window_expr(expr: &Expression) -> bool {
     matches!(expr, Expression::Window(_) | Expression::WindowFunction(_))
+}
+
+/// Align known named outputs before generating positional set operations.
+/// Unknown schemas remain marked so generation can report an unsupported feature.
+pub(crate) fn lower_set_operations_by_name(
+    expr: Expression,
+    source: DialectType,
+    target: DialectType,
+) -> Result<Expression> {
+    if matches!(
+        target,
+        DialectType::DuckDB | DialectType::Snowflake | DialectType::BigQuery
+    ) {
+        return Ok(expr);
+    }
+    crate::traversal::transform_all(expr, &|mut expr| {
+        let source = if source == DialectType::Generic {
+            DialectType::BigQuery
+        } else {
+            source
+        };
+        let Ok(Some(layout)) = crate::set_operation::set_operation_layout(&expr, Some(source))
+        else {
+            return Ok(expr);
+        };
+        if layout.outputs.is_empty() {
+            return Ok(expr);
+        }
+        macro_rules! lower {
+            ($set:expr) => {{
+                let set = $set;
+                let left = align_set_operand(&set.left, &layout.outputs, true, source)?;
+                let right = align_set_operand(&set.right, &layout.outputs, false, source)?;
+                set.left = left;
+                set.right = right;
+                set.by_name = false;
+                set.corresponding = false;
+                set.strict = false;
+                set.side = None;
+                set.kind = None;
+                set.on_columns.clear();
+            }};
+        }
+        match &mut expr {
+            Expression::Union(set) => lower!(set),
+            Expression::Intersect(set) => lower!(set),
+            Expression::Except(set) => lower!(set),
+            _ => {}
+        }
+        Ok(expr)
+    })
+}
+
+fn align_set_operand(
+    expr: &Expression,
+    outputs: &[crate::set_operation::SetOperationOutput],
+    left: bool,
+    source: DialectType,
+) -> Result<Expression> {
+    let names = crate::set_operation::query_output_identifiers(expr, Some(source))
+        .map_err(|error| Error::unsupported(error.to_string(), "positional set operation"))?;
+    // Preserve parameter occurrence order as well as branch-local modifiers.
+    // Reordering anonymous placeholders would assign the caller's bound values
+    // to different output columns, even though the names themselves align.
+    use crate::traversal::ExpressionWalk;
+    let has_parameters =
+        expr.contains(|node| matches!(node, Expression::Parameter(_) | Expression::Placeholder(_)));
+    // Reorder plain projections directly. Preserve branch-local ORDER BY ordinals,
+    // limits and DISTINCT by projecting their completed result through a wrapper.
+    let plain = match expr {
+        Expression::Select(select)
+            if !has_parameters
+                && select.order_by.is_none()
+                && select.limit.is_none()
+                && select.offset.is_none()
+                && select.fetch.is_none()
+                && select.top.is_none()
+                && !select.distinct
+                && select.distinct_on.is_none() =>
+        {
+            Some(select)
+        }
+        _ => None,
+    };
+    let mut select = plain.map_or_else(Select::new, |select| (**select).clone());
+    select.expressions = outputs
+        .iter()
+        .map(|output| {
+            let ordinal = if left {
+                output.left_ordinal
+            } else {
+                output.right_ordinal
+            };
+            let expression = ordinal.map_or_else(Expression::null, |index| {
+                plain.map_or_else(
+                    || named_column(names[index].clone()),
+                    |select| unalias_expression(&select.expressions[index]).clone(),
+                )
+            });
+            if output_identifier(&expression).as_ref() == Some(&output.identifier) {
+                expression
+            } else {
+                Expression::Alias(Box::new(Alias::new(expression, output.identifier.clone())))
+            }
+        })
+        .collect();
+    if plain.is_none() {
+        select.from = Some(From {
+            expressions: vec![derived_query(expr.clone(), Identifier::new("_by_name"))],
+        });
+    }
+    Ok(Expression::Select(Box::new(select)))
 }
 
 /// Eliminate DISTINCT ON clause by converting to a subquery with ROW_NUMBER
@@ -1720,6 +1877,16 @@ fn eliminate_distinct_on_select(
 ) -> Result<Expression> {
     use crate::expressions::Case;
 
+    // DISTINCT ON selects among rows that survived QUALIFY. Computing both
+    // ranking windows at the same level would rank rows before that filter.
+    let expr = if matches!(&expr, Expression::Select(select)
+        if select.qualify.is_some() && select.distinct_on.is_some())
+    {
+        eliminate_qualify_select(expr)?
+    } else {
+        expr
+    };
+
     match expr {
         Expression::Select(mut select) => {
             if let Some(distinct_cols) = select.distinct_on.take() {
@@ -1753,7 +1920,7 @@ fn eliminate_distinct_on_select(
                                 // prepend: CASE WHEN col IS NULL THEN 1 ELSE 0 END DESC
                                 let mut new_exprs = Vec::new();
                                 for ord in &exprs {
-                                    if ord.desc && ord.nulls_first.is_none() {
+                                    if ord.desc && ord.nulls_first != Some(false) {
                                         // Add CASE WHEN col IS NULL THEN 1 ELSE 0 END DESC
                                         let null_check = Expression::Case(Box::new(Case {
                                             operand: None,
@@ -1784,7 +1951,11 @@ fn eliminate_distinct_on_select(
                                             with_fill: None,
                                         });
                                     }
-                                    new_exprs.push(ord.clone());
+                                    let mut key = ord.clone();
+                                    if key.desc && key.nulls_first == Some(true) {
+                                        key.nulls_first = None;
+                                    }
+                                    new_exprs.push(key);
                                 }
                                 exprs = new_exprs;
                             }

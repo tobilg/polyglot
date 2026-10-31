@@ -5,4 +5,4 @@ edition = "2021"
 publish = false
 
 [dependencies]
-polyglot-sql = { version = "0.13.4", path = "../../crates/polyglot-sql" }
+polyglot-sql = { version = "0.13.5", path = "../../crates/polyglot-sql" }

@@ -73,7 +73,6 @@ pub(super) enum Action {
     CurrentUserParens,
     EscapeStringNormalize,
     SnowflakeIntervalFormat,
-    MysqlNullsLastRewrite,
     FilterToIff,
     StrPositionExpand,
     CurrentUserSparkParens,
@@ -11242,57 +11241,6 @@ pub(super) fn rewrite(
                         }
                     }
                     Ok(Expression::Interval(iv))
-                } else {
-                    Ok(e)
-                }
-            }
-
-            Action::MysqlNullsLastRewrite => {
-                // DuckDB -> MySQL: Add CASE WHEN IS NULL THEN 1 ELSE 0 END to ORDER BY
-                // to simulate NULLS LAST for ASC ordering
-                if let Expression::WindowFunction(mut wf) = e {
-                    let mut new_order_by = Vec::new();
-                    for o in wf.over.order_by {
-                        if !o.desc {
-                            // ASC: DuckDB has NULLS LAST, MySQL has NULLS FIRST
-                            // Add CASE WHEN expr IS NULL THEN 1 ELSE 0 END before expr
-                            let case_expr = Expression::Case(Box::new(Case {
-                                operand: None,
-                                whens: vec![(
-                                    Expression::IsNull(Box::new(crate::expressions::IsNull {
-                                        this: o.this.clone(),
-                                        not: false,
-                                        postfix_form: false,
-                                    })),
-                                    Expression::Literal(Box::new(Literal::Number("1".to_string()))),
-                                )],
-                                else_: Some(Expression::Literal(Box::new(Literal::Number(
-                                    "0".to_string(),
-                                )))),
-                                comments: Vec::new(),
-                                inferred_type: None,
-                            }));
-                            new_order_by.push(crate::expressions::Ordered {
-                                nulls_auto: false,
-                                this: case_expr,
-                                desc: false,
-                                nulls_first: None,
-                                explicit_asc: false,
-                                with_fill: None,
-                            });
-                            let mut ordered = o;
-                            ordered.nulls_first = None;
-                            new_order_by.push(ordered);
-                        } else {
-                            // DESC: DuckDB has NULLS LAST, MySQL also has NULLS LAST (NULLs smallest in DESC)
-                            // No change needed
-                            let mut ordered = o;
-                            ordered.nulls_first = None;
-                            new_order_by.push(ordered);
-                        }
-                    }
-                    wf.over.order_by = new_order_by;
-                    Ok(Expression::WindowFunction(wf))
                 } else {
                     Ok(e)
                 }

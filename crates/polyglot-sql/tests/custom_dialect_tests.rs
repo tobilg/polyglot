@@ -1637,3 +1637,26 @@ fn vertica_array_execution_benchmark() {
         }
     }
 }
+
+#[test]
+fn custom_dialect_qualify_rejects_unresolved_wildcard_outputs() {
+    for (source, target) in [
+        ("datafusion", "postgresql"),
+        ("datafusion", "mysql"),
+        ("datafusion", "spark"),
+        ("datafusion", "tsql"),
+        ("vertica", "vertica"),
+    ] {
+        let error = polyglot_sql::transpile_with_by_name(
+            "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1",
+            source,
+            target,
+            &polyglot_sql::TranspileOptions::strict(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("wildcard"),
+            "{source} -> {target}: {error}"
+        );
+    }
+}

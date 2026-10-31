@@ -50,7 +50,7 @@ impl DialectImpl for StarRocksDialect {
             // StarRocks: PROPERTIES prefix for WITH properties
             with_properties_prefix: "PROPERTIES",
             // StarRocks uses MySQL-style settings
-            null_ordering_supported: false,
+            null_ordering_supported: true,
             limit_only_literals: true,
             semi_anti_join_with_side: false,
             supports_table_alias_columns: false,

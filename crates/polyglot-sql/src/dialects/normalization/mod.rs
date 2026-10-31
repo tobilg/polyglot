@@ -2746,33 +2746,13 @@ pub(super) fn normalize(
                 // When nulls_first is not specified, fill in the source dialect's implied
                 // default so the target generator can correctly add/strip NULLS FIRST/LAST.
                 Expression::Ordered(o) => {
-                    // MySQL doesn't support NULLS FIRST/LAST - strip or rewrite
-                    if matches!(target, DialectType::MySQL) && o.nulls_first.is_some() {
-                        Action::Operators(operators::Action::MysqlNullsOrdering)
+                    if o.nulls_first.is_none()
+                        && source != target
+                        && source != DialectType::Vertica
+                    {
+                        Action::Operators(operators::Action::NullsOrdering)
                     } else {
-                        // Skip targets that don't support NULLS FIRST/LAST syntax unless
-                        // the generator can preserve semantics with a CASE sort key.
-                        let target_rewrites_nulls =
-                            matches!(target, DialectType::TSQL | DialectType::Fabric);
-                        let target_supports_nulls = !matches!(
-                            target,
-                            DialectType::MySQL
-                                | DialectType::TSQL
-                                | DialectType::Fabric
-                                | DialectType::StarRocks
-                                | DialectType::Doris
-                        );
-                        // Vertica's implicit NULL placement depends on the sort key's data
-                        // type (NULLS AUTO), so there is no source default to make explicit.
-                        if o.nulls_first.is_none()
-                            && source != target
-                            && source != DialectType::Vertica
-                            && (target_supports_nulls || target_rewrites_nulls)
-                        {
-                            Action::Operators(operators::Action::NullsOrdering)
-                        } else {
-                            Action::None
-                        }
+                        Action::None
                     }
                 }
                 // BigQuery data types: convert INT64, BYTES, NUMERIC etc. to standard types
@@ -3556,7 +3536,6 @@ pub(super) fn normalize(
                     Action::Collections(collections::Action::ArrayIndexConvert)
                 }
                 // ANY_VALUE IGNORE NULLS detection moved to the AnyValue arm above
-                // MysqlNullsOrdering for Ordered is now handled in the Ordered arm above
                 // RESPECT NULLS handling for SQLite (strip it, add NULLS LAST to ORDER BY)
                 // and for MySQL (rewrite ORDER BY with CASE WHEN for null ordering)
                 Expression::WindowFunction(ref wf) => {
@@ -3569,25 +3548,7 @@ pub(super) fn normalize(
                         && wf.over.order_by.iter().any(|o| o.nulls_first.is_some())
                     {
                         Action::Operators(operators::Action::BigQueryNullsOrdering)
-                    // DuckDB -> MySQL: Add CASE WHEN for NULLS LAST simulation in window ORDER BY
-                    // But NOT when frame is RANGE/GROUPS, since adding CASE WHEN would break value-based frames
                     } else {
-                        let source_nulls_last = matches!(source, DialectType::DuckDB);
-                        let has_range_frame = wf.over.frame.as_ref().map_or(false, |f| {
-                            matches!(
-                                f.kind,
-                                crate::expressions::WindowFrameKind::Range
-                                    | crate::expressions::WindowFrameKind::Groups
-                            )
-                        });
-                        if source_nulls_last
-                            && matches!(target, DialectType::MySQL)
-                            && !wf.over.order_by.is_empty()
-                            && wf.over.order_by.iter().any(|o| !o.desc)
-                            && !has_range_frame
-                        {
-                            Action::Scalar(scalar::Action::MysqlNullsLastRewrite)
-                        } else {
                             // Check for Snowflake window frame handling for FIRST_VALUE/LAST_VALUE/NTH_VALUE
                             let is_ranking_window_func = matches!(
                                 &wf.this,
@@ -3639,7 +3600,6 @@ pub(super) fn normalize(
                                     _ => Action::None,
                                 }
                             }
-                        }
                     }
                 }
                 // CREATE TABLE a LIKE b -> dialect-specific transformations

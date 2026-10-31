@@ -705,3 +705,133 @@ fn dialect_transforms_visit_interval_children_before_wrapper_477() {
         "SELECT INTERVAL ABS(months) MONTH"
     );
 }
+
+#[test]
+fn qualify_projects_window_aliases_and_preserves_post_filter_clauses() {
+    let expression = parse_one("SELECT DISTINCT t.a, ROW_NUMBER() OVER (ORDER BY t.a) AS rn FROM t QUALIFY rn = 2 ORDER BY t.a LIMIT 1 OFFSET 0");
+    let lowered = polyglot_sql::transforms::eliminate_qualify(expression).unwrap();
+    let Expression::Select(outer) = &lowered else {
+        panic!("expected SELECT")
+    };
+    assert!(outer.distinct);
+    assert!(outer.limit.is_some() && outer.offset.is_some() && outer.order_by.is_some());
+    assert_eq!(
+        outer.expressions,
+        vec![Expression::column("a"), Expression::column("rn")]
+    );
+    let Expression::Subquery(subquery) = &outer.from.as_ref().unwrap().expressions[0] else {
+        panic!("expected subquery")
+    };
+    let Expression::Select(inner) = &subquery.this else {
+        panic!("expected inner SELECT")
+    };
+    assert!(!inner.distinct);
+    assert!(
+        inner.qualify.is_none()
+            && inner.limit.is_none()
+            && inner.offset.is_none()
+            && inner.order_by.is_none()
+    );
+    assert_eq!(inner.expressions.len(), 2);
+    let sql = generate_with_dialect(&lowered, DialectType::Generic);
+    assert!(
+        sql.ends_with("WHERE rn = 2 ORDER BY a LIMIT 1 OFFSET 0"),
+        "{sql}"
+    );
+    assert_eq!(sql.matches("ROW_NUMBER()").count(), 1, "{sql}");
+}
+
+#[test]
+fn qualify_handles_nested_scopes_multiple_windows_and_quoted_outputs() {
+    for sql in [
+        "WITH q AS (SELECT a, ROW_NUMBER() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1) SELECT a FROM q",
+        "SELECT a + 1 AS \"next a\" FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY a) = 1 AND RANK() OVER (ORDER BY a) < 3",
+        "SELECT t.a FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY t.a) = 1",
+        "SELECT a, _w FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY a) = 1",
+    ] {
+        let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(sql)).unwrap();
+        assert!(!lowered.contains(|node| matches!(node, Expression::Select(select) if select.qualify.is_some())));
+        let output = generate_with_dialect(&lowered, DialectType::Generic);
+        parse_one(&output);
+        if sql.contains("a, _w") { assert!(output.contains("AS _w_2"), "{output}"); }
+        if sql.contains("next a") { assert!(output.starts_with("SELECT \"next a\" FROM"), "{output}"); }
+        if sql.starts_with("SELECT t.a") { assert!(output.starts_with("SELECT a FROM"), "{output}"); }
+    }
+}
+
+#[test]
+fn qualify_does_not_hoist_columns_from_predicate_subqueries() {
+    let sql = "SELECT c2, SUM(c3) OVER (PARTITION BY c2) AS r FROM t1 WHERE c3 < 4 GROUP BY c2, c3 HAVING SUM(c1) > 3 QUALIFY r IN (SELECT MIN(c1) FROM test GROUP BY c2 HAVING MIN(c1) > 3)";
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(sql)).unwrap();
+    let Expression::Select(outer) = &lowered else {
+        panic!("expected SELECT")
+    };
+    let Expression::Subquery(subquery) = &outer.from.as_ref().unwrap().expressions[0] else {
+        panic!("expected subquery")
+    };
+    let Expression::Select(inner) = &subquery.this else {
+        panic!("expected inner SELECT")
+    };
+    assert_eq!(inner.expressions.len(), 2);
+    let output = generate_with_dialect(&lowered, DialectType::Generic);
+    assert!(
+        output.contains("WHERE r IN (SELECT MIN(c1) FROM test"),
+        "{output}"
+    );
+}
+
+#[test]
+fn qualify_rejects_unknown_wildcards_and_expands_known_derived_outputs() {
+    let error = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
+    ))
+    .unwrap_err();
+    assert!(error.to_string().contains("wildcard"));
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT * FROM (SELECT a, b FROM t) AS q QUALIFY ROW_NUMBER() OVER (ORDER BY a) = 1",
+    ))
+    .unwrap();
+    let Expression::Select(outer) = &lowered else {
+        panic!("expected SELECT")
+    };
+    assert_eq!(
+        outer.expressions,
+        vec![Expression::column("a"), Expression::column("b")]
+    );
+}
+
+#[test]
+fn qualify_keeps_order_by_ordinals_even_with_literal_projections() {
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT a, 1 AS constant, ROW_NUMBER() OVER (ORDER BY a) AS rn FROM t QUALIFY rn > 1 ORDER BY 1 DESC"
+    )).unwrap();
+    let output = generate_with_dialect(&lowered, DialectType::Generic);
+    assert!(output.ends_with("ORDER BY 1 DESC"), "{output}");
+    assert!(output.contains("WHERE rn > 1"), "{output}");
+}
+
+#[test]
+fn qualify_rebinds_correlated_qualifiers_but_respects_local_shadowing() {
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT t.a, ROW_NUMBER() OVER (ORDER BY t.a) AS rn FROM t QUALIFY rn = 1 AND EXISTS (SELECT 1 FROM u WHERE u.a = t.a)"
+    )).unwrap();
+    let output = generate_with_dialect(&lowered, DialectType::Generic);
+    assert!(output.contains("WHERE u.a = _t.a"), "{output}");
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT t.a, ROW_NUMBER() OVER (ORDER BY t.a) AS rn FROM t QUALIFY rn = 1 AND EXISTS (SELECT 1 FROM u AS t WHERE t.a = 2)"
+    )).unwrap();
+    let output = generate_with_dialect(&lowered, DialectType::Generic);
+    assert!(output.contains("WHERE t.a = 2"), "{output}");
+}
+
+#[test]
+fn qualify_rebinds_distinct_on_expressions_to_outer_outputs() {
+    let lowered = polyglot_sql::transforms::eliminate_qualify(parse_one(
+        "SELECT DISTINCT ON (t.a) t.a, ROW_NUMBER() OVER (ORDER BY t.a) AS rn FROM t QUALIFY rn > 0 ORDER BY t.a"
+    )).unwrap();
+    let output = generate_with_dialect(&lowered, DialectType::PostgreSQL);
+    assert!(
+        output.starts_with("SELECT DISTINCT ON (a) a, rn FROM"),
+        "{output}"
+    );
+}

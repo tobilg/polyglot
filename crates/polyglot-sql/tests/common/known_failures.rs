@@ -212,6 +212,14 @@ pub fn dialect_identity_known_failures(_dialect: &str) -> HashSet<String> {
 pub fn transpilation_known_failures(source: &str, target: &str) -> HashSet<String> {
     let mut failures = HashSet::new();
 
+    // Issue #513 (user-approved exclusions): SQLGlot 30.14.0 exposes the
+    // helper _w column when lowering SELECT * ... QUALIFY COUNT(*) OVER () > 1.
+    // Verified by execution: a one-column result becomes (a, _w). Keep the
+    // native QUALIFY targets active; unresolved wildcards must be rejected.
+    if source == "generic" && matches!(target, "mysql" | "oracle" | "postgres" | "tsql") {
+        failures.insert(format!("generic->{target}:207"));
+    }
+
     if source == "bigquery" && target == "duckdb" {
         // Issue #479: SQLGlot 30.14.0 emits bare DECIMAL for BigQuery NUMERIC,
         // narrowing (38, 9) to DuckDB's (18, 3). Verified in DuckDB 1.5.5:
