@@ -6193,14 +6193,25 @@ impl Parser {
             }
         }
 
-        // Check for MySQL PARTITION(p0, p1, ...) clause
-        // Only supported by MySQL-compatible dialects (not generic dialect)
+        // Check for PARTITION(p0, p1, ...) partition selection
+        // MySQL-compatible dialects and Oracle; not the generic dialect.
+        //
+        // Oracle spells it `FROM t PARTITION (p)` and allows exactly one
+        // partition, where MySQL allows a list. Accepting the list for both
+        // keeps one code path and only ever re-emits what was parsed.
+        //
+        // Without Oracle here, `FROM t PARTITION (P1)` fell through to the
+        // alias parser and came back as a table aliased `PARTITION` with a
+        // column alias list of `(P1)`. That regenerates as `PARTITION(P1)`,
+        // so a round-trip test passes while every AST consumer sees a
+        // partition selection as an alias.
         let supports_partition_selection = matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::MySQL)
                 | Some(crate::dialects::DialectType::SingleStore)
                 | Some(crate::dialects::DialectType::Doris)
                 | Some(crate::dialects::DialectType::StarRocks)
+                | Some(crate::dialects::DialectType::Oracle)
         );
         if supports_partition_selection && self.match_token(TokenType::Partition) {
             if self.match_token(TokenType::LParen) {
@@ -6216,6 +6227,26 @@ impl Parser {
                 if let Expression::Table(ref mut table) = expr {
                     table.partitions = partitions;
                 }
+            }
+        }
+
+        // Oracle flashback query clause on a table reference (a no-op on every
+        // other dialect):
+        //   AS OF SCN expr
+        //   AS OF TIMESTAMP expr
+        //
+        // This has to run before the table alias is parsed. Oracle has no AS
+        // keyword for table aliases, but the shared alias parser does accept
+        // one, so `FROM t AS OF SCN 1` would otherwise be read as the table
+        // `t` aliased `OF`, silently dropping the flashback and leaving
+        // `SCN 1` to fail somewhere further on.
+        //
+        // It also has to run after PARTITION, because Oracle requires
+        // `PARTITION (p) AS OF SCN n` in that order and rejects the reverse
+        // with ORA-03048.
+        if let Some(version) = self.parse_oracle_flashback()? {
+            if let Expression::Table(ref mut table) = expr {
+                table.version = Some(Box::new(version));
             }
         }
 
@@ -65199,6 +65230,63 @@ impl Parser {
         }
 
         Ok(Some(Expression::Tuple(Box::new(Tuple { expressions }))))
+    }
+
+    /// parse_oracle_flashback - Oracle `AS OF SCN` / `AS OF TIMESTAMP`.
+    ///
+    /// Oracle's flashback query reads a table as of an earlier point in time,
+    /// named either by a system change number or by a timestamp:
+    ///
+    /// ```sql
+    /// SELECT * FROM orders AS OF SCN 12345
+    /// SELECT * FROM orders AS OF TIMESTAMP SYSTIMESTAMP - INTERVAL '1' HOUR
+    /// ```
+    ///
+    /// Returns None without consuming anything unless the clause is really
+    /// there, so a plain `AS alias` still reaches the alias parser.
+    ///
+    /// `VERSIONS BETWEEN ...`, Oracle's other flashback form, is not handled
+    /// here: it returns version pseudo-columns and so is a larger feature
+    /// than a clause on a table reference.
+    fn parse_oracle_flashback(&mut self) -> Result<Option<Version>> {
+        if !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Oracle)
+        ) {
+            return Ok(None);
+        }
+        if !self.check(TokenType::As) || !self.check_next(TokenType::Of) {
+            return Ok(None);
+        }
+        // Look past AS OF before committing: anything other than SCN or
+        // TIMESTAMP is not a flashback clause, and consuming the tokens would
+        // corrupt whatever it actually is.
+        let kind = match self
+            .peek_nth(2)
+            .map(|token| token.text.to_ascii_uppercase())
+            .as_deref()
+        {
+            Some("SCN") => "SCN",
+            Some("TIMESTAMP") => "TIMESTAMP",
+            _ => return Ok(None),
+        };
+
+        self.skip(); // AS
+        self.skip(); // OF
+        self.skip(); // SCN | TIMESTAMP
+
+        let expression = self.parse_bitwise()?.ok_or_else(|| {
+            self.parse_error(format!(
+                "Expected an expression after Oracle AS OF {}",
+                kind
+            ))
+        })?;
+
+        Ok(Some(Version {
+            this: Box::new(Expression::Identifier(Identifier::new(kind))),
+            kind: "AS OF".to_string(),
+            expression: Some(Box::new(expression)),
+        }))
     }
 
     /// parse_version - Implemented from Python _parse_version
