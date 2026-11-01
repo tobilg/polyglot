@@ -6402,20 +6402,9 @@ impl Parser {
             }
         }
 
-        if self.config.dialect == Some(crate::dialects::DialectType::Oracle)
-            && self.match_text_seq(&["AS", "OF"])
-        {
-            let kind = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
-            if !matches!(kind.as_str(), "SCN" | "TIMESTAMP") {
-                return Err(self.parse_error("Expected SCN or TIMESTAMP after AS OF"));
-            }
-            let expression = self.parse_bitwise_or()?;
+        if let Some(version) = self.parse_oracle_flashback()? {
             if let Expression::Table(table) = &mut expr {
-                table.version = Some(Box::new(Version {
-                    this: Box::new(Expression::Var(Box::new(Var { this: kind }))),
-                    kind: "AS OF".into(),
-                    expression: Some(Box::new(expression)),
-                }));
+                table.version = Some(Box::new(version));
             }
         }
 
@@ -67101,6 +67090,63 @@ impl Parser {
         }
 
         Ok(Some(Expression::Tuple(Box::new(Tuple { expressions }))))
+    }
+
+    /// parse_oracle_flashback - Oracle `AS OF SCN` / `AS OF TIMESTAMP`.
+    ///
+    /// Oracle's flashback query reads a table as of an earlier point in time,
+    /// named either by a system change number or by a timestamp:
+    ///
+    /// ```sql
+    /// SELECT * FROM orders AS OF SCN 12345
+    /// SELECT * FROM orders AS OF TIMESTAMP SYSTIMESTAMP - INTERVAL '1' HOUR
+    /// ```
+    ///
+    /// Returns None without consuming anything unless the clause is really
+    /// there, so a plain `AS alias` still reaches the alias parser.
+    ///
+    /// `VERSIONS BETWEEN ...`, Oracle's other flashback form, is not handled
+    /// here: it returns version pseudo-columns and so is a larger feature
+    /// than a clause on a table reference.
+    fn parse_oracle_flashback(&mut self) -> Result<Option<Version>> {
+        if !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Oracle)
+        ) {
+            return Ok(None);
+        }
+        if !self.check(TokenType::As) || !self.check_next(TokenType::Of) {
+            return Ok(None);
+        }
+        // Look past AS OF before committing: anything other than SCN or
+        // TIMESTAMP is not a flashback clause, and consuming the tokens would
+        // corrupt whatever it actually is.
+        let kind = match self
+            .peek_nth(2)
+            .map(|token| token.text(self.source.as_deref().unwrap_or_default()).to_ascii_uppercase())
+            .as_deref()
+        {
+            Some("SCN") => "SCN",
+            Some("TIMESTAMP") => "TIMESTAMP",
+            _ => return Ok(None),
+        };
+
+        self.skip(); // AS
+        self.skip(); // OF
+        self.skip(); // SCN | TIMESTAMP
+
+        let expression = self.parse_bitwise()?.ok_or_else(|| {
+            self.parse_error(format!(
+                "Expected an expression after Oracle AS OF {}",
+                kind
+            ))
+        })?;
+
+        Ok(Some(Version {
+            this: Box::new(Expression::Identifier(Identifier::new(kind))),
+            kind: "AS OF".to_string(),
+            expression: Some(Box::new(expression)),
+        }))
     }
 
     /// parse_version - Implemented from Python _parse_version
