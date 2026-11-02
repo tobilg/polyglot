@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import baseline from './query-baseline.json';
-import { Dialect, parse } from '../../index';
 import type { Expression } from '../../generated/Expression';
+import { Dialect, parse } from '../../index';
+import baseline from './query-baseline.json';
 import {
   findFirst,
-  some,
-  getTables,
-  getFunctions,
   getAggregateFunctions,
-  getWindowFunctions,
-  getSubqueries,
-  getLiterals,
   getColumnNames,
+  getFunctions,
+  getLiterals,
+  getSubqueries,
   getTableNames,
+  getTables,
+  getWindowFunctions,
   nodeCount,
+  some,
   walk,
 } from './walker';
 

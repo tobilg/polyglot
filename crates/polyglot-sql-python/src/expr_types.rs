@@ -23,10 +23,6 @@ macro_rules! define_expression_subclasses {
             wrap_base(py, PyExpression::from_inner(expr))
         }
 
-        pub fn wrap_expression_with_parent(py: Python<'_>, expr: Expression, parent: Py<PyAny>, arg_key: &str) -> PyResult<Py<PyAny>> {
-            wrap_base(py, PyExpression::from_inner_with_parent(expr, parent, arg_key))
-        }
-
         pub(crate) fn wrap_shared_expression(py: Python<'_>, inner: SharedExpression, parent: Option<Py<PyAny>>, arg_key: Option<&str>) -> PyResult<Py<PyAny>> {
             wrap_base(py, PyExpression { inner, parent, arg_key: arg_key.map(str::to_owned) })
         }

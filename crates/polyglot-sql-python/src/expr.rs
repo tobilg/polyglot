@@ -46,14 +46,6 @@ impl PyExpression {
         }
     }
 
-    pub fn from_inner_with_parent(inner: Expression, parent: Py<PyAny>, arg_key: &str) -> Self {
-        Self {
-            inner: SharedExpression::new(inner),
-            parent: Some(parent),
-            arg_key: Some(arg_key.to_string()),
-        }
-    }
-
     fn builder_binary(
         &self,
         py: Python<'_>,
