@@ -537,6 +537,7 @@ fn input_fields_for_output(
 
     let lineage = lineage.get_or_insert_with(|| {
         lineage::ScopedLineage::for_query(query, schema, Some(options.dialect))
+            .map(lineage::ScopedLineage::without_source_queries)
     });
     let lineage_result = match lineage {
         Ok(lineage) => lineage

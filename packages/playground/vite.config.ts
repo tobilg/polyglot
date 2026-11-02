@@ -15,6 +15,7 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ["@polyglot-sql/sdk"],
   },
+  worker: { format: "es", plugins: () => [wasm()] },
   build: {
     target: "esnext",
   },

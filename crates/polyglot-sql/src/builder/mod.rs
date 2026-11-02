@@ -920,6 +920,7 @@ pub fn insert_into(table_name: &str) -> InsertBuilder {
             is_replace: false,
             hint: None,
             replace_where: None,
+            replace_using: Vec::new(),
             source: None,
             function_target: None,
             partition_by: None,
@@ -948,6 +949,8 @@ pub fn insert_into(table_name: &str) -> InsertBuilder {
 pub fn update(table_name: &str) -> UpdateBuilder {
     UpdateBuilder {
         update: Update {
+            assignments: Vec::new(),
+            on_cluster: None,
             table: builder_table_ref(table_name),
             hint: None,
             extra_tables: Vec::new(),
@@ -1275,6 +1278,7 @@ impl SelectBuilder {
             comments: Vec::new(),
             nesting_group: 0,
             directed: false,
+            nearest: None,
         };
         self.edit(|expression| {
             engine::append_join(expression, join).expect("select builder accepts JOIN clauses")

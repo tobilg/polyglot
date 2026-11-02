@@ -477,6 +477,12 @@ pub(super) fn rewrite(
                 if let Expression::AddMonths(am) = e {
                     let date = am.this;
                     let val = am.expression;
+                    if source == DialectType::Oracle && target == DialectType::Snowflake {
+                        return Ok(Expression::Function(Box::new(Function::new(
+                            "ADD_MONTHS",
+                            vec![date, val],
+                        ))));
+                    }
                     match target {
                         DialectType::TSQL | DialectType::Fabric => {
                             let cast_date = ensure_cast_datetime2(date);
@@ -489,12 +495,35 @@ pub(super) fn rewrite(
                                 ],
                             ))))
                         }
-                        DialectType::DuckDB if matches!(source, DialectType::Snowflake) => {
+                        DialectType::DuckDB
+                            if matches!(source, DialectType::Snowflake | DialectType::Oracle) =>
+                        {
+                            if source == DialectType::Oracle {
+                                // Oracle DATE carries a time-of-day. The DATE-only
+                                // emulation below is valid only for known midnight values.
+                                let midnight = match &date {
+                                    Expression::Literal(l) => {
+                                        matches!(l.as_ref(), Literal::Date(_))
+                                    }
+                                    Expression::Cast(c) if c.to == DataType::Date => {
+                                        matches!(&c.this, Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) if !s.contains([' ', 'T', ':'])))
+                                    }
+                                    _ => false,
+                                };
+                                if !midnight {
+                                    return Err(crate::error::Error::unsupported("Oracle ADD_MONTHS time-of-day requires timestamp-preserving lowering", "DuckDB"));
+                                }
+                            }
                             // DuckDB ADD_MONTHS from Snowflake: CASE WHEN LAST_DAY(date) = date THEN LAST_DAY(date + interval) ELSE date + interval END
                             // Optionally wrapped in CAST(... AS type) if the input had a specific type
 
                             // Determine the cast type from the date expression
                             let (cast_date, return_type) = match &date {
+                                Expression::Literal(lit)
+                                    if matches!(lit.as_ref(), Literal::Date(_)) =>
+                                {
+                                    (date.clone(), Some(DataType::Date))
+                                }
                                 Expression::Literal(lit)
                                     if matches!(lit.as_ref(), Literal::String(_)) =>
                                 {
@@ -559,7 +588,12 @@ pub(super) fn rewrite(
                             let add_interval = if is_non_integer_val {
                                 // TO_MONTHS(CAST(ROUND(val) AS INT))
                                 let round_val = Expression::Function(Box::new(Function::new(
-                                    "ROUND".to_string(),
+                                    if source == DialectType::Oracle {
+                                        "TRUNC"
+                                    } else {
+                                        "ROUND"
+                                    }
+                                    .to_string(),
                                     vec![val.clone()],
                                 )));
                                 let cast_int = Expression::Cast(Box::new(Cast {
@@ -4740,4 +4774,442 @@ pub(super) fn bq_format_normalize_bq(format_expr: &Expression) -> Expression {
     } else {
         format_expr.clone()
     }
+}
+
+/// Preserve source calendar rules before generic function lowering.
+/// BigQuery weeks start on Sunday unless a weekday or ISO week is specified:
+/// https://cloud.google.com/bigquery/docs/reference/standard-sql/date_functions
+pub(super) fn normalize_source_calendar(
+    e: &Expression,
+    context: &NormalizationContext,
+) -> Result<Option<Expression>> {
+    fn call(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::Function(Box::new(Function::new(name.to_string(), args)))
+    }
+    fn text(value: &str) -> Expression {
+        Expression::Literal(Box::new(Literal::String(value.to_string())))
+    }
+    fn number(value: i64) -> Expression {
+        Expression::Literal(Box::new(Literal::Number(value.to_string())))
+    }
+    fn word(e: &Expression) -> Option<String> {
+        match e {
+            Expression::Var(v) => Some(v.this.to_ascii_uppercase()),
+            Expression::Column(c) => Some(c.name.name.to_ascii_uppercase()),
+            Expression::Identifier(i) => Some(i.name.to_ascii_uppercase()),
+            Expression::Literal(l) => match l.as_ref() {
+                Literal::String(s) => Some(s.to_ascii_uppercase()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn week_start(e: &Expression) -> Option<i64> {
+        let unit = if let Expression::Function(f) = e {
+            if !f.name.eq_ignore_ascii_case("WEEK") || f.args.len() != 1 {
+                return None;
+            }
+            word(&f.args[0])?
+        } else {
+            word(e)?
+        };
+        match unit.as_str() {
+            "WEEK" | "SUNDAY" => Some(0),
+            "ISOWEEK" | "MONDAY" => Some(1),
+            "TUESDAY" => Some(2),
+            "WEDNESDAY" => Some(3),
+            "THURSDAY" => Some(4),
+            "FRIDAY" => Some(5),
+            "SATURDAY" => Some(6),
+            _ => None,
+        }
+    }
+    fn days(value: i64) -> Expression {
+        Expression::Interval(Box::new(Interval {
+            this: Some(text(&value.to_string())),
+            unit: Some(IntervalUnitSpec::Simple {
+                unit: IntervalUnit::Day,
+                use_plural: false,
+            }),
+        }))
+    }
+    fn add(a: Expression, b: Expression) -> Expression {
+        Expression::Add(Box::new(BinaryOp::new(a, b)))
+    }
+    let source = context.source;
+    let target = context.target;
+    if matches!(source, DialectType::DuckDB | DialectType::Snowflake)
+        && matches!(target, DialectType::PostgreSQL | DialectType::Trino)
+    {
+        if let Expression::Function(f) = e {
+            if matches!(
+                f.name.to_ascii_uppercase().as_str(),
+                "DATEDIFF" | "DATE_DIFF"
+            ) && f.args.len() == 3
+            {
+                if let Some(unit) = word(&f.args[0]) {
+                    if matches!(
+                        unit.as_str(),
+                        "YEAR"
+                            | "QUARTER"
+                            | "MONTH"
+                            | "DAY"
+                            | "HOUR"
+                            | "MINUTE"
+                            | "SECOND"
+                            | "MILLISECOND"
+                            | "MICROSECOND"
+                    ) {
+                        let truncated = |value: Expression| {
+                            let value = if target == DialectType::PostgreSQL {
+                                cast_expr(
+                                    value,
+                                    DataType::Timestamp {
+                                        precision: None,
+                                        timezone: false,
+                                    },
+                                )
+                            } else {
+                                value
+                            };
+                            call("DATE_TRUNC", vec![text(&unit), value])
+                        };
+                        let unit_expr = if target == DialectType::PostgreSQL {
+                            Expression::Identifier(Identifier::new(&unit))
+                        } else {
+                            text(&unit)
+                        };
+                        return Ok(Some(call(
+                            if target == DialectType::PostgreSQL {
+                                "DATEDIFF"
+                            } else {
+                                "DATE_DIFF"
+                            },
+                            vec![
+                                unit_expr,
+                                truncated(f.args[1].clone()),
+                                truncated(f.args[2].clone()),
+                            ],
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    if source == DialectType::Teradata && target != DialectType::Teradata {
+        // Teradata ordered aggregates default to the entire partition, not a running frame.
+        // https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Operators-and-User-Defined-Functions/User-Defined-Functions/Window-Aggregate-UDF
+        if let Expression::WindowFunction(w) = e {
+            let aggregate = matches!(
+                w.this,
+                Expression::Sum(_)
+                    | Expression::Avg(_)
+                    | Expression::Count(_)
+                    | Expression::Min(_)
+                    | Expression::Max(_)
+                    | Expression::AggregateFunction(_)
+            );
+            if aggregate && w.over.frame.is_none() && !w.over.order_by.is_empty() {
+                let mut w = w.clone();
+                w.over.frame = Some(WindowFrame {
+                    kind: WindowFrameKind::Rows,
+                    start: WindowFrameBound::UnboundedPreceding,
+                    end: Some(WindowFrameBound::UnboundedFollowing),
+                    exclude: None,
+                    kind_text: None,
+                    start_side_text: None,
+                    end_side_text: None,
+                });
+                return Ok(Some(Expression::WindowFunction(w)));
+            }
+        }
+    }
+    if source == DialectType::BigQuery {
+        if let Expression::LastDay(last) = e {
+            let unit = match &last.unit {
+                Some(DateTimeField::Week) => Some(Expression::Var(Box::new(Var {
+                    this: "WEEK".into(),
+                }))),
+                Some(DateTimeField::WeekWithModifier(day)) => Some(call("WEEK", vec![text(day)])),
+                Some(DateTimeField::Custom(unit)) => Some(text(unit)),
+                _ => None,
+            };
+            if let Some(start) = unit.as_ref().and_then(week_start) {
+                if target == DialectType::DuckDB {
+                    let dow = Expression::Extract(Box::new(ExtractFunc {
+                        this: last.this.clone(),
+                        field: DateTimeField::DayOfWeek,
+                    }));
+                    let distance = Expression::Mod(Box::new(BinaryOp::new(
+                        Expression::Paren(Box::new(Paren {
+                            this: Expression::Sub(Box::new(BinaryOp::new(
+                                number(if start == 0 { 13 } else { start + 6 }),
+                                dow,
+                            ))),
+                            trailing_comments: Vec::new(),
+                        })),
+                        number(7),
+                    )));
+                    let interval = Expression::Interval(Box::new(Interval {
+                        this: Some(distance),
+                        unit: Some(IntervalUnitSpec::Simple {
+                            unit: IntervalUnit::Day,
+                            use_plural: false,
+                        }),
+                    }));
+                    return Ok(Some(cast_expr(
+                        add(last.this.clone(), interval),
+                        DataType::Date,
+                    )));
+                }
+            }
+        }
+        if let Expression::Function(f) = e {
+            let name = f.name.to_ascii_uppercase();
+            if matches!(
+                name.as_str(),
+                "DATE_TRUNC" | "TIMESTAMP_TRUNC" | "DATETIME_TRUNC"
+            ) && f.args.len() >= 2
+            {
+                if let Some(start) = week_start(&f.args[1]) {
+                    if target == DialectType::BigQuery && start == 0 {
+                        let mut f = f.clone();
+                        f.args[1] = Expression::Var(Box::new(Var {
+                            this: "WEEK".into(),
+                        }));
+                        return Ok(Some(Expression::Function(f)));
+                    }
+                    if target == DialectType::DuckDB {
+                        let mut value = if name == "DATETIME_TRUNC" {
+                            cast_expr(
+                                f.args[0].clone(),
+                                DataType::Timestamp {
+                                    precision: None,
+                                    timezone: false,
+                                },
+                            )
+                        } else {
+                            maybe_cast_ts_to_tz(f.args[0].clone(), &name)
+                        };
+                        let timezone = f.args.get(2).cloned();
+                        if let Some(zone) = &timezone {
+                            value = Expression::AtTimeZone(Box::new(AtTimeZone {
+                                this: value,
+                                zone: zone.clone(),
+                            }));
+                        }
+                        let shift = (8 - start) % 7;
+                        if shift != 0 {
+                            value = add(value, days(shift));
+                        }
+                        let mut result = call("DATE_TRUNC", vec![text("WEEK"), value]);
+                        if shift != 0 {
+                            result = add(result, days(-shift));
+                        }
+                        if let Some(zone) = timezone {
+                            result =
+                                Expression::AtTimeZone(Box::new(AtTimeZone { this: result, zone }));
+                        }
+                        if name == "DATE_TRUNC" && shift != 0 {
+                            result = cast_expr(result, DataType::Date);
+                        }
+                        return Ok(Some(result));
+                    }
+                }
+            }
+            if name == "DATE_DIFF"
+                && f.args.len() == 3
+                && week_start(&f.args[2]) == Some(0)
+                && target == DialectType::TSQL
+            {
+                return Ok(Some(call(
+                    "DATEDIFF",
+                    vec![
+                        Expression::Var(Box::new(Var {
+                            this: "WEEK".into(),
+                        })),
+                        f.args[1].clone(),
+                        f.args[0].clone(),
+                    ],
+                )));
+            }
+        }
+    }
+    if source == DialectType::StarRocks
+        && matches!(target, DialectType::DuckDB | DialectType::Snowflake)
+    {
+        if let Expression::Function(f) = e {
+            if f.name.eq_ignore_ascii_case("TIME_SLICE") && f.args.len() >= 2 {
+                if let Expression::Interval(interval) = &f.args[1] {
+                    let end = f.args.get(2).and_then(word).as_deref() == Some("CEIL");
+                    let mut interval = interval.clone();
+                    if let Some(Expression::Literal(l)) = &mut interval.this {
+                        if let Literal::String(s) = l.as_ref() {
+                            if s.parse::<i64>().is_ok() {
+                                *l = Box::new(Literal::Number(s.clone()));
+                            }
+                        }
+                    }
+                    // StarRocks anchors at 0001-01-01; the target defaults have
+                    // different origins. Omit an origin only for aligned widths.
+                    let width = match &interval.this {
+                        Some(Expression::Literal(l)) => match l.as_ref() {
+                            Literal::Number(n) => n.parse::<i64>().ok().filter(|n| *n > 0),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let unit = match &interval.unit {
+                        Some(IntervalUnitSpec::Simple { unit, .. }) => Some(unit),
+                        _ => None,
+                    };
+                    let days = if target == DialectType::DuckDB {
+                        730121_i64
+                    } else {
+                        719162_i64
+                    };
+                    let months = if target == DialectType::DuckDB {
+                        23988_i64
+                    } else {
+                        23628_i64
+                    };
+                    let offset = match unit {
+                        Some(IntervalUnit::Year) => Some(months / 12),
+                        Some(IntervalUnit::Quarter) => Some(months / 3),
+                        Some(IntervalUnit::Month) => Some(months),
+                        Some(IntervalUnit::Week) if target == DialectType::DuckDB => Some(days / 7),
+                        Some(IntervalUnit::Day) => Some(days),
+                        Some(IntervalUnit::Hour) => Some(days * 24),
+                        Some(IntervalUnit::Minute) => Some(days * 1440),
+                        Some(IntervalUnit::Second) => Some(days * 86400),
+                        _ => None,
+                    };
+                    let aligned = width.zip(offset).is_some_and(|(n, delta)| delta % n == 0);
+                    if target == DialectType::Snowflake {
+                        if !aligned {
+                            return Err(crate::error::Error::unsupported(
+                                "TIME_SLICE origins do not align",
+                                "Snowflake",
+                            ));
+                        }
+                        if let (Some(value), Some(IntervalUnitSpec::Simple { unit, .. })) =
+                            (&interval.this, &interval.unit)
+                        {
+                            return Ok(Some(call(
+                                "TIME_SLICE",
+                                vec![
+                                    f.args[0].clone(),
+                                    value.clone(),
+                                    text(&format!("{unit:?}").to_ascii_uppercase()),
+                                    text(if end { "END" } else { "START" }),
+                                ],
+                            )));
+                        }
+                    } else {
+                        let interval = Expression::Interval(interval);
+                        let mut args = vec![interval.clone(), f.args[0].clone()];
+                        if !aligned {
+                            args.push(Expression::Literal(Box::new(Literal::Timestamp(
+                                "0001-01-01 00:00:00".into(),
+                            ))));
+                        }
+                        let bucket = call("TIME_BUCKET", args);
+                        return Ok(Some(if end { add(bucket, interval) } else { bucket }));
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(super) fn source_format_to_strftime(format: &str, source: DialectType) -> String {
+    let mut cursor = crate::format_tokens::FormatTokenCursor::new(format);
+    let mut result = String::new();
+    while let Some(ch) = cursor.peek() {
+        if source == DialectType::MySQL {
+            cursor.next_char();
+            if ch == '%' {
+                if let Some(spec) = cursor.next_char() {
+                    match spec {
+                        'x' => result.push_str("%G"),
+                        'v' => result.push_str("%V"),
+                        'r' => result.push_str("%I:%M:%S %p"),
+                        'T' => result.push_str("%H:%M:%S"),
+                        'i' => result.push_str("%M"),
+                        's' => result.push_str("%S"),
+                        'M' => result.push_str("%B"),
+                        'W' => result.push_str("%A"),
+                        'h' => result.push_str("%I"),
+                        'c' => result.push_str("%-m"),
+                        'e' => result.push_str("%-d"),
+                        'k' => result.push_str("%-H"),
+                        'l' => result.push_str("%-I"),
+                        'u' => result.push_str("%W"),
+                        _ => {
+                            result.push('%');
+                            result.push(spec);
+                        }
+                    }
+                } else {
+                    result.push('%');
+                }
+            } else {
+                result.push(ch);
+            }
+            continue;
+        }
+        if cursor.consume_prefix("\"", false) {
+            while let Some(literal) = cursor.next_char() {
+                if literal == '"' {
+                    break;
+                }
+                if literal == '%' {
+                    result.push('%');
+                }
+                result.push(literal);
+            }
+            continue;
+        }
+        let mapping = [
+            ("HH24MISS", "%H%M%S"),
+            ("DDD", "%j"),
+            ("DAY", "%A"),
+            ("DY", "%a"),
+            ("IYYY", "%G"),
+            ("YYYY", "%Y"),
+            ("MONTH", "%B"),
+            ("MMMM", "%B"),
+            ("HH24", "%H"),
+            ("HH12", "%I"),
+            ("FF3", "%g"),
+            ("FF6", "%f"),
+            ("FF9", "%n"),
+            ("MON", "%b"),
+            ("YY", "%y"),
+            ("IW", "%V"),
+            ("MM", "%m"),
+            ("DD", "%d"),
+            ("MI", "%M"),
+            ("SS", "%S"),
+            ("HH", "%I"),
+            ("AM", "%p"),
+            ("PM", "%p"),
+            ("US", "%f"),
+            ("MS", "%g"),
+        ];
+        if let Some((_, replacement)) = mapping
+            .iter()
+            .find(|(token, _)| cursor.consume_prefix(token, true))
+        {
+            result.push_str(replacement);
+        } else {
+            cursor.next_char();
+            if ch == '%' {
+                result.push('%');
+            }
+            result.push(ch);
+        }
+    }
+    result
 }

@@ -26,6 +26,50 @@ func integrationClient(t *testing.T) *Client {
 	return client
 }
 
+func TestIntegrationNewExpressionVariantsRoundtrip(t *testing.T) {
+	client := integrationClient(t)
+	for _, tc := range []struct {
+		kind, dialect, sql string
+	}{
+		{"pipe_query", "clickhouse", "FROM t |> SELECT a"},
+		{"multi_insert", "hive", "FROM x INSERT OVERWRITE TABLE a SELECT k INSERT INTO b SELECT v"},
+		{"per", "generic", "AVG(AGG(x) PER (c))"},
+		{"partition_by_excluding", "generic", "LAG(x) OVER (PARTITION BY EXCLUDING c ORDER BY d)"},
+		{"stream_source", "clickhouse", "SELECT ts FROM t STREAM BOUNDED"},
+		{"limit_range", "clickhouse", "SELECT x FROM t LIMIT AFTER x = 5 UNTIL x = 8"},
+		{"aggregate_key_property", "starrocks", "CREATE TABLE t (k INT, v HLL HLL_UNION) AGGREGATE KEY (k)"},
+		{"oracle_table_property", "oracle", "CREATE TABLE t (id NUMBER) PCTFREE 10"},
+		{"doris_match", "doris", "SELECT c MATCH_ANY 'x' FROM t"},
+		{"with_function", "trino", "WITH FUNCTION f() RETURNS INTEGER RETURN 1 SELECT F()"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			ast, err := client.Parse(tc.sql, tc.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tag := `"` + tc.kind + `":`
+			if !strings.Contains(string(ast), tag) {
+				t.Fatalf("missing %s in AST: %s", tc.kind, ast)
+			}
+			generated, err := client.Generate(ast, tc.dialect)
+			if err != nil || len(generated) != 1 {
+				t.Fatalf("Generate: %v, %v", generated, err)
+			}
+			reparsed, err := client.Parse(generated[0], tc.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(reparsed), tag) {
+				t.Fatalf("missing %s after roundtrip: %s", tc.kind, reparsed)
+			}
+			regenerated, err := client.Generate(reparsed, tc.dialect)
+			if err != nil || len(regenerated) != 1 || regenerated[0] != generated[0] {
+				t.Fatalf("unstable roundtrip: %v -> %v, %v", generated, regenerated, err)
+			}
+		})
+	}
+}
+
 func TestIntegrationNullOrderingPreservation(t *testing.T) {
 	client := integrationClient(t)
 	for _, dialect := range []string{"snowflake", "duckdb", "postgres"} {

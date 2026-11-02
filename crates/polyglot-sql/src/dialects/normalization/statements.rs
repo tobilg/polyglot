@@ -85,6 +85,7 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
                         comments: Vec::new(),
                         nesting_group: 0,
                         directed: false,
+                        nearest: None,
                     });
                 }
             }
@@ -105,7 +106,7 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
     // Strip OFFSET ROWS for non-TSQL/Oracle targets
     let expr = if !matches!(
         target,
-        DialectType::TSQL | DialectType::Oracle | DialectType::Fabric
+        DialectType::TSQL | DialectType::Oracle | DialectType::Fabric | DialectType::ClickHouse
     ) {
         if let Expression::Select(mut select) = expr {
             if let Some(ref mut offset) = select.offset {
@@ -125,6 +126,31 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
     // Handle CreateTable WITH properties transformation before recursive transforms
     let expr = if let Expression::CreateTable(mut ct) = expr {
         transform_create_table_properties(&mut ct, source, target);
+        if source == DialectType::SQLite
+            && matches!(
+                target,
+                DialectType::DuckDB | DialectType::PostgreSQL | DialectType::SQLite
+            )
+        {
+            for col in &mut ct.columns {
+                if matches!(
+                    col.data_type,
+                    DataType::Float { .. } | DataType::Double { .. }
+                ) {
+                    col.data_type = DataType::Double {
+                        precision: None,
+                        scale: None,
+                    };
+                }
+            }
+        }
+        if source == DialectType::Databricks && target == DialectType::Hive {
+            for col in &mut ct.columns {
+                if let DataType::Timestamp { precision, .. } = &mut col.data_type {
+                    *precision = None;
+                }
+            }
+        }
 
         // Handle Hive-style PARTITIONED BY (col_name type, ...) -> target-specific
         // When the PARTITIONED BY clause contains column definitions, merge them into the
@@ -322,20 +348,7 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
             ct.on_property = None;
         }
 
-        // Snowflake: strip ARRAY type parameters (ARRAY<INT> -> ARRAY, ARRAY<ARRAY<INT>> -> ARRAY)
-        // Snowflake doesn't support typed arrays in DDL
-        if matches!(target, DialectType::Snowflake) {
-            fn strip_array_type_params(dt: &mut crate::expressions::DataType) {
-                if let crate::expressions::DataType::Array { .. } = dt {
-                    *dt = crate::expressions::DataType::Custom {
-                        name: "ARRAY".to_string(),
-                    };
-                }
-            }
-            for col in &mut ct.columns {
-                strip_array_type_params(&mut col.data_type);
-            }
-        }
+        // Snowflake structured ARRAY types retain their element types.
 
         // PostgreSQL target: ensure IDENTITY columns have NOT NULL
         // If NOT NULL was explicit in source (present in constraint_order), preserve original order.
@@ -664,20 +677,28 @@ pub(super) fn rewrite(
                         // Build the old table name using TSQL bracket quoting
                         let old_name = if let Some(ref schema) = at.name.schema {
                             if at.name.name.quoted || schema.quoted {
-                                format!("[{}].[{}]", schema.name, at.name.name.name)
+                                format!(
+                                    "[{}].[{}]",
+                                    schema.name.replace(']', "]]"),
+                                    at.name.name.name.replace(']', "]]")
+                                )
                             } else {
                                 format!("{}.{}", schema.name, at.name.name.name)
                             }
                         } else {
                             if at.name.name.quoted {
-                                format!("[{}]", at.name.name.name)
+                                format!("[{}]", at.name.name.name.replace(']', "]]"))
                             } else {
                                 at.name.name.name.clone()
                             }
                         };
                         let new_name = new_tbl.name.name.clone();
                         // EXEC sp_rename 'old_name', 'new_name'
-                        let sql = format!("EXEC sp_rename '{}', '{}'", old_name, new_name);
+                        let sql = format!(
+                            "EXEC sp_rename '{}', '{}'",
+                            old_name.replace('\'', "''"),
+                            new_name.replace('\'', "''")
+                        );
                         Ok(Expression::Raw(crate::expressions::Raw { sql }))
                     } else {
                         Ok(e)

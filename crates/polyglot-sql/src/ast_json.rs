@@ -6,11 +6,15 @@
 //! narrow compatibility shape while preserving errors for unknown AST forms.
 
 use crate::expressions::Expression;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// Deserialize a single [`Expression`] from JSON, accepting known compatibility
 /// shapes used by SDK boundaries.
 pub fn expression_from_str(input: &str) -> Result<Expression, String> {
+    if let Ok(expression) = serde_json::from_str::<Expression>(input) {
+        return Ok(expression);
+    }
     let value: Value = serde_json::from_str(input).map_err(|error| error.to_string())?;
     expression_from_value(value)
 }
@@ -18,13 +22,16 @@ pub fn expression_from_str(input: &str) -> Result<Expression, String> {
 /// Deserialize a list of [`Expression`] values from JSON, accepting known
 /// compatibility shapes used by SDK boundaries.
 pub fn expressions_from_str(input: &str) -> Result<Vec<Expression>, String> {
+    if let Ok(expressions) = serde_json::from_str::<Vec<Expression>>(input) {
+        return Ok(expressions);
+    }
     let value: Value = serde_json::from_str(input).map_err(|error| error.to_string())?;
     expressions_from_value(value)
 }
 
 /// Deserialize a single [`Expression`] from a JSON value.
 pub fn expression_from_value(value: Value) -> Result<Expression, String> {
-    match serde_json::from_value::<Expression>(value.clone()) {
+    match Expression::deserialize(&value) {
         Ok(expression) => Ok(expression),
         Err(original_error) => {
             let mut repaired = value;
@@ -37,7 +44,7 @@ pub fn expression_from_value(value: Value) -> Result<Expression, String> {
 
 /// Deserialize a list of [`Expression`] values from a JSON value.
 pub fn expressions_from_value(value: Value) -> Result<Vec<Expression>, String> {
-    match serde_json::from_value::<Vec<Expression>>(value.clone()) {
+    match Vec::<Expression>::deserialize(&value) {
         Ok(expressions) => Ok(expressions),
         Err(original_error) => {
             let mut repaired = value;

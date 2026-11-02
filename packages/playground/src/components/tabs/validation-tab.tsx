@@ -1,7 +1,6 @@
+import { useSqlTask } from "@/hooks/use-sql-task";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
-  validate,
-  validateWithSchema,
   type Dialect,
   type Schema,
 } from "@polyglot-sql/sdk";
@@ -87,21 +86,23 @@ export function ValidationTab({ dialects, mode, onModeChange }: ValidationTabPro
     setSchemaParseError(null);
   }, [mode, sql]);
 
-  const handleValidate = useCallback(() => {
+  const { run, pending } = useSqlTask([sql, dialect, mode, schemaJson, checkTypes, checkRefs, strict]);
+
+  const handleValidate = useCallback(async () => {
     setError(null);
     setResult(null);
     setSchemaParseError(null);
 
     try {
-      let r: ValidationResult;
+      let r: ValidationResult | undefined;
 
       if (mode === "syntax") {
-        r = validate(sql, dialect as Dialect, { strictSyntax: true }) as ValidationResult;
+        r = await run("validate", sql, dialect as Dialect, { strictSyntax: true });
       } else if (mode === "semantic") {
-        r = validate(sql, dialect as Dialect, {
+        r = await run("validate", sql, dialect as Dialect, {
           semantic: true,
           strictSyntax: true,
-        }) as ValidationResult;
+        });
       } else {
         // schema mode — parse JSON first
         let schema: Schema;
@@ -111,21 +112,22 @@ export function ValidationTab({ dialects, mode, onModeChange }: ValidationTabPro
           setSchemaParseError(`Invalid JSON: ${(e as Error).message}`);
           return;
         }
-        r = validateWithSchema(sql, schema, dialect as Dialect, {
+        r = await run("validateWithSchema", sql, schema, dialect as Dialect, {
           checkTypes,
           checkReferences: checkRefs,
           strict,
           strictSyntax: true,
-        }) as ValidationResult;
+        });
       }
 
+      if (!r) return;
       runCountRef.current += 1;
       setResult({ data: r, key: runCountRef.current });
     } catch (e) {
       setError(String(e));
       setResult(null);
     }
-  }, [sql, dialect, mode, schemaJson, checkTypes, checkRefs, strict]);
+  }, [sql, dialect, mode, schemaJson, checkTypes, checkRefs, strict, run]);
 
   const errorCount = result?.data.errors.filter((e) => e.severity === "error").length ?? 0;
   const warningCount = result?.data.errors.filter((e) => e.severity === "warning").length ?? 0;
@@ -207,7 +209,7 @@ export function ValidationTab({ dialects, mode, onModeChange }: ValidationTabPro
             </label>
           </>
         )}
-        <Button onClick={handleValidate} size="sm" className="ml-auto">
+        <Button onClick={handleValidate} disabled={pending} size="sm" className="ml-auto">
           <Play className="size-3.5" />
           Validate
         </Button>

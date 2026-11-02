@@ -1013,11 +1013,27 @@ impl MySQLDialect {
             // LAST_DAY is native to MySQL
             "LAST_DAY" => Ok(Expression::Function(Box::new(f))),
 
-            // TIMESTAMPADD -> DATE_ADD
-            "TIMESTAMPADD" => Ok(Expression::Function(Box::new(Function::new(
-                "DATE_ADD".to_string(),
-                f.args,
-            )))),
+            // MySQL's grammar lowers both spellings to Item_date_add_interval.
+            // Preserve the amount expression, including fractional seconds.
+            "TIMESTAMPADD" if f.args.len() == 3 => {
+                let mut args = f.args.into_iter();
+                let mut unit = args.next().unwrap();
+                if let Expression::Column(c) = &mut unit {
+                    if let Some(name) = c.name.name.strip_prefix("SQL_TSI_") {
+                        c.name.name = name.to_string();
+                    }
+                }
+                let amount = args.next().unwrap();
+                let date = args.next().unwrap();
+                let interval = Expression::Interval(Box::new(Interval {
+                    this: Some(amount),
+                    unit: Some(IntervalUnitSpec::Expr(Box::new(unit))),
+                }));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_ADD",
+                    vec![date, interval],
+                ))))
+            }
 
             // TIMESTAMPDIFF is native to MySQL
             "TIMESTAMPDIFF" => Ok(Expression::Function(Box::new(f))),

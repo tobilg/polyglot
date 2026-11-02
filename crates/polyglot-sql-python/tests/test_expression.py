@@ -3,6 +3,55 @@ import pytest
 import polyglot_sql
 
 
+@pytest.mark.parametrize(
+    "sql,dialect,expression_type",
+    [
+        ("FROM t |> SELECT a", "clickhouse", polyglot_sql.PipeQuery),
+        (
+            "FROM x INSERT OVERWRITE TABLE a SELECT k INSERT INTO b SELECT v",
+            "hive",
+            polyglot_sql.MultiInsert,
+        ),
+        ("AVG(AGG(x) PER (c))", "generic", polyglot_sql.Per),
+        (
+            "LAG(x) OVER (PARTITION BY EXCLUDING c ORDER BY d)",
+            "generic",
+            polyglot_sql.PartitionByExcluding,
+        ),
+        ("SELECT ts FROM t STREAM BOUNDED", "clickhouse", polyglot_sql.StreamSource),
+        (
+            "SELECT x FROM t LIMIT AFTER x = 5 UNTIL x = 8",
+            "clickhouse",
+            polyglot_sql.LimitRange,
+        ),
+        (
+            "CREATE TABLE t (k INT, v HLL HLL_UNION) AGGREGATE KEY (k)",
+            "starrocks",
+            polyglot_sql.AggregateKeyProperty,
+        ),
+        (
+            "CREATE TABLE t (id NUMBER) PCTFREE 10",
+            "oracle",
+            polyglot_sql.OracleTableProperty,
+        ),
+        ("SELECT c MATCH_ANY 'x' FROM t", "doris", polyglot_sql.DorisMatch),
+        (
+            "WITH FUNCTION f() RETURNS INTEGER RETURN 1 SELECT F()",
+            "trino",
+            polyglot_sql.WithFunction,
+        ),
+    ],
+)
+def test_new_syntax_returns_public_expression_subclasses(sql, dialect, expression_type):
+    expression = polyglot_sql.parse_one(sql, dialect=dialect)
+    assert any(isinstance(node, expression_type) for node in expression.walk())
+    if not isinstance(expression, expression_type):
+        assert isinstance(expression.find(expression_type), expression_type)
+    generated = polyglot_sql.generate(expression.to_dict(), dialect=dialect)
+    reparsed = polyglot_sql.parse_one(generated[0], dialect=dialect)
+    assert any(isinstance(node, expression_type) for node in reparsed.walk())
+
+
 def test_hana_uses_shared_expression_subclasses_and_accessors():
     expression = polyglot_sql.parse_one(
         "SELECT LOCATE(value, 'a', 1, 2), JSON_VALUE(payload, '$.n') FROM records",

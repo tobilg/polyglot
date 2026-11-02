@@ -179,7 +179,10 @@ impl TestResults {
             for (cat, failures) in &sorted {
                 println!("\n#### {} ({} failures)", cat, failures.len());
                 for failure in failures.iter() {
-                    println!("- Line {}: {}", failure.line, failure.error);
+                    println!(
+                        "- {} (line {}): {}\n  SQL: {}",
+                        failure.test_id, failure.line, failure.error, failure.sql
+                    );
                 }
             }
         }
@@ -208,93 +211,66 @@ pub fn dialect_identity_known_failures(_dialect: &str) -> HashSet<String> {
     HashSet::new()
 }
 
-/// Load transpilation tests that should be skipped for now.
-pub fn transpilation_known_failures(source: &str, target: &str) -> HashSet<String> {
-    let mut failures = HashSet::new();
+/// Known upstream semantic errors, matched by content rather than fixture position.
+/// Matching the expected output as well means an upstream correction re-enables
+/// the test automatically. Reordering or inserting fixtures cannot skip other SQL.
+#[derive(serde::Deserialize)]
+struct UpstreamException {
+    source: String,
+    target: String,
+    sql: String,
+    upstream_expected: String,
+    reason: String,
+    #[serde(default)]
+    vendor_expected: Option<String>,
+    #[serde(default)]
+    vendor_error: Option<String>,
+}
+static EXCEPTIONS: once_cell::sync::Lazy<Vec<UpstreamException>> =
+    once_cell::sync::Lazy::new(|| {
+        serde_json::from_str(include_str!("upstream_semantic_exceptions.json"))
+            .expect("valid upstream semantic exceptions")
+    });
 
-    // Issue #513 (user-approved exclusions): SQLGlot 30.14.0 exposes the
-    // helper _w column when lowering SELECT * ... QUALIFY COUNT(*) OVER () > 1.
-    // Verified by execution: a one-column result becomes (a, _w). Keep the
-    // native QUALIFY targets active; unresolved wildcards must be rejected.
-    if source == "generic" && matches!(target, "mysql" | "oracle" | "postgres" | "tsql") {
-        failures.insert(format!("generic->{target}:207"));
-    }
+fn upstream_exception(
+    source: &str,
+    target: &str,
+    sql: &str,
+    expected: &str,
+) -> Option<&'static UpstreamException> {
+    EXCEPTIONS.iter().find(|case| {
+        case.source == source
+            && case.target == target
+            && case.sql == sql
+            && case.upstream_expected == expected
+    })
+}
 
-    if source == "bigquery" && target == "duckdb" {
-        // Issue #479: SQLGlot 30.14.0 emits bare DECIMAL for BigQuery NUMERIC,
-        // narrowing (38, 9) to DuckDB's (18, 3). Verified in DuckDB 1.5.5:
-        // CAST('0.1249' AS DECIMAL) yields 0.125; ROUND(..., 2) yields 0.13.
-        // The two ROUND fixtures use 2.25, which hides the value error, but their
-        // expected CAST still has the wrong precision/scale. ROUND_EVEN also
-        // changes 0.1349 to 0.14 instead of 0.13 after that premature rounding.
-        // Keep other targets active; existing DuckDB unit tests cover both modes.
-        for index in [86, 253, 254] {
-            failures.insert(format!("bigquery->duckdb:{index}"));
-        }
-    }
+pub fn transpilation_known_failure(source: &str, target: &str, sql: &str, expected: &str) -> bool {
+    upstream_exception(source, target, sql, expected)
+        .is_some_and(|case| case.vendor_expected.is_none() && case.vendor_error.is_none())
+}
 
-    if source == "presto" && target == "duckdb" {
-        // Issue #463: SQLGlot 30.14.0 maps two-argument MAX_BY to ARG_MAX,
-        // which drops NULL winning values. Verified by executing its output
-        // in DuckDB; Presto/Trino semantics require ARG_MAX_NULL instead.
-        failures.insert("presto->duckdb:75".to_string());
-        // Issue #464: SQLGlot 30.14.0 passes REGEXP_EXTRACT through, but
-        // DuckDB returns an empty string for no match where Presto returns
-        // NULL. Extracting the first REGEXP_EXTRACT_ALL result preserves both
-        // absent and empty matches; verified against Trino and DuckDB.
-        failures.insert("presto->duckdb:114".to_string());
-    }
+/// Vendor-confirmed corrections are asserted, rather than skipped.
+pub fn upstream_semantic_expectation(
+    source: &str,
+    target: &str,
+    sql: &str,
+    expected: &str,
+) -> Option<&'static str> {
+    upstream_exception(source, target, sql, expected)?
+        .vendor_expected
+        .as_deref()
+}
 
-    // Issue #457 (approved exclusions): SQLGlot removes explicit NULL ordering
-    // that matches Snowflake/DuckDB's factory defaults, but both are configurable.
-    // Verified against SQLGlot 30.14.0. Exclude only these source/target/index
-    // expectations, not other destinations or whole ORDER BY fixture groups.
-    // All but duckdb:13 use the shared fname/lname/age ORDER BY example;
-    // duckdb:13 is SELECT * FROM x ORDER BY 1 NULLS LAST.
-    let null_ordering_cases: &[usize] = match (source, target) {
-        ("generic", "duckdb") => &[99],
-        ("hive", "duckdb") => &[45],
-        ("spark", "duckdb" | "snowflake") => &[82],
-        ("snowflake", "duckdb" | "snowflake") => &[143],
-        ("duckdb", "duckdb") => &[13, 112],
-        _ => &[],
-    };
-    for index in null_ordering_cases {
-        failures.insert(format!("{source}->{target}:{index}"));
-    }
-
-    if source == "generic" && target == "tsql" {
-        // SQLGlot currently keeps the unsupported T-SQL aggregate FILTER syntax
-        // for COUNT_IF(...). Polyglot rewrites remaining filters into CASE
-        // expressions for T-SQL/Fabric targets.
-        failures.insert("generic->tsql:201".to_string());
-    }
-
-    if source == "tsql" && target == "tsql" {
-        // SQLGlot renders `a IS NOT FALSE` as `NOT a = 0`, which drops NULL
-        // rows in predicate contexts. Polyglot intentionally emits the
-        // NULL-preserving T-SQL truth table instead.
-        failures.insert("tsql->tsql:80".to_string());
-    }
-
-    if source == "tsql" && target == "spark" {
-        // SQLGlot treats bare T-SQL FLOAT as single precision, but SQL Server defaults it to
-        // FLOAT(53), which is double precision.
-        failures.insert("tsql->spark:51".to_string());
-    }
-
-    if source == "postgres" && target == "clickhouse" {
-        // SQLGlot maps JSON_EXTRACT_PATH_TEXT to JSONExtractString, which
-        // collapses a missing path or JSON null into an empty string. Polyglot
-        // intentionally preserves PostgreSQL's NULL semantics.
-        failures.insert("postgres->clickhouse:14".to_string());
-    }
-
-    if source == "tsql" && target == "hive" {
-        // SQLGlot treats T-SQL FLOAT(32) as single precision, but T-SQL normalizes every
-        // precision from 25 through 53 to double precision.
-        failures.insert("tsql->hive:52".to_string());
-    }
-
-    failures
+/// Some upstream fixtures accept syntax the vendor rejects; assert a diagnostic.
+pub fn upstream_semantic_error(
+    source: &str,
+    target: &str,
+    sql: &str,
+    expected: &str,
+) -> Option<&'static str> {
+    upstream_exception(source, target, sql, expected)?
+        .vendor_error
+        .as_deref()
 }

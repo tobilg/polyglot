@@ -1,5 +1,6 @@
+import { useSqlTask } from "@/hooks/use-sql-task";
 import { useState, useCallback } from "react";
-import { transpile, format, type Dialect } from "@polyglot-sql/sdk";
+import type { Dialect } from "@polyglot-sql/sdk";
 import { Button } from "@/components/ui/button";
 import { DialectSelect } from "@/components/shared/dialect-select";
 import { SqlEditor } from "@/components/shared/sql-editor";
@@ -19,14 +20,15 @@ export function TranspileTab({ dialects }: TranspileTabProps) {
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleTranspile = useCallback(() => {
+  const { run, pending } = useSqlTask([sql, source, target]);
+
+  const handleTranspile = useCallback(async () => {
     setError(null);
     try {
-      const result = transpile(sql, source as Dialect, target as Dialect);
+      const result = await run("transpileFormatted", sql, source as Dialect, target as Dialect);
+      if (!result) return;
       if (result.success && result.sql) {
-        const raw = result.sql.join(";\n");
-        const formatted = format(raw, target as Dialect);
-        setOutput(formatted.success && formatted.sql ? formatted.sql.join(";\n") : raw);
+        setOutput(result.output);
       } else {
         setError(result.error ?? "Transpilation failed");
         setOutput("");
@@ -35,7 +37,7 @@ export function TranspileTab({ dialects }: TranspileTabProps) {
       setError(String(e));
       setOutput("");
     }
-  }, [sql, source, target]);
+  }, [sql, source, target, run]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4">
@@ -53,7 +55,7 @@ export function TranspileTab({ dialects }: TranspileTabProps) {
           dialects={dialects}
           label="To"
         />
-        <Button onClick={handleTranspile} size="sm" className="ml-auto">
+        <Button onClick={handleTranspile} disabled={pending} size="sm" className="ml-auto">
           <Play className="size-3.5" />
           Transpile
         </Button>

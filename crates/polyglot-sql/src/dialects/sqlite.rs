@@ -31,6 +31,7 @@ impl DialectImpl for SQLiteDialect {
         config.nested_comments = false;
         // SQLite supports 0x/0X hex number literals (e.g., 0XCC -> x'CC')
         config.hex_number_strings = true;
+        config.hex_string_is_integer_type = true;
         config
     }
 
@@ -596,6 +597,24 @@ impl SQLiteDialect {
                             "86400.0".to_string(),
                         ))),
                     ))),
+                    "nanosecond" => Expression::Mul(Box::new(BinaryOp::new(
+                        paren_diff,
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                            "86400000000000.0".into(),
+                        ))),
+                    ))),
+                    "microsecond" => Expression::Mul(Box::new(BinaryOp::new(
+                        paren_diff,
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                            "86400000000.0".into(),
+                        ))),
+                    ))),
+                    "millisecond" => Expression::Mul(Box::new(BinaryOp::new(
+                        paren_diff,
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                            "86400000.0".into(),
+                        ))),
+                    ))),
                     "month" => Expression::Div(Box::new(BinaryOp::new(
                         paren_diff,
                         Expression::Literal(Box::new(crate::expressions::Literal::Number(
@@ -641,19 +660,8 @@ impl SQLiteDialect {
                 ))))
             }
 
-            // CONCAT(a, b, ...) -> a || b || ... for SQLite
-            "CONCAT" if f.args.len() >= 2 => {
-                let mut args = f.args;
-                let mut result = args.remove(0);
-                for arg in args {
-                    result = Expression::DPipe(Box::new(crate::expressions::DPipe {
-                        this: Box::new(result),
-                        expression: Box::new(arg),
-                        safe: None,
-                    }));
-                }
-                Ok(result)
-            }
+            // Native CONCAT ignores NULLs; || propagates them.
+            "CONCAT" => Ok(Expression::Function(Box::new(f))),
 
             // TRUNC: SQLite doesn't support decimals arg, strip second arg
             "TRUNC" if f.args.len() > 1 => Ok(Expression::Function(Box::new(Function::new(

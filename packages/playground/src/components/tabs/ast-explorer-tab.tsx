@@ -1,5 +1,6 @@
+import { useSqlTask } from "@/hooks/use-sql-task";
 import { useState, useCallback } from "react";
-import { parse, type Dialect } from "@polyglot-sql/sdk";
+import type { Dialect } from "@polyglot-sql/sdk";
 import { Button } from "@/components/ui/button";
 import { DialectSelect } from "@/components/shared/dialect-select";
 import { SqlEditor } from "@/components/shared/sql-editor";
@@ -18,10 +19,13 @@ export function AstExplorerTab({ dialects }: AstExplorerTabProps) {
   const [ast, setAst] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleParse = useCallback(() => {
+  const { run, pending } = useSqlTask([sql, dialect]);
+
+  const handleParse = useCallback(async () => {
     setError(null);
     try {
-      const result = parse(sql, dialect as Dialect);
+      const result = await run("parse", sql, dialect as Dialect);
+      if (!result) return;
       if (result.success && result.ast) {
         setAst(result.ast);
       } else {
@@ -32,7 +36,7 @@ export function AstExplorerTab({ dialects }: AstExplorerTabProps) {
       setError(String(e));
       setAst(null);
     }
-  }, [sql, dialect]);
+  }, [sql, dialect, run]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4">
@@ -43,7 +47,7 @@ export function AstExplorerTab({ dialects }: AstExplorerTabProps) {
           dialects={dialects}
           label="Dialect"
         />
-        <Button onClick={handleParse} size="sm" className="ml-auto">
+        <Button onClick={handleParse} disabled={pending} size="sm" className="ml-auto">
           <Play className="size-3.5" />
           Parse
         </Button>

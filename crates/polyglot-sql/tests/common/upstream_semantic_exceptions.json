@@ -1,0 +1,813 @@
+[
+  {
+    "source": "generic",
+    "target": "mysql",
+    "sql": "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
+    "upstream_expected": "SELECT * FROM (SELECT *, COUNT(*) OVER () AS _w FROM t) AS _t WHERE _w > 1",
+    "reason": "QUALIFY lowering leaks the helper _w column from SELECT * (issue #513)."
+  },
+  {
+    "source": "generic",
+    "target": "oracle",
+    "sql": "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
+    "upstream_expected": "SELECT * FROM (SELECT *, COUNT(*) OVER () AS _w FROM t) _t WHERE _w > 1",
+    "reason": "QUALIFY lowering leaks the helper _w column from SELECT * (issue #513)."
+  },
+  {
+    "source": "generic",
+    "target": "postgres",
+    "sql": "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
+    "upstream_expected": "SELECT * FROM (SELECT *, COUNT(*) OVER () AS _w FROM t) AS _t WHERE _w > 1",
+    "reason": "QUALIFY lowering leaks the helper _w column from SELECT * (issue #513)."
+  },
+  {
+    "source": "generic",
+    "target": "tsql",
+    "sql": "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
+    "upstream_expected": "SELECT * FROM (SELECT *, COUNT_BIG(*) OVER () AS _w FROM t) AS _t WHERE _w > 1",
+    "reason": "QUALIFY lowering leaks the helper _w column from SELECT * (issue #513)."
+  },
+  {
+    "source": "bigquery",
+    "target": "duckdb",
+    "sql": "CAST(a AS NUMERIC)",
+    "upstream_expected": "CAST(a AS DECIMAL)",
+    "reason": "Bare DECIMAL narrows BigQuery NUMERIC(38,9) to DuckDB DECIMAL(18,3) (issue #479)."
+  },
+  {
+    "source": "bigquery",
+    "target": "duckdb",
+    "sql": "SELECT ROUND(NUMERIC '2.25', 1, 'ROUND_HALF_AWAY_FROM_ZERO') AS value",
+    "upstream_expected": "SELECT ROUND(CAST('2.25' AS DECIMAL), 1) AS value",
+    "reason": "Bare DECIMAL narrows BigQuery NUMERIC(38,9) to DuckDB DECIMAL(18,3) (issue #479)."
+  },
+  {
+    "source": "bigquery",
+    "target": "duckdb",
+    "sql": "SELECT ROUND(NUMERIC '2.25', 1, 'ROUND_HALF_EVEN') AS value",
+    "upstream_expected": "SELECT ROUND_EVEN(CAST('2.25' AS DECIMAL), 1) AS value",
+    "reason": "Bare DECIMAL narrows BigQuery NUMERIC(38,9) to DuckDB DECIMAL(18,3) (issue #479)."
+  },
+  {
+    "source": "presto",
+    "target": "duckdb",
+    "sql": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+    "upstream_expected": "SELECT ARG_MAX(a.id, a.timestamp) FROM a",
+    "reason": "ARG_MAX discards NULL winners; MAX_BY requires ARG_MAX_NULL (issue #463)."
+  },
+  {
+    "source": "presto",
+    "target": "duckdb",
+    "sql": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+    "upstream_expected": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+    "reason": "DuckDB REGEXP_EXTRACT returns empty string on no match; Presto returns NULL (issue #464)."
+  },
+  {
+    "source": "tsql",
+    "target": "tsql",
+    "sql": "a IS NOT FALSE",
+    "upstream_expected": "NOT a = 0",
+    "reason": "NOT a = 0 does not preserve the NULL truth table of IS NOT FALSE."
+  },
+  {
+    "source": "tsql",
+    "target": "spark",
+    "sql": "CAST(x as FLOAT)",
+    "upstream_expected": "CAST(x AS FLOAT)",
+    "reason": "SQL Server FLOAT defaults to 53-bit precision, requiring DOUBLE."
+  },
+  {
+    "source": "tsql",
+    "target": "hive",
+    "sql": "CAST(x as FLOAT(32))",
+    "upstream_expected": "CAST(x AS FLOAT)",
+    "reason": "SQL Server FLOAT(32) normalizes to 53-bit precision, requiring DOUBLE."
+  },
+  {
+    "source": "postgres",
+    "target": "clickhouse",
+    "sql": "SELECT JSON_EXTRACT_PATH_TEXT(x, k1, k2, k3) FROM t",
+    "upstream_expected": "SELECT JSONExtractString(x, k1, k2, k3) FROM t",
+    "reason": "JSONExtractString changes absent paths and JSON null from SQL NULL to empty strings."
+  },
+  {
+    "source": "generic",
+    "target": "duckdb",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname NULLS FIRST",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "hive",
+    "target": "duckdb",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname NULLS FIRST",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "spark",
+    "target": "duckdb",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname NULLS FIRST",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "spark",
+    "target": "snowflake",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC, fname ASC, lname NULLS FIRST",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "snowflake",
+    "target": "duckdb",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "snowflake",
+    "target": "snowflake",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC, fname ASC, lname",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT * FROM x ORDER BY 1 NULLS LAST",
+    "upstream_expected": "SELECT * FROM x ORDER BY 1",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+    "upstream_expected": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname",
+    "reason": "Removing explicit NULL ordering depends on configurable session defaults (issue #457)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT LIST_SORT(x, 'ASC')",
+    "upstream_expected": "SELECT LIST_SORT(x)",
+    "vendor_expected": "SELECT LIST_SORT(x, 'ASC')",
+    "reason": "Explicit sorting options must survive configurable defaults; reverse_sort reverses default_order rather than always descending. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists and https://github.com/duckdb/duckdb/blob/main/extension/core_functions/scalar/list/list_sort.cpp (ListReverseSortBind)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT LIST_SORT(x, 'DESC')",
+    "upstream_expected": "SELECT ARRAY_REVERSE_SORT(x)",
+    "vendor_expected": "SELECT LIST_SORT(x, 'DESC')",
+    "reason": "Explicit sorting options must survive configurable defaults; reverse_sort reverses default_order rather than always descending. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists and https://github.com/duckdb/duckdb/blob/main/extension/core_functions/scalar/list/list_sort.cpp (ListReverseSortBind)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT LIST_SORT(x, 'ASC', 'NULLS LAST')",
+    "upstream_expected": "SELECT LIST_SORT(x)",
+    "vendor_expected": "SELECT LIST_SORT(x, 'ASC', 'NULLS LAST')",
+    "reason": "Explicit sorting options must survive configurable defaults; reverse_sort reverses default_order rather than always descending. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists and https://github.com/duckdb/duckdb/blob/main/extension/core_functions/scalar/list/list_sort.cpp (ListReverseSortBind)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT LIST_SORT(x, 'DESC', 'NULLS LAST')",
+    "upstream_expected": "SELECT ARRAY_REVERSE_SORT(x)",
+    "vendor_expected": "SELECT LIST_SORT(x, 'DESC', 'NULLS LAST')",
+    "reason": "Explicit sorting options must survive configurable defaults; reverse_sort reverses default_order rather than always descending. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists and https://github.com/duckdb/duckdb/blob/main/extension/core_functions/scalar/list/list_sort.cpp (ListReverseSortBind)."
+  },
+  {
+    "source": "duckdb",
+    "target": "duckdb",
+    "sql": "SELECT ARRAY_REVERSE_SORT(x, 'NULLS FIRST')",
+    "upstream_expected": "SELECT LIST_SORT(x, 'DESC', 'NULLS FIRST')",
+    "vendor_expected": "SELECT ARRAY_REVERSE_SORT(x, 'NULLS FIRST')",
+    "reason": "Explicit sorting options must survive configurable defaults; reverse_sort reverses default_order rather than always descending. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists and https://github.com/duckdb/duckdb/blob/main/extension/core_functions/scalar/list/list_sort.cpp (ListReverseSortBind)."
+  },
+  {
+    "source": "bigquery",
+    "target": "bigquery",
+    "sql": "(SELECT 1) AS x UNION ALL (SELECT 2)",
+    "upstream_expected": "(SELECT 1) AS x UNION ALL (SELECT 2)",
+    "vendor_error": "Invalid expression",
+    "reason": "BigQuery query_expr permits parenthesized queries but aliases only in SELECT/FROM, not after a top-level query operand. https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax"
+  },
+  {
+    "source": "tsql",
+    "target": "tsql",
+    "sql": "DROP view a.b.c",
+    "upstream_expected": "DROP VIEW b.c",
+    "vendor_error": "DROP VIEW accepts schema.view",
+    "reason": "SQL Server DROP VIEW accepts schema.view in the current database. Removing a catalog silently changes the DDL target. https://learn.microsoft.com/en-us/sql/t-sql/statements/drop-view-transact-sql"
+  },
+  {
+    "source": "tsql",
+    "target": "tsql",
+    "sql": "DROP VIEW a.b.c, a.b.d",
+    "upstream_expected": "DROP VIEW b.c, b.d",
+    "vendor_error": "DROP VIEW accepts schema.view",
+    "reason": "SQL Server DROP VIEW accepts schema.view in the current database. Removing a catalog silently changes the DDL target. https://learn.microsoft.com/en-us/sql/t-sql/statements/drop-view-transact-sql"
+  },
+  {
+    "source": "clickhouse",
+    "target": "postgres",
+    "sql": "SELECT JSONExtractRaw(payload, 'amount'), JSONExtractString(payload, 'amount')",
+    "upstream_expected": "SELECT payload -> 'amount', payload ->> 'amount'",
+    "reason": "ClickHouse JSON extraction returns an empty string on missing/wrong-type values, whereas PostgreSQL arrows return NULL and JSON or text. https://clickhouse.com/docs/reference/functions/regular-functions/json-functions#JSONExtractRaw",
+    "vendor_error": "ClickHouse JSON extraction defaults and return types"
+  },
+  {
+    "source": "duckdb",
+    "target": "postgres",
+    "sql": "SELECT RANGE(5, 1, -1)",
+    "upstream_expected": "SELECT GENERATE_SERIES(5, 1 + 1, -1)",
+    "reason": "DuckDB RANGE is a list-valued expression; a bare PostgreSQL GENERATE_SERIES changes one row into many. https://duckdb.org/docs/2.0/sql/functions/list https://www.postgresql.org/docs/current/functions-srf.html",
+    "vendor_error": "DuckDB RANGE returns a list"
+  },
+  {
+    "source": "duckdb",
+    "target": "spark",
+    "sql": "ARRAY_SLICE(CASE WHEN RANDOM() < 0.5 THEN [1] ELSE [1, 2] END, -1, 2)",
+    "upstream_expected": "SLICE(CASE WHEN RAND() < 0.5 THEN ARRAY(1) ELSE ARRAY(1, 2) END, -1, 2)",
+    "reason": "DuckDB end indices are inclusive; target SLICE takes a length. The upstream negative-index fallback copies an end index into a length and changes results. https://duckdb.org/docs/2.0/sql/functions/list#slicing",
+    "vendor_error": "ARRAY_SLICE with negative or dynamic bounds"
+  },
+  {
+    "source": "duckdb",
+    "target": "presto",
+    "sql": "ARRAY_SLICE(CASE WHEN RANDOM() < 0.5 THEN [1] ELSE [1, 2] END, -1, 2)",
+    "upstream_expected": "SLICE(CASE WHEN RAND() < 0.5 THEN ARRAY[1] ELSE ARRAY[1, 2] END, -1, 2)",
+    "reason": "DuckDB end indices are inclusive; target SLICE takes a length. The upstream negative-index fallback copies an end index into a length and changes results. https://duckdb.org/docs/2.0/sql/functions/list#slicing",
+    "vendor_error": "ARRAY_SLICE with negative or dynamic bounds"
+  },
+  {
+    "source": "sqlite",
+    "target": "mysql",
+    "sql": "SELECT JSON_EXTRACT(a, '$.k') FROM t",
+    "upstream_expected": "SELECT a ->> '$.k' FROM t",
+    "reason": "SQLite JSON_EXTRACT dynamically returns SQL INTEGER/REAL/TEXT/NULL or JSON text. Replacing it with a text extractor changes numeric and boolean types. https://www.sqlite.org/json1.html#jex",
+    "vendor_error": "SQLite JSON_EXTRACT dynamic SQL scalar types"
+  },
+  {
+    "source": "sqlite",
+    "target": "postgres",
+    "sql": "SELECT JSON_EXTRACT(a, '$.k') FROM t",
+    "upstream_expected": "SELECT JSON_EXTRACT_PATH_TEXT(a, 'k') FROM t",
+    "reason": "SQLite JSON_EXTRACT dynamically returns SQL INTEGER/REAL/TEXT/NULL or JSON text. Replacing it with a text extractor changes numeric and boolean types. https://www.sqlite.org/json1.html#jex",
+    "vendor_error": "SQLite JSON_EXTRACT dynamic SQL scalar types"
+  },
+  {
+    "source": "sqlite",
+    "target": "mysql",
+    "sql": "SELECT JSON_EXTRACT('[10, 20, [30, 40]]', '$[1]')",
+    "upstream_expected": "SELECT CAST('[10, 20, [30, 40]]' AS JSON) ->> '$[1]'",
+    "reason": "SQLite JSON_EXTRACT dynamically returns SQL INTEGER/REAL/TEXT/NULL or JSON text. Replacing it with a text extractor changes numeric and boolean types. https://www.sqlite.org/json1.html#jex",
+    "vendor_error": "SQLite JSON_EXTRACT dynamic SQL scalar types"
+  },
+  {
+    "source": "sqlite",
+    "target": "duckdb",
+    "sql": "SELECT JSON_EXTRACT('[10, 20, [30, 40]]', '$[1]')",
+    "upstream_expected": "SELECT '[10, 20, [30, 40]]' ->> '$[1]'",
+    "reason": "SQLite JSON_EXTRACT dynamically returns SQL INTEGER/REAL/TEXT/NULL or JSON text. Replacing it with a text extractor changes numeric and boolean types. https://www.sqlite.org/json1.html#jex",
+    "vendor_error": "SQLite JSON_EXTRACT dynamic SQL scalar types"
+  },
+  {
+    "source": "doris",
+    "target": "sqlite",
+    "sql": "SELECT * FROM t WHERE c MATCH 'x'",
+    "upstream_expected": "SELECT * FROM t WHERE c MATCH 'x'",
+    "reason": "Doris MATCH uses its inverted-index analyzer; SQLite MATCH delegates to a virtual table and is not an equivalent full-text predicate. https://doris.apache.org/docs/dev/query-data/full-text-search/ https://www.sqlite.org/lang_expr.html#like",
+    "vendor_error": "Doris full-text MATCH predicate"
+  },
+  {
+    "source": "sqlite",
+    "target": "snowflake",
+    "sql": "SELECT CONCAT_WS(',', a, b) FROM t",
+    "upstream_expected": "SELECT CONCAT_WS(',', COALESCE(a, ''), COALESCE(b, '')) FROM t",
+    "reason": "SQLite CONCAT_WS skips NULL arguments and their separators; COALESCE inserts extra separators. Compact the array before joining it. https://www.sqlite.org/lang_corefunc.html#concat_ws https://docs.snowflake.com/en/sql-reference/functions/array_construct_compact",
+    "vendor_expected": "SELECT ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(a, b), ',') FROM t"
+  },
+  {
+    "source": "mysql",
+    "target": "sqlite",
+    "sql": "GROUP_CONCAT(DISTINCT x ORDER BY y DESC SEPARATOR '')",
+    "upstream_expected": "GROUP_CONCAT(DISTINCT x, '' ORDER BY y DESC)",
+    "reason": "SQLite DISTINCT aggregate syntax permits exactly one argument. An explicit GROUP_CONCAT separator is a second argument and is rejected by SQLite 3.54.1. https://www.sqlite.org/lang_aggfunc.html",
+    "vendor_error": "SQLite DISTINCT aggregates require exactly one argument"
+  },
+  {
+    "source": "mysql",
+    "target": "sqlite",
+    "sql": "GROUP_CONCAT(DISTINCT a, b, c ORDER BY d SEPARATOR '')",
+    "upstream_expected": "GROUP_CONCAT(DISTINCT a || b || c, '' ORDER BY d)",
+    "reason": "SQLite DISTINCT aggregate syntax permits exactly one argument. An explicit GROUP_CONCAT separator is a second argument and is rejected by SQLite 3.54.1. https://www.sqlite.org/lang_aggfunc.html",
+    "vendor_error": "SQLite DISTINCT aggregates require exactly one argument"
+  },
+  {
+    "source": "duckdb",
+    "target": "postgres",
+    "sql": "a / b",
+    "upstream_expected": "CAST(a AS DOUBLE PRECISION) / b",
+    "reason": "Source floating division yields IEEE infinities/NaN at zero. PostgreSQL division raises, while NULLIF loses these values. Neither upstream nor the previous NULLIF output preserves this. https://duckdb.org/docs/2.0/sql/dialect/ieee_floating_point_semantics https://clickhouse.com/docs/reference/functions/regular-functions/arithmetic-functions#divide",
+    "vendor_error": "IEEE division by zero"
+  },
+  {
+    "source": "clickhouse",
+    "target": "postgres",
+    "sql": "a / b",
+    "upstream_expected": "CAST(a AS DOUBLE PRECISION) / b",
+    "reason": "Source floating division yields IEEE infinities/NaN at zero. PostgreSQL division raises, while NULLIF loses these values. Neither upstream nor the previous NULLIF output preserves this. https://duckdb.org/docs/2.0/sql/dialect/ieee_floating_point_semantics https://clickhouse.com/docs/reference/functions/regular-functions/arithmetic-functions#divide",
+    "vendor_error": "IEEE division by zero"
+  },
+  {
+    "source": "clickhouse",
+    "target": "clickhouse",
+    "sql": "SELECT xor(0, 1, xor(1, 0, 0))",
+    "upstream_expected": "SELECT xor(xor(0, 1), (xor(xor(1, 0), 0)))",
+    "reason": "Boolean XOR is associative, including NULL propagation. Redundant parentheses around a nested XOR call are unnecessary. https://clickhouse.com/docs/reference/functions/regular-functions/logical-functions#xor https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html",
+    "vendor_expected": "SELECT xor(xor(0, 1), xor(xor(1, 0), 0))"
+  },
+  {
+    "source": "clickhouse",
+    "target": "clickhouse",
+    "sql": "SELECT xor(xor(1, 0), 1)",
+    "upstream_expected": "SELECT xor((xor(1, 0)), 1)",
+    "reason": "Boolean XOR is associative, including NULL propagation. Redundant parentheses around a nested XOR call are unnecessary. https://clickhouse.com/docs/reference/functions/regular-functions/logical-functions#xor https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html",
+    "vendor_expected": "SELECT xor(xor(1, 0), 1)"
+  },
+  {
+    "source": "clickhouse",
+    "target": "mysql",
+    "sql": "SELECT xor(0, 1, xor(1, 0, 0))",
+    "upstream_expected": "SELECT 0 XOR 1 XOR (1 XOR 0 XOR 0)",
+    "reason": "Boolean XOR is associative, including NULL propagation. Redundant parentheses around a nested XOR call are unnecessary. https://clickhouse.com/docs/reference/functions/regular-functions/logical-functions#xor https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html",
+    "vendor_expected": "SELECT 0 XOR 1 XOR 1 XOR 0 XOR 0"
+  },
+  {
+    "source": "clickhouse",
+    "target": "mysql",
+    "sql": "SELECT xor(xor(1, 0), 1)",
+    "upstream_expected": "SELECT (1 XOR 0) XOR 1",
+    "reason": "Boolean XOR is associative, including NULL propagation. Redundant parentheses around a nested XOR call are unnecessary. https://clickhouse.com/docs/reference/functions/regular-functions/logical-functions#xor https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html",
+    "vendor_expected": "SELECT 1 XOR 0 XOR 1"
+  },
+  {
+    "source": "clickhouse",
+    "target": "sqlite",
+    "sql": "SELECT 1 AS x ORDER BY x NULLS FIRST FETCH FIRST 1 ROWS ONLY UNION ALL SELECT 2 AS x",
+    "upstream_expected": "SELECT * FROM (SELECT 1 AS x ORDER BY x LIMIT 1) UNION ALL SELECT 2 AS x",
+    "reason": "Retain explicit NULLS FIRST; SQLite supports it and the explicit ordering preserves the source contract. https://www.sqlite.org/lang_select.html#orderby",
+    "vendor_expected": "SELECT * FROM (SELECT 1 AS x ORDER BY x NULLS FIRST LIMIT 1) UNION ALL SELECT 2 AS x"
+  },
+  {
+    "source": "clickhouse",
+    "target": "sqlite",
+    "sql": "SELECT 2 AS x UNION ALL SELECT 1 AS x ORDER BY x NULLS FIRST FETCH FIRST 1 ROWS ONLY",
+    "upstream_expected": "SELECT 2 AS x UNION ALL SELECT * FROM (SELECT 1 AS x ORDER BY x LIMIT 1)",
+    "reason": "Retain explicit NULLS FIRST; SQLite supports it and the explicit ordering preserves the source contract. https://www.sqlite.org/lang_select.html#orderby",
+    "vendor_expected": "SELECT 2 AS x UNION ALL SELECT * FROM (SELECT 1 AS x ORDER BY x NULLS FIRST LIMIT 1)"
+  },
+  {
+    "source": "mysql",
+    "target": "postgres",
+    "sql": "WITH t AS (SELECT CAST('2020-01-10' AS DATE) AS col, 5 AS num_days) SELECT DATE_ADD(col, INTERVAL num_days DAY) FROM t",
+    "upstream_expected": "WITH t AS (SELECT CAST('2020-01-10' AS DATE) AS col, 5 AS num_days) SELECT col + (INTERVAL '1 DAY' * num_days) FROM t",
+    "reason": "Multiplication binds above addition; retaining the interval multiplication without redundant parentheses is equivalent. https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-PRECEDENCE",
+    "vendor_expected": "WITH t AS (SELECT CAST('2020-01-10' AS DATE) AS col, 5 AS num_days) SELECT col + INTERVAL '1 DAY' * num_days FROM t"
+  },
+  {
+    "source": "postgres",
+    "target": "postgres",
+    "sql": "SELECT BTRIM(x, 'ab')",
+    "upstream_expected": "SELECT TRIM('ab' FROM x)",
+    "reason": "BTRIM is the documented native function for trimming a set of characters from both ends. https://www.postgresql.org/docs/current/functions-string.html",
+    "vendor_expected": "SELECT BTRIM(x, 'ab')"
+  },
+  {
+    "source": "postgres",
+    "target": "duckdb",
+    "sql": "SELECT MAKE_INTERVAL(days => 3)",
+    "upstream_expected": "SELECT INTERVAL '3 day'",
+    "reason": "Retain the target canonical interval literal spelling; both spellings describe the same interval. https://duckdb.org/docs/2.0/sql/data_types/interval https://docs.snowflake.com/en/sql-reference/data-types-datetime#interval-constants",
+    "vendor_expected": "SELECT INTERVAL '3' DAY"
+  },
+  {
+    "source": "postgres",
+    "target": "snowflake",
+    "sql": "SELECT MAKE_INTERVAL(days => 3)",
+    "upstream_expected": "SELECT INTERVAL '3 day'",
+    "reason": "Retain the target canonical interval literal spelling; both spellings describe the same interval. https://duckdb.org/docs/2.0/sql/data_types/interval https://docs.snowflake.com/en/sql-reference/data-types-datetime#interval-constants",
+    "vendor_expected": "SELECT INTERVAL '3 DAY'"
+  },
+  {
+    "source": "postgres",
+    "target": "postgres",
+    "sql": "SELECT MAKE_INTERVAL(secs => 7.5, mins => 6, hours => 5, DAYS => 4, weeks => 3, months => 2, years => 1)",
+    "upstream_expected": "SELECT MAKE_INTERVAL(years => 1, months => 2, weeks => 3, DAYS => 4, hours => 5, mins => 6, secs => 7.5)",
+    "reason": "Named notation permits arguments in any order; retain the supplied order. https://www.postgresql.org/docs/current/sql-syntax-calling-funcs.html",
+    "vendor_expected": "SELECT MAKE_INTERVAL(secs => 7.5, mins => 6, hours => 5, DAYS => 4, weeks => 3, months => 2, years => 1)"
+  },
+  {
+    "source": "postgres",
+    "target": "duckdb",
+    "sql": "SELECT MAKE_INTERVAL(days => 3) /* sqlglot.anonymous */",
+    "upstream_expected": "SELECT MAKE_INTERVAL(days => 3) /* sqlglot.anonymous */",
+    "reason": "The sqlglot.anonymous comment is an upstream parser directive, not PostgreSQL semantics. Translate the built-in function to a valid DuckDB interval. https://www.postgresql.org/docs/current/functions-datetime.html",
+    "vendor_expected": "SELECT INTERVAL '3' DAY"
+  },
+  {
+    "source": "generic",
+    "target": "sqlite",
+    "sql": "CONCAT(a, b, c)",
+    "upstream_expected": "a || b || c",
+    "reason": "SQLite has native CONCAT and ignores NULL inputs. Rewriting it as || changes those results. https://www.sqlite.org/lang_corefunc.html#concat",
+    "vendor_expected": "CONCAT(a, b, c)"
+  },
+  {
+    "source": "clickhouse",
+    "target": "tsql",
+    "sql": "SELECT 1 AS x ORDER BY x NULLS FIRST FETCH FIRST 1 ROWS ONLY UNION ALL SELECT 2 AS x",
+    "upstream_expected": "SELECT * FROM (SELECT 1 AS x ORDER BY x OFFSET 0 ROWS FETCH FIRST 1 ROWS ONLY) AS _l_0 UNION ALL SELECT 2 AS x",
+    "reason": "Keep branch ordering/pagination in parenthesized query expressions. SQL Server allows parenthesized UNION operands and FIRST/NEXT are synonyms. https://learn.microsoft.com/en-us/sql/t-sql/language-elements/set-operators-union-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/queries/select-order-by-clause-transact-sql",
+    "vendor_expected": "(SELECT 1 AS x ORDER BY x OFFSET 0 ROWS FETCH FIRST 1 ROWS ONLY) UNION ALL SELECT 2 AS x"
+  },
+  {
+    "source": "clickhouse",
+    "target": "tsql",
+    "sql": "SELECT 2 AS x UNION ALL SELECT 1 AS x ORDER BY x NULLS FIRST FETCH FIRST 1 ROWS ONLY",
+    "upstream_expected": "SELECT 2 AS x UNION ALL SELECT * FROM (SELECT 1 AS x ORDER BY x OFFSET 0 ROWS FETCH FIRST 1 ROWS ONLY) AS _l_0",
+    "reason": "Keep branch ordering/pagination in parenthesized query expressions. SQL Server allows parenthesized UNION operands and FIRST/NEXT are synonyms. https://learn.microsoft.com/en-us/sql/t-sql/language-elements/set-operators-union-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/queries/select-order-by-clause-transact-sql",
+    "vendor_expected": "SELECT 2 AS x UNION ALL (SELECT 1 AS x ORDER BY x OFFSET 0 ROWS FETCH FIRST 1 ROWS ONLY)"
+  },
+  {
+    "source": "clickhouse",
+    "target": "tsql",
+    "sql": "SELECT 1 AS x ORDER BY x NULLS FIRST LIMIT 1 OFFSET 1 UNION ALL SELECT 2 AS x",
+    "upstream_expected": "SELECT * FROM (SELECT 1 AS x ORDER BY x OFFSET 1 ROWS FETCH FIRST 1 ROWS ONLY) AS _l_0 UNION ALL SELECT 2 AS x",
+    "reason": "Keep branch ordering/pagination in parenthesized query expressions. SQL Server allows parenthesized UNION operands and FIRST/NEXT are synonyms. https://learn.microsoft.com/en-us/sql/t-sql/language-elements/set-operators-union-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/queries/select-order-by-clause-transact-sql",
+    "vendor_expected": "(SELECT 1 AS x ORDER BY x OFFSET 1 ROWS FETCH NEXT 1 ROWS ONLY) UNION ALL SELECT 2 AS x"
+  },
+  {
+    "source": "databricks",
+    "target": "spark",
+    "sql": "CREATE TABLE t (ts TIMESTAMP(9))",
+    "upstream_expected": "CREATE TABLE t (ts TIMESTAMP)",
+    "reason": "Spark 4.3 supports TIMESTAMP(7-9) with spark.sql.timestampNanosTypes.enabled. Removing precision narrows the Databricks nanosecond type to microseconds. https://spark.apache.org/docs/latest/sql-ref-datatypes.html https://docs.databricks.com/aws/en/sql/language-manual/data-types/timestamp-type",
+    "vendor_expected": "CREATE TABLE t (ts TIMESTAMP(9))"
+  },
+  {
+    "source": "databricks",
+    "target": "tsql",
+    "sql": "CREATE TABLE foo (x INT GENERATED ALWAYS AS (YEAR(y)))",
+    "upstream_expected": "CREATE TABLE foo (x AS YEAR(y))",
+    "reason": "YEAR on a date retains the source calendar year; the explicit date cast is semantically equivalent for the source date expression. https://learn.microsoft.com/en-us/sql/t-sql/functions/year-transact-sql",
+    "vendor_expected": "CREATE TABLE foo (x AS YEAR(CAST(y AS DATE)))"
+  },
+  {
+    "source": "generic",
+    "target": "clickhouse",
+    "sql": "SELECT a FROM x UNION SELECT a FROM y FETCH FIRST 2 ROWS ONLY",
+    "upstream_expected": "SELECT * FROM (SELECT a FROM x UNION DISTINCT SELECT a FROM y) AS _l_0 LIMIT 2",
+    "reason": "ClickHouse supports FETCH FIRST; retain the original pagination syntax on the global set-operation wrapper. https://clickhouse.com/docs/sql-reference/statements/select/offset",
+    "vendor_expected": "SELECT * FROM (SELECT a FROM x UNION DISTINCT SELECT a FROM y) AS _l_0 FETCH FIRST 2 ROWS ONLY"
+  },
+  {
+    "source": "generic",
+    "target": "tsql",
+    "sql": "SELECT COUNT_IF(col % 2 = 0) FROM foo",
+    "upstream_expected": "SELECT COUNT(IIF(col % 2 = 0, 1, NULL)) FROM foo",
+    "reason": "COUNT_BIG preserves 64-bit aggregate counts. COUNT overflows at 2^31-1. CASE and IIF both implement filtering by returning NULL for excluded rows. https://learn.microsoft.com/en-us/sql/t-sql/functions/count-big-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/functions/logical-functions-iif-transact-sql",
+    "vendor_expected": "SELECT COUNT_BIG(IIF(col % 2 = 0, 1, NULL)) FROM foo"
+  },
+  {
+    "source": "generic",
+    "target": "tsql",
+    "sql": "SELECT COUNT_IF(col % 2 = 0) FILTER(WHERE col < 1000) FROM foo",
+    "upstream_expected": "SELECT COUNT(IIF(col < 1000 AND col % 2 = 0, 1, NULL)) FROM foo",
+    "reason": "COUNT_BIG preserves 64-bit aggregate counts. COUNT overflows at 2^31-1. CASE and IIF both implement filtering by returning NULL for excluded rows. https://learn.microsoft.com/en-us/sql/t-sql/functions/count-big-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/functions/logical-functions-iif-transact-sql",
+    "vendor_expected": "SELECT COUNT_BIG(IIF(col < 1000 AND col % 2 = 0, 1, NULL)) FROM foo"
+  },
+  {
+    "source": "generic",
+    "target": "tsql",
+    "sql": "SELECT SUM(x) FILTER(WHERE c = 'US'), COUNT(*) FILTER(WHERE c > 1), COUNT(DISTINCT x) FILTER(WHERE c > 1) FROM t",
+    "upstream_expected": "SELECT SUM(IIF(c = 'US', x, NULL)), COUNT(IIF(c > 1, 1, NULL)), COUNT_BIG(DISTINCT IIF(c > 1, x, NULL)) FROM t",
+    "reason": "COUNT_BIG preserves 64-bit aggregate counts. COUNT overflows at 2^31-1. CASE and IIF both implement filtering by returning NULL for excluded rows. https://learn.microsoft.com/en-us/sql/t-sql/functions/count-big-transact-sql https://learn.microsoft.com/en-us/sql/t-sql/functions/logical-functions-iif-transact-sql",
+    "vendor_expected": "SELECT SUM(CASE WHEN c = 'US' THEN x END), COUNT_BIG(CASE WHEN c > 1 THEN 1 END), COUNT_BIG(DISTINCT CASE WHEN c > 1 THEN x END) FROM t"
+  },
+  {
+    "source": "generic",
+    "target": "bigquery",
+    "sql": "SELECT ARRAY_AGG(x ORDER BY y NULLS FIRST) FILTER(WHERE c > 1) FROM t",
+    "upstream_expected": "SELECT ARRAY_AGG(IF(c > 1, x, NULL) IGNORE NULLS ORDER BY y) FROM t",
+    "reason": "IGNORE NULLS would remove real NULL values from the source array. BigQuery rejects NULL array elements in final results. https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#array_agg",
+    "vendor_error": "ARRAY_AGG FILTER cannot preserve NULL array elements"
+  },
+  {
+    "source": "mysql",
+    "target": "sqlite",
+    "sql": "GROUP_CONCAT(DISTINCT a, b, c SEPARATOR '')",
+    "upstream_expected": "GROUP_CONCAT(DISTINCT a || b || c, '')",
+    "reason": "SQLite DISTINCT aggregates accept exactly one argument; the requested explicit separator is a second argument. https://www.sqlite.org/lang_aggfunc.html",
+    "vendor_error": "SQLite DISTINCT aggregates require exactly one argument"
+  },
+  {
+    "source": "presto",
+    "target": "bigquery",
+    "sql": "APPROX_PERCENTILE(x, 0.5, 0.01)",
+    "upstream_expected": "APPROX_QUANTILES(x, 2)[1]",
+    "reason": "Presto accuracy is a maximum rank error; BigQuery APPROX_QUANTILES has no corresponding accuracy control. https://prestodb.io/docs/current/functions/aggregate.html https://cloud.google.com/bigquery/docs/reference/standard-sql/approximate_aggregate_functions",
+    "vendor_error": "APPROX_PERCENTILE accuracy has no BigQuery equivalent"
+  },
+  {
+    "source": "snowflake",
+    "target": "presto",
+    "sql": "TRY_TO_NUMBER(x)",
+    "upstream_expected": "TRY_CAST(x AS DOUBLE)",
+    "reason": "Snowflake TRY_TO_NUMBER defaults to NUMBER(38,0). Floating casts lose its integer rounding and decimal precision. https://docs.snowflake.com/en/sql-reference/functions/try_to_decimal",
+    "vendor_expected": "TRY_CAST(x AS DECIMAL(38, 0))"
+  },
+  {
+    "source": "snowflake",
+    "target": "tsql",
+    "sql": "TRY_TO_NUMBER(x)",
+    "upstream_expected": "TRY_CAST(x AS FLOAT)",
+    "reason": "Snowflake TRY_TO_NUMBER defaults to NUMBER(38,0). Floating casts lose its integer rounding and decimal precision. https://docs.snowflake.com/en/sql-reference/functions/try_to_decimal",
+    "vendor_expected": "TRY_CAST(x AS NUMERIC(38, 0))"
+  },
+  {
+    "source": "snowflake",
+    "target": "bigquery",
+    "sql": "TRY_TO_NUMBER(x)",
+    "upstream_expected": "SAFE_CAST(x AS FLOAT64)",
+    "reason": "Snowflake TRY_TO_NUMBER defaults to precision 38, scale 0 and returns NULL outside that range; SAFE_CAST to FLOAT64 is not equivalent. https://docs.snowflake.com/en/sql-reference/functions/try_to_decimal",
+    "vendor_error": "TRY_TO_NUMBER precision 38 scale 0"
+  },
+  {
+    "source": "presto",
+    "target": "presto",
+    "sql": "CAST(x AS TIME(5) WITH TIME ZONE)",
+    "upstream_expected": "CAST(x AS TIME WITH TIME ZONE)",
+    "reason": "Presto TIME/TIMESTAMP types are millisecond types without precision parameters. Silently stripping the supplied precision hides an invalid source declaration. https://prestodb.io/docs/current/language/types.html",
+    "vendor_error": "Presto temporal types do not accept precision parameters"
+  },
+  {
+    "source": "presto",
+    "target": "presto",
+    "sql": "CAST(x AS TIMESTAMP(9) WITH TIME ZONE)",
+    "upstream_expected": "CAST(x AS TIMESTAMP WITH TIME ZONE)",
+    "reason": "Presto TIME/TIMESTAMP types are millisecond types without precision parameters. Silently stripping the supplied precision hides an invalid source declaration. https://prestodb.io/docs/current/language/types.html",
+    "vendor_error": "Presto temporal types do not accept precision parameters"
+  },
+  {
+    "source": "postgres",
+    "target": "spark",
+    "sql": "SELECT r.v, r.idx FROM t, LATERAL UNNEST(t.a) WITH ORDINALITY AS r(v, idx)",
+    "upstream_expected": "SELECT r.v, r.idx FROM t LATERAL VIEW POSEXPLODE(t.a) r AS idx, v",
+    "reason": "PostgreSQL WITH ORDINALITY starts at 1; Spark POSEXPLODE starts at 0. Copying idx silently changes results. https://www.postgresql.org/docs/current/functions-srf.html https://spark.apache.org/docs/latest/api/sql/array-functions/",
+    "vendor_error": "WITH ORDINALITY is one-based"
+  },
+  {
+    "source": "spark",
+    "target": "materialize",
+    "sql": "CREATE TABLE t (a INT, b STRING, UNIQUE (a))",
+    "upstream_expected": "CREATE TABLE t (a INT, b TEXT)",
+    "reason": "Materialize user-populated tables do not enforce UNIQUE constraints. Silently dropping the constraint permits invalid data. https://materialize.com/docs/sql/create-table/user-populated/",
+    "vendor_error": "Materialize does not enforce UNIQUE constraints"
+  },
+  {
+    "source": "spark",
+    "target": "snowflake",
+    "sql": "SELECT ARRAY_INSERT(ARRAY('a', 'b', 'c'), -1, 'z')",
+    "upstream_expected": "SELECT ARRAY_INSERT(['a', 'b', 'c'], ARRAY_SIZE(['a', 'b', 'c']), 'z')",
+    "reason": "Spark index -1 means append. ARRAY_APPEND preserves it without evaluating a potentially volatile array twice. https://docs.databricks.com/aws/en/sql/language-manual/functions/array_insert https://docs.snowflake.com/en/sql-reference/functions/array_append",
+    "vendor_expected": "SELECT ARRAY_APPEND(['a', 'b', 'c'], 'z')"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT DATE_ADD(d, '1'') ; SELECT 1; --')",
+    "upstream_expected": "SELECT DATE(d, '1'') ; SELECT 1; --')",
+    "reason": "SQLite has no built-in DATE_ADD. Preserve the application-defined function and its escaped literal, rather than changing it to a different built-in. https://www.sqlite.org/appfunc.html https://www.sqlite.org/lang_datefunc.html",
+    "vendor_expected": "SELECT DATE_ADD(d, '1'') ; SELECT 1; --')"
+  },
+  {
+    "source": "tsql",
+    "target": "mysql",
+    "sql": "EOMONTH(GETDATE(), -1)",
+    "upstream_expected": "LAST_DAY(DATE_ADD(DATE(CURRENT_TIMESTAMP()), INTERVAL -1 MONTH))",
+    "reason": "LAST_DAY already returns a DATE, so a preceding DATE conversion is redundant for GETDATE. https://dev.mysql.com/doc/refman/8.4/en/date-and-time-functions.html#function_last-day",
+    "vendor_expected": "LAST_DAY(DATE_ADD(CURRENT_TIMESTAMP(), INTERVAL -1 MONTH))"
+  },
+  {
+    "source": "tsql",
+    "target": "duckdb",
+    "sql": "JSON_VALUE(x, '$.a')",
+    "upstream_expected": "JSON_VALUE(x, '$.a') ->> '$'",
+    "reason": "SQL Server JSON_VALUE returns NVARCHAR(4000), NULL for overlength lax results and errors in strict mode. Merely unquoting DuckDB JSON_VALUE does not preserve those rules. https://learn.microsoft.com/en-us/sql/t-sql/functions/json-value-transact-sql https://duckdb.org/docs/2.0/data/json/json_functions",
+    "vendor_error": "SQL Server JSON_VALUE requires the 4000-character limit"
+  },
+  {
+    "source": "teradata",
+    "target": "snowflake",
+    "sql": "LOCKING ROW FOR ACCESS SELECT * FROM t",
+    "upstream_expected": "SELECT * FROM t",
+    "reason": "ACCESS locking permits dirty reads; removing the clause changes transaction isolation. https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Request-and-Transaction-Processing/Transaction-Processing/Default-Lock-Assignments-and-Lock-Upgradeability",
+    "vendor_error": "Teradata LOCKING isolation semantics"
+  },
+  {
+    "source": "teradata",
+    "target": "duckdb",
+    "sql": "LOCKING ROW FOR ACCESS SELECT * FROM t",
+    "upstream_expected": "SELECT * FROM t",
+    "reason": "ACCESS locking permits dirty reads; removing the clause changes transaction isolation. https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Request-and-Transaction-Processing/Transaction-Processing/Default-Lock-Assignments-and-Lock-Upgradeability",
+    "vendor_error": "Teradata LOCKING isolation semantics"
+  },
+  {
+    "source": "teradata",
+    "target": "snowflake",
+    "sql": "SELECT * FROM t SAMPLE 0.25",
+    "upstream_expected": "SELECT * FROM t TABLESAMPLE (25)",
+    "reason": "Teradata SAMPLE selects a requested fraction of the evaluated result; Snowflake percentage TABLESAMPLE uses Bernoulli sampling and yields a variable row count. https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Data-Manipulation-Language/SELECT-Statements/SAMPLE-Clause/Usage-Notes https://docs.snowflake.com/en/sql-reference/constructs/sample",
+    "vendor_error": "Teradata fractional SAMPLE has a fixed count"
+  },
+  {
+    "source": "teradata",
+    "target": "snowflake",
+    "sql": "SELECT * FROM t SAMPLE 0.6, 0.25",
+    "upstream_expected": "SELECT * FROM t",
+    "reason": "Multiple Teradata samples are distinguished by SAMPLEID. Dropping sampling changes the selected rows. https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/SQL-Data-Manipulation-Language/SELECT-Statements/SAMPLE-Clause/Usage-Notes",
+    "vendor_error": "Teradata multiple SAMPLE sets cannot be discarded"
+  },
+  {
+    "source": "duckdb",
+    "target": "snowflake",
+    "sql": "LIST_SORT(x, 'DE' || 'SC')",
+    "upstream_expected": "LIST_SORT(x, 'DE' || 'SC')",
+    "reason": "DuckDB sorting may use session-dependent NULL ordering; retaining LIST_SORT or copying a dynamic direction to SORT_ARRAY produces no valid equivalent Snowflake call. https://duckdb.org/docs/2.0/sql/functions/list#sorting-lists",
+    "vendor_error": "DuckDB list sorting requires explicit direction and NULL ordering"
+  },
+  {
+    "source": "oracle",
+    "target": "bigquery",
+    "sql": "SELECT * FROM sales AS OF TIMESTAMP TO_TIMESTAMP('2026-10-10 12:00:00', 'YYYY-MM-DD HH24:MI:SS.FF6') s",
+    "upstream_expected": "SELECT * FROM sales AS s FOR SYSTEM_TIME AS OF PARSE_TIMESTAMP('%F %H:%M:%E6S', '2026-10-10 12:00:00')",
+    "reason": "Oracle TO_TIMESTAMP has no explicit zone. BigQuery PARSE_TIMESTAMP defaults to UTC, which can select the wrong snapshot. https://docs.oracle.com/en/database/oracle/oracle-database/26/adfns/flashback.html https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions#parse_timestamp",
+    "vendor_error": "Oracle flashback TIMESTAMP requires an explicit source time zone"
+  },
+  {
+    "source": "generic",
+    "target": "clickhouse",
+    "sql": "JSON_EXTRACT(x, '$.y[*]')",
+    "upstream_expected": "JSONExtractRaw(x, 'y')",
+    "reason": "The wildcard selects array elements; dropping it selects a different JSON value. https://clickhouse.com/docs/sql-reference/functions/json-functions",
+    "vendor_error": "JSON path wildcard cannot be dropped"
+  },
+  {
+    "source": "generic",
+    "target": "clickhouse",
+    "sql": "JSON_EXTRACT(x, '$[\"a b\"]')",
+    "upstream_expected": "JSONExtractRaw(x, 'a b')",
+    "reason": "Raw extraction preserves JSON scalar types and quotes; ClickHouse returns an empty string for a missing path, so map that sentinel to SQL NULL. https://clickhouse.com/docs/sql-reference/functions/json-functions#JSONExtractRaw",
+    "vendor_expected": "nullIf(JSONExtractRaw(x, 'a b'), '')"
+  },
+  {
+    "source": "generic",
+    "target": "clickhouse",
+    "sql": "JSON_EXTRACT(x, '$.y')",
+    "upstream_expected": "JSONExtractRaw(x, 'y')",
+    "reason": "Raw extraction preserves JSON scalar types and quotes; ClickHouse returns an empty string for a missing path, so map that sentinel to SQL NULL. https://clickhouse.com/docs/sql-reference/functions/json-functions#JSONExtractRaw",
+    "vendor_expected": "nullIf(JSONExtractRaw(x, 'y'), '')"
+  },
+  {
+    "source": "generic",
+    "target": "clickhouse",
+    "sql": "JSON_EXTRACT(x, '$.y[0].z')",
+    "upstream_expected": "JSONExtractRaw(x, 'y', 1, 'z')",
+    "reason": "Raw extraction preserves JSON scalar types and quotes; ClickHouse returns an empty string for a missing path, so map that sentinel to SQL NULL. https://clickhouse.com/docs/sql-reference/functions/json-functions#JSONExtractRaw",
+    "vendor_expected": "nullIf(JSONExtractRaw(x, 'y', 1, 'z'), '')"
+  },
+  {
+    "source": "sqlite",
+    "target": "duckdb",
+    "sql": "SELECT JSON_EXTRACT('[10, 20, [30, 40]]', '$[2]', '$[0]', '$[1]')",
+    "upstream_expected": "SELECT TO_JSON(JSON_EXTRACT('[10, 20, [30, 40]]', ['$[2]', '$[0]', '$[1]']))",
+    "reason": "DuckDB JSON arrow extraction accepts a list of paths and returns a list of JSON values. TO_JSON serializes it to the same JSON array. https://duckdb.org/docs/2.0/data/json/json_functions",
+    "vendor_expected": "SELECT TO_JSON('[10, 20, [30, 40]]' -> ['$[2]', '$[0]', '$[1]'])"
+  },
+  {
+    "source": "teradata",
+    "target": "snowflake",
+    "sql": "SELECT * FROM t SAMPLE 100",
+    "upstream_expected": "SELECT * FROM t TABLESAMPLE (100 ROWS)",
+    "reason": "Snowflake BERNOULLI/ROW sampling permits a fixed ROWS count; the explicit method is equivalent to its default. https://docs.snowflake.com/en/sql-reference/constructs/sample",
+    "vendor_expected": "SELECT * FROM t TABLESAMPLE BERNOULLI (100 ROWS)"
+  },
+  {
+    "source": "generic",
+    "target": "sqlite",
+    "sql": "(SELECT 1 UNION SELECT 2) /* keep */ INTERSECT SELECT 3",
+    "upstream_expected": "SELECT 1 /* keep */ UNION SELECT 2 INTERSECT SELECT 3",
+    "reason": "Retain the comment at the end of its original grouped operand. SQLite compound operators associate left to right, so flattening this left group preserves result values and column names. https://www.sqlite.org/lang_select.html#compound_select_statements",
+    "vendor_expected": "SELECT 1 UNION SELECT 2 /* keep */ INTERSECT SELECT 3"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a || b ->> c",
+    "upstream_expected": "SELECT (a || b) ->> c",
+    "vendor_expected": "SELECT a || b ->> c",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT 2 * 3 || 4",
+    "upstream_expected": "SELECT 2 * (3 || 4)",
+    "vendor_expected": "SELECT 2 * 3 || 4",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT 1 + 2 || 3",
+    "upstream_expected": "SELECT 1 + (2 || 3)",
+    "vendor_expected": "SELECT 1 + 2 || 3",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a || b * c FROM t",
+    "upstream_expected": "SELECT (a || b) * c FROM t",
+    "vendor_expected": "SELECT a || b * c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a - b ->> c FROM t",
+    "upstream_expected": "SELECT a - (b ->> c) FROM t",
+    "vendor_expected": "SELECT a - b ->> c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a ->> b + c FROM t",
+    "upstream_expected": "SELECT (a ->> b) + c FROM t",
+    "vendor_expected": "SELECT a ->> b + c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a COLLATE NOCASE || b -> c FROM t",
+    "upstream_expected": "SELECT (a COLLATE NOCASE || b) -> c FROM t",
+    "vendor_expected": "SELECT a COLLATE NOCASE || b -> c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a COLLATE NOCASE || b * c FROM t",
+    "upstream_expected": "SELECT (a COLLATE NOCASE || b) * c FROM t",
+    "vendor_expected": "SELECT a COLLATE NOCASE || b * c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "sqlite",
+    "target": "sqlite",
+    "sql": "SELECT a COLLATE NOCASE -> b + c FROM t",
+    "upstream_expected": "SELECT (a COLLATE NOCASE -> b) + c FROM t",
+    "vendor_expected": "SELECT a COLLATE NOCASE -> b + c FROM t",
+    "reason": "SQLite concatenation and JSON arrows share a left-associative precedence tier above arithmetic. Retain the existing canonical spelling without redundant parentheses. https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes"
+  },
+  {
+    "source": "trino",
+    "target": "bigquery",
+    "sql": "CAST(x AS DECIMAL(30, 0))",
+    "upstream_expected": "CAST(x AS BIGNUMERIC)",
+    "reason": "Trino DECIMAL(p,s) constrains precision and scale; an unparameterized BigQuery BIGNUMERIC cast does not retain these rounding/overflow checks. https://trino.io/docs/current/language/types.html#decimal https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#parameterized_data_types",
+    "vendor_error": "Wide decimal casts require precision and scale enforcement"
+  },
+  {
+    "source": "trino",
+    "target": "bigquery",
+    "sql": "CAST(x AS DECIMAL(20, 10))",
+    "upstream_expected": "CAST(x AS BIGNUMERIC)",
+    "reason": "Trino DECIMAL(p,s) constrains precision and scale; an unparameterized BigQuery BIGNUMERIC cast does not retain these rounding/overflow checks. https://trino.io/docs/current/language/types.html#decimal https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#parameterized_data_types",
+    "vendor_error": "Wide decimal casts require precision and scale enforcement"
+  },
+  {
+    "source": "trino",
+    "target": "bigquery",
+    "sql": "CAST(x AS DECIMAL(38))",
+    "upstream_expected": "CAST(x AS BIGNUMERIC)",
+    "reason": "Trino DECIMAL(p,s) constrains precision and scale; an unparameterized BigQuery BIGNUMERIC cast does not retain these rounding/overflow checks. https://trino.io/docs/current/language/types.html#decimal https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#parameterized_data_types",
+    "vendor_error": "Wide decimal casts require precision and scale enforcement"
+  }
+]

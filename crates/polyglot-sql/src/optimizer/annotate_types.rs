@@ -10,6 +10,7 @@
 //! Based on SQLGlot's optimizer/annotate_types.py
 
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use crate::dialects::DialectType;
 use crate::expressions::{
@@ -83,38 +84,50 @@ pub struct TypeAnnotator<'a> {
     /// Whether to annotate types for all expressions
     annotate_aggregates: bool,
     /// Function return type mappings
-    function_return_types: HashMap<String, DataType>,
+    function_return_types: &'static HashMap<String, DataType>,
+    // Fresh results for the current bottom-up pass, including unknown types.
+    // Scalar annotation changes metadata only; node addresses stay stable.
+    completed_types: HashMap<usize, Option<DataType>>,
+    annotation_depth: usize,
     used_unknown_function_fallback: bool,
 }
 
 impl<'a> TypeAnnotator<'a> {
     /// Create a new type annotator
     pub fn new(schema: Option<&'a dyn Schema>, dialect: Option<DialectType>) -> Self {
-        let mut annotator = Self {
+        static STANDARD: OnceLock<HashMap<String, DataType>> = OnceLock::new();
+        static DUCKDB: OnceLock<HashMap<String, DataType>> = OnceLock::new();
+        let mappings = if dialect == Some(DialectType::DuckDB) {
+            &DUCKDB
+        } else {
+            &STANDARD
+        };
+        Self {
             _schema: schema,
             query_schema: schema,
             _dialect: dialect,
             annotate_aggregates: true,
-            function_return_types: HashMap::new(),
+            function_return_types: mappings
+                .get_or_init(|| Self::init_function_return_types(dialect)),
+            completed_types: HashMap::new(),
+            annotation_depth: 0,
             used_unknown_function_fallback: false,
-        };
-        annotator.init_function_return_types();
-        annotator
+        }
     }
 
     /// Initialize function return type mappings
-    fn init_function_return_types(&mut self) {
+    fn init_function_return_types(dialect: Option<DialectType>) -> HashMap<String, DataType> {
+        let mut function_return_types = HashMap::new();
         // Aggregate functions
-        self.function_return_types
-            .insert("COUNT".to_string(), DataType::BigInt { length: None });
-        self.function_return_types.insert(
+        function_return_types.insert("COUNT".to_string(), DataType::BigInt { length: None });
+        function_return_types.insert(
             "SUM".to_string(),
             DataType::Decimal {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "AVG".to_string(),
             DataType::Double {
                 precision: None,
@@ -123,7 +136,7 @@ impl<'a> TypeAnnotator<'a> {
         );
 
         // String functions
-        if self._dialect == Some(DialectType::DuckDB) {
+        if dialect == Some(DialectType::DuckDB) {
             // DuckDB's list-to-string and date-name functions always return
             // VARCHAR, even when the argument's type is unresolved. Keep these
             // rules dialect-specific: BigQuery's ARRAY_TO_STRING also has a
@@ -134,7 +147,7 @@ impl<'a> TypeAnnotator<'a> {
                 "MONTHNAME",
                 "DAYNAME",
             ] {
-                self.function_return_types.insert(
+                function_return_types.insert(
                     name.to_string(),
                     DataType::VarChar {
                         length: None,
@@ -143,77 +156,77 @@ impl<'a> TypeAnnotator<'a> {
                 );
             }
         }
-        self.function_return_types.insert(
+        function_return_types.insert(
             "CONCAT".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "UPPER".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "LOWER".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "TRIM".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "LTRIM".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "RTRIM".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "SUBSTRING".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "SUBSTR".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "REPLACE".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "LENGTH".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "CHAR_LENGTH".to_string(),
             DataType::Int {
                 length: None,
@@ -222,88 +235,86 @@ impl<'a> TypeAnnotator<'a> {
         );
 
         // Date/Time functions
-        self.function_return_types.insert(
+        function_return_types.insert(
             "NOW".to_string(),
             DataType::Timestamp {
                 precision: None,
                 timezone: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "CURRENT_TIMESTAMP".to_string(),
             DataType::Timestamp {
                 precision: None,
                 timezone: false,
             },
         );
-        self.function_return_types
-            .insert("CURRENT_DATE".to_string(), DataType::Date);
-        self.function_return_types.insert(
+        function_return_types.insert("CURRENT_DATE".to_string(), DataType::Date);
+        function_return_types.insert(
             "CURRENT_TIME".to_string(),
             DataType::Time {
                 precision: None,
                 timezone: false,
             },
         );
-        self.function_return_types
-            .insert("DATE".to_string(), DataType::Date);
-        self.function_return_types.insert(
+        function_return_types.insert("DATE".to_string(), DataType::Date);
+        function_return_types.insert(
             "YEAR".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "MONTH".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "DAY".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "HOUR".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "MINUTE".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "SECOND".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "EXTRACT".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "DATE_DIFF".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "DATEDIFF".to_string(),
             DataType::Int {
                 length: None,
@@ -312,77 +323,77 @@ impl<'a> TypeAnnotator<'a> {
         );
 
         // Math functions
-        self.function_return_types.insert(
+        function_return_types.insert(
             "ABS".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "ROUND".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "DATE_FORMAT".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "FORMAT_DATE".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "TIME_TO_STR".to_string(),
             DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "SQRT".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "POWER".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "MOD".to_string(),
             DataType::Int {
                 length: None,
                 integer_spelling: false,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "LOG".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "LN".to_string(),
             DataType::Double {
                 precision: None,
                 scale: None,
             },
         );
-        self.function_return_types.insert(
+        function_return_types.insert(
             "EXP".to_string(),
             DataType::Double {
                 precision: None,
@@ -391,18 +402,23 @@ impl<'a> TypeAnnotator<'a> {
         );
 
         // Null-handling functions return Unknown (infer from args)
-        self.function_return_types
-            .insert("COALESCE".to_string(), DataType::Unknown);
-        self.function_return_types
-            .insert("NULLIF".to_string(), DataType::Unknown);
-        self.function_return_types
-            .insert("GREATEST".to_string(), DataType::Unknown);
-        self.function_return_types
-            .insert("LEAST".to_string(), DataType::Unknown);
+        function_return_types.insert("COALESCE".to_string(), DataType::Unknown);
+        function_return_types.insert("NULLIF".to_string(), DataType::Unknown);
+        function_return_types.insert("GREATEST".to_string(), DataType::Unknown);
+        function_return_types.insert("LEAST".to_string(), DataType::Unknown);
+        function_return_types
     }
 
     /// Annotate types for an expression tree
     pub fn annotate(&mut self, expr: &Expression) -> Option<DataType> {
+        if self.annotation_depth != 0 {
+            if let Some(result) = self
+                .completed_types
+                .get(&(expr as *const Expression as usize))
+            {
+                return result.clone();
+            }
+        }
         match expr {
             // Literals
             Expression::Literal(lit) => Self::annotate_literal(lit),
@@ -790,6 +806,16 @@ impl<'a> TypeAnnotator<'a> {
     /// read-only `annotate` method, and finally stores the result via
     /// `set_inferred_type`.
     pub fn annotate_in_place(&mut self, expr: &mut Expression) {
+        self.annotation_depth += 1;
+        self.annotate_in_place_inner(expr);
+        self.annotation_depth -= 1;
+        if self.annotation_depth == 0 {
+            // Never reuse results after callers mutate an AST or change scopes.
+            self.completed_types.clear();
+        }
+    }
+
+    fn annotate_in_place_inner(&mut self, expr: &mut Expression) {
         if matches!(
             expr,
             Expression::Select(_)
@@ -808,10 +834,11 @@ impl<'a> TypeAnnotator<'a> {
         // 1. Recurse into children (bottom-up)
         self.annotate_children_in_place(expr);
 
-        // 2. Compute this node's type using the read-only method
-        //    (children already have their types set, but `annotate` re-derives
-        //    from structure, which is fine since the structure hasn't changed)
+        // Child results come from this pass, never from potentially stale
+        // inferred_type fields left by an earlier annotation/schema.
         let dt = self.annotate(expr);
+        self.completed_types
+            .insert(expr as *const Expression as usize, dt.clone());
 
         // 3. Store on the node
         if let Some(data_type) = dt {
@@ -2545,6 +2572,52 @@ fn annotate_select(
     dialect: Option<DialectType>,
     outer: Option<&dyn Schema>,
 ) -> OutputColumns {
+    with_select_type_context(select, parent, dialect, outer, |select, annotator| {
+        for expression in &mut select.expressions {
+            annotator.annotate_in_place(expression);
+        }
+        // Clause expressions use selected inputs, not the whole catalogue.
+        if let Some(expression) = &mut select.prewhere {
+            annotator.annotate_in_place(expression);
+        }
+        if let Some(clause) = &mut select.qualify {
+            annotator.annotate_in_place(&mut clause.this);
+        }
+        if let Some(clause) = &mut select.where_clause {
+            annotator.annotate_in_place(&mut clause.this);
+        }
+        if let Some(clause) = &mut select.having {
+            annotator.annotate_in_place(&mut clause.this);
+        }
+        if let Some(group) = &mut select.group_by {
+            for expression in &mut group.expressions {
+                annotator.annotate_in_place(expression);
+            }
+        }
+        if let Some(order) = &mut select.order_by {
+            for expression in &mut order.expressions {
+                annotator.annotate_in_place(&mut expression.this);
+            }
+        }
+        for join in &mut select.joins {
+            if let Some(on) = &mut join.on {
+                annotator.annotate_in_place(on);
+            }
+            if let Some(condition) = &mut join.match_condition {
+                annotator.annotate_in_place(condition);
+            }
+        }
+        query_outputs(&select.expressions, dialect)
+    })
+}
+
+pub(crate) fn with_select_type_context<R>(
+    select: &mut crate::expressions::Select,
+    parent: Option<&dyn Schema>,
+    dialect: Option<DialectType>,
+    outer: Option<&dyn Schema>,
+    f: impl FnOnce(&mut crate::expressions::Select, &mut TypeAnnotator<'_>) -> R,
+) -> R {
     let mut ctes = ScopedSchema::new(parent, dialect);
     annotate_with(&mut select.with, &mut ctes, dialect, outer);
     let mut schema = ScopedSchema::new(Some(&ctes), dialect);
@@ -2562,41 +2635,7 @@ fn annotate_select(
     schema.lookup_parent_columns = false;
     let mut annotator = TypeAnnotator::new(Some(&schema), dialect);
     annotator.query_schema = Some(&ctes);
-    for expression in &mut select.expressions {
-        annotator.annotate_in_place(expression);
-    }
-    // Clause expressions use selected inputs, not the whole catalogue.
-    if let Some(expression) = &mut select.prewhere {
-        annotator.annotate_in_place(expression);
-    }
-    if let Some(clause) = &mut select.qualify {
-        annotator.annotate_in_place(&mut clause.this);
-    }
-    if let Some(clause) = &mut select.where_clause {
-        annotator.annotate_in_place(&mut clause.this);
-    }
-    if let Some(clause) = &mut select.having {
-        annotator.annotate_in_place(&mut clause.this);
-    }
-    if let Some(group) = &mut select.group_by {
-        for expression in &mut group.expressions {
-            annotator.annotate_in_place(expression);
-        }
-    }
-    if let Some(order) = &mut select.order_by {
-        for expression in &mut order.expressions {
-            annotator.annotate_in_place(&mut expression.this);
-        }
-    }
-    for join in &mut select.joins {
-        if let Some(on) = &mut join.on {
-            annotator.annotate_in_place(on);
-        }
-        if let Some(condition) = &mut join.match_condition {
-            annotator.annotate_in_place(condition);
-        }
-    }
-    query_outputs(&select.expressions, dialect)
+    f(select, &mut annotator)
 }
 
 fn annotate_scoped_expression(
@@ -2707,6 +2746,22 @@ mod tests {
     use super::*;
     use crate::expressions::{BooleanLiteral, Cast, ExtractFunc, Null};
     use crate::{parse_one, DialectType, MappingSchema, Schema};
+
+    #[test]
+    fn completed_types_do_not_survive_edits_between_passes() {
+        let mut expression = parse_one("1 + 2", DialectType::Generic).unwrap();
+        let mut annotator = TypeAnnotator::new(None, None);
+        annotator.annotate_in_place(&mut expression);
+        let Expression::Add(add) = &mut expression else {
+            panic!("addition")
+        };
+        assert!(add.inferred_type.is_some());
+        add.left = Expression::Literal(Box::new(Literal::Number("1.5".into())));
+        let expected = TypeAnnotator::new(None, None).annotate(&expression);
+        annotator.annotate_in_place(&mut expression);
+        assert_eq!(expression.inferred_type(), expected.as_ref());
+        assert!(annotator.completed_types.is_empty());
+    }
 
     #[test]
     fn set_operation_types_cover_all_dialects_454() {

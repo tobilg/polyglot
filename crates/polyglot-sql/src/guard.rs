@@ -602,7 +602,7 @@ fn push_ast_children<'a>(
         }
         _ => {
             let child_start = stack.len();
-            crate::ast_children::for_each_child(expr, |_, child| {
+            crate::ast_children::for_each_child_untracked(expr, |child| {
                 stack.push((child, depth + 1));
             });
             stack[child_start..].reverse();

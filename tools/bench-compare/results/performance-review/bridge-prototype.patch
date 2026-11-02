@@ -1,0 +1,53 @@
+diff --git a/crates/polyglot-sql-wasm/src/lib.rs b/crates/polyglot-sql-wasm/src/lib.rs
+index e0699f74..08c77c34 100644
+--- a/crates/polyglot-sql-wasm/src/lib.rs
++++ b/crates/polyglot-sql-wasm/src/lib.rs
+@@ -2293,3 +2293,48 @@ pub fn ast_get_table_names(ast_json: &str) -> String {
++/// Internal SDK query bridge. Existing JSON exports remain available for
++/// compatibility; structured calls avoid whole-tree JSON string round trips.
++#[wasm_bindgen]
++pub fn ast_query_value(ast: JsValue, query: &str) -> JsValue {
++    set_panic_hook();
++    let expression = serde_wasm_bindgen::from_value::<Expression>(ast.clone())
++        .map_err(|error| error.to_string())
++        .or_else(|_| {
++            let value = serde_wasm_bindgen::from_value::<serde_json::Value>(ast)
++                .map_err(|error| error.to_string())?;
++            ast_json_compat::expression_from_value(value)
++        });
++    let expression = match expression {
++        Ok(expression) => expression,
++        Err(error) => {
++            return serialize_result_value(&serde_json::json!({"success": false, "error": error}))
++        }
++    };
++    #[derive(Serialize)]
++    struct QueryResult<T> {
++        success: bool,
++        result: T,
++    }
++    fn result<T: Serialize>(value: T) -> JsValue {
++        serialize_result_value(&QueryResult {
++            success: true,
++            result: value,
++        })
++    }
++    match query {
++        "tables" => result(get_all_tables(&expression)),
++        "functions" => result(ast_transforms::get_functions(&expression)),
++        "aggregates" => result(ast_transforms::get_aggregate_functions(&expression)),
++        "windows" => result(ast_transforms::get_window_functions(&expression)),
++        "subqueries" => result(ast_transforms::get_subqueries(&expression)),
++        "literals" => result(ast_transforms::get_literals(&expression)),
++        "column_names" => result(ast_transforms::get_column_names(&expression)),
++        "table_names" => result(ast_transforms::get_table_names(&expression)),
++        "node_count" => result(ast_transforms::node_count(&expression)),
++        _ => serialize_result_value(
++            &serde_json::json!({"success": false, "error": "Unknown AST query"}),
++        ),
++    }
++}
++
+ /// Get all table nodes from an AST (as JSON string).
+ #[wasm_bindgen]
+ pub fn ast_get_tables(ast_json: &str) -> String {

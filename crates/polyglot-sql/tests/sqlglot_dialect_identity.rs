@@ -6,8 +6,8 @@
 mod common;
 
 use common::{
-    dialect_identity_known_failures, dialect_identity_test, parse_dialect, DialectFixture,
-    TestResults,
+    dialect_identity_known_failures, dialect_identity_test, parse_dialect, transpile_error_test,
+    upstream_semantic_error, upstream_semantic_expectation, DialectFixture, TestResults,
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -113,7 +113,24 @@ fn run_dialect_identity_tests_impl(dialect_name: &str) -> TestResults {
             results.known_failures += 1;
             continue;
         }
-        let result = dialect_identity_test(&test.sql, test.expected.as_deref(), dialect_type);
+        if let Some(error) = upstream_semantic_error(
+            dialect_name,
+            dialect_name,
+            &test.sql,
+            test.expected.as_deref().unwrap_or(&test.sql),
+        ) {
+            let result = transpile_error_test(&test.sql, dialect_type, dialect_type, error);
+            results.record_with_sql(&test_id, &test.sql, i, result);
+            continue;
+        }
+        let expected = upstream_semantic_expectation(
+            dialect_name,
+            dialect_name,
+            &test.sql,
+            test.expected.as_deref().unwrap_or(&test.sql),
+        )
+        .or(test.expected.as_deref());
+        let result = dialect_identity_test(&test.sql, expected, dialect_type);
         results.record_with_sql(&test_id, &test.sql, i, result);
     }
 

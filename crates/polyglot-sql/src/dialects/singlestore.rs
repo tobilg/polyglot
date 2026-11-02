@@ -6,7 +6,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, BinaryOp, Case, Cast, CollationExpr, DataType, Expression, Function, Paren, VarArgFunc,
+    AggFunc, BinaryOp, Case, Cast, DataType, Expression, Function, Paren, VarArgFunc,
 };
 #[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
@@ -51,31 +51,6 @@ impl DialectImpl for SingleStoreDialect {
                     s.this = "INDEX".to_string();
                 }
                 Ok(Expression::Show(s))
-            }
-
-            // SingleStore: Cast followed by COLLATE needs double cast
-            // e.g., name :> LONGTEXT COLLATE 'utf8mb4_bin' -> name :> LONGTEXT :> LONGTEXT COLLATE 'utf8mb4_bin'
-            Expression::Collation(c) => {
-                if let Expression::Cast(inner_cast) = &c.this {
-                    // Wrap the cast in another cast with the same type
-                    let double_cast = Expression::Cast(Box::new(Cast {
-                        this: c.this.clone(),
-                        to: inner_cast.to.clone(),
-                        trailing_comments: Vec::new(),
-                        double_colon_syntax: false,
-                        format: None,
-                        default: None,
-                        inferred_type: None,
-                    }));
-                    Ok(Expression::Collation(Box::new(CollationExpr {
-                        this: double_cast,
-                        collation: c.collation.clone(),
-                        quoted: c.quoted,
-                        double_quoted: c.double_quoted,
-                    })))
-                } else {
-                    Ok(Expression::Collation(c))
-                }
             }
 
             // IFNULL is native in SingleStore (MySQL-style)
@@ -639,50 +614,7 @@ impl SingleStoreDialect {
     }
 
     fn transform_cast(&self, c: Cast) -> Result<Expression> {
-        if let Some(base_type) = Self::collated_cast_base_type(&c.to) {
-            if Self::is_cast_to_type(&c.this, &base_type) {
-                return Ok(Expression::Cast(Box::new(c)));
-            }
-
-            let mut outer = c;
-            outer.this = Expression::Cast(Box::new(Cast {
-                this: outer.this,
-                to: base_type,
-                trailing_comments: Vec::new(),
-                double_colon_syntax: false,
-                format: None,
-                default: None,
-                inferred_type: None,
-            }));
-            return Ok(Expression::Cast(Box::new(outer)));
-        }
-
-        // SingleStore type mappings are handled in the generator
+        // :> accepts a column type with COLLATE directly; a second cast is unnecessary.
         Ok(Expression::Cast(Box::new(c)))
-    }
-
-    fn collated_cast_base_type(data_type: &DataType) -> Option<DataType> {
-        let DataType::Custom { name } = data_type else {
-            return None;
-        };
-
-        let upper = name.to_ascii_uppercase();
-        let collate_idx = upper.find(" COLLATE ")?;
-        let base = name[..collate_idx].trim();
-        if base.is_empty() {
-            return None;
-        }
-
-        Some(DataType::Custom {
-            name: base.to_string(),
-        })
-    }
-
-    fn is_cast_to_type(expr: &Expression, data_type: &DataType) -> bool {
-        let Expression::Cast(cast) = expr else {
-            return false;
-        };
-
-        &cast.to == data_type
     }
 }

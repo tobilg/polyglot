@@ -1,0 +1,607 @@
+[
+  {
+    "label": "SELECT x + 1 AS a, NULL, TRUE FROM t",
+    "sql": "SELECT x + 1 AS a, NULL, TRUE FROM t",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 35,
+                "end": 36,
+                "line": 1,
+                "column": 37
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "literal": {
+            "literal_type": "number",
+            "value": "1"
+          }
+        },
+        {
+          "null": null
+        },
+        {
+          "boolean": {
+            "value": true
+          }
+        }
+      ],
+      "getColumnNames": ["x"],
+      "getTableNames": ["t"],
+      "nodeCount": 8
+    }
+  },
+  {
+    "label": "WITH c AS (SELECT x FROM t) SELECT c.x FROM c JOIN s ON c.x = s.x",
+    "sql": "WITH c AS (SELECT x FROM t) SELECT c.x FROM c JOIN s ON c.x = s.x",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "c",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 44,
+                "end": 45,
+                "line": 1,
+                "column": 46
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        },
+        {
+          "table": {
+            "name": {
+              "name": "s",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 51,
+                "end": 52,
+                "line": 1,
+                "column": 53
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        },
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 25,
+                "end": 26,
+                "line": 1,
+                "column": 27
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [],
+      "getColumnNames": ["x", "x", "x", "x"],
+      "getTableNames": ["s", "t"],
+      "nodeCount": 10
+    }
+  },
+  {
+    "label": "SELECT SUM(x) OVER (ORDER BY x), COUNT(*), COALESCE(x, 1) FROM t",
+    "sql": "SELECT SUM(x) OVER (ORDER BY x), COUNT(*), COALESCE(x, 1) FROM t",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 63,
+                "end": 64,
+                "line": 1,
+                "column": 65
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [
+        {
+          "sum": {
+            "this": {
+              "column": {
+                "name": {
+                  "name": "x",
+                  "quoted": false,
+                  "trailing_comments": [],
+                  "span": {
+                    "start": 11,
+                    "end": 12,
+                    "line": 1,
+                    "column": 13
+                  }
+                },
+                "table": null,
+                "join_mark": false,
+                "trailing_comments": [],
+                "span": {
+                  "start": 11,
+                  "end": 12,
+                  "line": 1,
+                  "column": 13
+                }
+              }
+            },
+            "distinct": false,
+            "filter": null,
+            "order_by": [],
+            "name": "SUM"
+          }
+        },
+        {
+          "count": {
+            "this": null,
+            "star": true,
+            "distinct": false,
+            "filter": null,
+            "original_name": "COUNT"
+          }
+        }
+      ],
+      "getWindowFunctions": [
+        {
+          "window_function": {
+            "this": {
+              "sum": {
+                "this": {
+                  "column": {
+                    "name": {
+                      "name": "x",
+                      "quoted": false,
+                      "trailing_comments": [],
+                      "span": {
+                        "start": 11,
+                        "end": 12,
+                        "line": 1,
+                        "column": 13
+                      }
+                    },
+                    "table": null,
+                    "join_mark": false,
+                    "trailing_comments": [],
+                    "span": {
+                      "start": 11,
+                      "end": 12,
+                      "line": 1,
+                      "column": 13
+                    }
+                  }
+                },
+                "distinct": false,
+                "filter": null,
+                "order_by": [],
+                "name": "SUM"
+              }
+            },
+            "over": {
+              "window_name": null,
+              "partition_by": [],
+              "order_by": [
+                {
+                  "this": {
+                    "column": {
+                      "name": {
+                        "name": "x",
+                        "quoted": false,
+                        "trailing_comments": [],
+                        "span": {
+                          "start": 29,
+                          "end": 30,
+                          "line": 1,
+                          "column": 31
+                        }
+                      },
+                      "table": null,
+                      "join_mark": false,
+                      "trailing_comments": [],
+                      "span": {
+                        "start": 29,
+                        "end": 30,
+                        "line": 1,
+                        "column": 31
+                      }
+                    }
+                  },
+                  "desc": false,
+                  "nulls_first": null,
+                  "explicit_asc": false
+                }
+              ],
+              "frame": null,
+              "alias": null
+            }
+          }
+        }
+      ],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "literal": {
+            "literal_type": "number",
+            "value": "1"
+          }
+        }
+      ],
+      "getColumnNames": ["x", "x", "x"],
+      "getTableNames": ["t"],
+      "nodeCount": 10
+    }
+  },
+  {
+    "label": "SELECT x FROM t WHERE x IN (SELECT x FROM s)",
+    "sql": "SELECT x FROM t WHERE x IN (SELECT x FROM s)",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 14,
+                "end": 15,
+                "line": 1,
+                "column": 16
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        },
+        {
+          "table": {
+            "name": {
+              "name": "s",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 42,
+                "end": 43,
+                "line": 1,
+                "column": 44
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [],
+      "getColumnNames": ["x", "x", "x"],
+      "getTableNames": ["t", "s"],
+      "nodeCount": 8
+    }
+  },
+  {
+    "label": "UPDATE t SET x = 1 FROM s WHERE t.x = s.x",
+    "sql": "UPDATE t SET x = 1 FROM s WHERE t.x = s.x",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 7,
+                "end": 8,
+                "line": 1,
+                "column": 9
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        },
+        {
+          "table": {
+            "name": {
+              "name": "s",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 24,
+                "end": 25,
+                "line": 1,
+                "column": 26
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "literal": {
+            "literal_type": "number",
+            "value": "1"
+          }
+        }
+      ],
+      "getColumnNames": ["x", "x"],
+      "getTableNames": ["t", "s"],
+      "nodeCount": 6
+    }
+  },
+  {
+    "label": "DELETE FROM t USING s WHERE t.x = s.x",
+    "sql": "DELETE FROM t USING s WHERE t.x = s.x",
+    "expected": {
+      "getTables": [
+        {
+          "table": {
+            "name": {
+              "name": "t",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 12,
+                "end": 13,
+                "line": 1,
+                "column": 14
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        },
+        {
+          "table": {
+            "name": {
+              "name": "s",
+              "quoted": false,
+              "trailing_comments": [],
+              "span": {
+                "start": 20,
+                "end": 21,
+                "line": 1,
+                "column": 22
+              }
+            },
+            "schema": null,
+            "catalog": null,
+            "alias": null,
+            "alias_explicit_as": false,
+            "column_aliases": [],
+            "trailing_comments": [],
+            "when": null,
+            "only": false,
+            "final_": false,
+            "hints": [],
+            "subpartition": false
+          }
+        }
+      ],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [],
+      "getColumnNames": ["x", "x"],
+      "getTableNames": ["t", "s"],
+      "nodeCount": 4
+    }
+  },
+  {
+    "label": "{}",
+    "ast": {},
+    "expected": {
+      "getTables": [],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "null": null
+        }
+      ],
+      "getColumnNames": [],
+      "getTableNames": [],
+      "nodeCount": 1
+    }
+  },
+  {
+    "label": "{\"null\":{}}",
+    "ast": {
+      "null": {}
+    },
+    "expected": {
+      "getTables": [],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "null": null
+        }
+      ],
+      "getColumnNames": [],
+      "getTableNames": [],
+      "nodeCount": 1
+    }
+  },
+  {
+    "label": "{\"is_null\":[{}]}",
+    "ast": {
+      "is_null": [{}]
+    },
+    "expected": {
+      "getTables": [],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [
+        {
+          "null": null
+        }
+      ],
+      "getColumnNames": [],
+      "getTableNames": [],
+      "nodeCount": 2
+    }
+  },
+  {
+    "label": "{\"unknown_variant\":{}}",
+    "ast": {
+      "unknown_variant": {}
+    },
+    "expected": {
+      "getTables": [],
+      "getFunctions": [],
+      "getAggregateFunctions": [],
+      "getWindowFunctions": [],
+      "getSubqueries": [],
+      "getLiterals": [],
+      "getColumnNames": [],
+      "getTableNames": [],
+      "nodeCount": 0
+    }
+  }
+]

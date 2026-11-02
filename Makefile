@@ -26,10 +26,10 @@
 # =============================================================================
 
 SQLGLOT_REPO := https://github.com/tobymao/sqlglot.git
-SQLGLOT_REF := v30.14.0
+SQLGLOT_REF := v30.27.0
 
 CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
-CLICKHOUSE_REF := v26.7.1.1315-stable
+CLICKHOUSE_REF := v26.10.2.103-stable
 
 PYTHON_RELEASE_PROFILE := python_release
 PYTHON_BENCH_BUILD_ENV := MATURIN_PEP517_ARGS="--profile $(PYTHON_RELEASE_PROFILE)"
@@ -287,6 +287,7 @@ test-rust-verify-core:
 	@cargo test --lib -p polyglot-sql
 	@cargo test -p polyglot-sql --test deep_nesting_regression
 	@cargo test -p polyglot-sql --test transform_regression
+	@cargo test -p polyglot-sql --test fixture_update_regression
 	@cargo test -p polyglot-sql --test dialect_matrix
 	@cargo test -p polyglot-sql --test duckdb_order_by_all
 	@cargo test -p polyglot-sql --test duckdb_integer_division
@@ -455,7 +456,7 @@ bench-rust-parsing-report:
 
 # Run Python sqlglot benchmarks (JSON output)
 bench-python:
-	@uv run --with sqlglot[c] python3 tools/bench-compare/bench_sqlglot.py
+	@uv run --project tools/bench-compare --locked python3 tools/bench-compare/bench_sqlglot.py
 
 # Parse benchmark (core): polyglot-sql (Rust/PyO3) vs sqlglot[c] native extensions via pyperf
 bench-parse:

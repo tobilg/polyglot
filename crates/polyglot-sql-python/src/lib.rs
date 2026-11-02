@@ -13,6 +13,7 @@ mod openlineage;
 mod optimize;
 mod parse;
 mod query_analysis;
+mod shared_expression;
 mod tokenize;
 mod transforms;
 mod transpile;

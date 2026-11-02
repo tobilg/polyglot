@@ -32,6 +32,7 @@ impl DialectImpl for HiveDialect {
 
     fn tokenizer_config(&self) -> TokenizerConfig {
         let mut config = TokenizerConfig::default();
+        config.octal_string_escapes = true;
         // Hive uses backticks for identifiers (NOT double quotes)
         config.identifiers.clear();
         config.identifiers.insert('`', '`');

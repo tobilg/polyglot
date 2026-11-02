@@ -268,7 +268,7 @@ QUERIES = {
 
 
 def sqlglot_parse(sql):
-    """Parse with SQLGlot 30.12.0 and its mypyc-compiled native extensions."""
+    """Parse with SQLGlot and its mypyc-compiled native extensions."""
     sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.IGNORE)
 
 

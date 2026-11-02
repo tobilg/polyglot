@@ -1,0 +1,17 @@
+{
+  "initialEditors": 1,
+  "workers": [
+    {
+      "url": "http://127.0.0.1:4174/assets/sql.worker-DMpwuyWn.js",
+      "replies": 3
+    }
+  ],
+  "transpileOutput": [
+    "SELECT  COALESCE(u.name, 'Anonymous') AS user_name,  TO_CHAR(o.created_at, '%Y-%m') AS order_month,  COUNT(*) AS order_count,  SUM(o.total) AS total_spentFROM orders AS oLEFT JOIN users AS u  ON o.user_id = u.idWHERE  o.created_at >= CURRENT_TIMESTAMP - INTERVAL '6 MONTH'GROUP BY  u.name,  TO_CHAR(o.created_at, '%Y-%m')HAVING  total_spent > 100ORDER BY  total_spent DESC NULLS LASTLIMIT 20"
+  ],
+  "retained": [
+    "SELECT  COALESCE(u.name, 'Anonymous') AS user_name,  TO_CHAR(o.created_at, '%Y-%m') AS order_month,  COUNT(*) AS order_count,  SUM(o.total) AS total_spentFROM orders AS oLEFT JOIN users AS u  ON o.user_id = u.idWHERE  o.created_at >= CURRENT_TIMESTAMP - INTERVAL '6 MONTH'GROUP BY  u.name,  TO_CHAR(o.created_at, '%Y-%m')HAVING  total_spent > 100ORDER BY  total_spent DESC NULLS LASTLIMIT 20"
+  ],
+  "runtimeErrors": [],
+  "passed": true
+}

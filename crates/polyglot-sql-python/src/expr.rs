@@ -3,8 +3,9 @@ use crate::builders::{
     unary_operator,
 };
 use crate::errors::{map_generate_error, GenerateError};
-use crate::expr_types::{wrap_expression, wrap_expression_with_parent};
+use crate::expr_types::{wrap_expression, wrap_shared_expression};
 use crate::helpers::{resolve_dialect, to_python_object};
+use crate::shared_expression::SharedExpression;
 use polyglot_sql::ast_json;
 use polyglot_sql::builder::plan::{BuildNode, BuildOperation, BuilderAssignment, BuilderPlan};
 use polyglot_sql::traversal::ExpressionWalk;
@@ -17,7 +18,7 @@ use serde_json::Value;
 #[pyclass(subclass, from_py_object, module = "polyglot_sql", name = "Expression")]
 #[derive(Debug)]
 pub struct PyExpression {
-    pub(crate) inner: Expression,
+    pub(crate) inner: SharedExpression,
     pub(crate) parent: Option<Py<PyAny>>,
     pub(crate) arg_key: Option<String>,
 }
@@ -29,7 +30,7 @@ impl Clone for PyExpression {
             .as_ref()
             .and_then(|p| Python::try_attach(|py| p.clone_ref(py)));
         Self {
-            inner: self.inner.clone(),
+            inner: self.inner.share(),
             parent,
             arg_key: self.arg_key.clone(),
         }
@@ -39,17 +40,9 @@ impl Clone for PyExpression {
 impl PyExpression {
     pub fn from_inner(inner: Expression) -> Self {
         Self {
-            inner,
+            inner: SharedExpression::new(inner),
             parent: None,
             arg_key: None,
-        }
-    }
-
-    pub fn from_inner_with_parent(inner: Expression, parent: Py<PyAny>, arg_key: &str) -> Self {
-        Self {
-            inner,
-            parent: Some(parent),
-            arg_key: Some(arg_key.to_string()),
         }
     }
 
@@ -398,47 +391,37 @@ impl PyExpression {
     /// Returns the primary child expression (".this" in sqlglot).
     #[getter]
     fn this(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let inner = &slf.borrow().inner;
-        match inner.get_this() {
-            Some(child) => {
-                let parent_ref = slf.unbind().into_any();
-                wrap_expression_with_parent(py, child.clone(), parent_ref, "this").map(Some)
-            }
-            None => Ok(None),
-        }
+        let child = slf.borrow().inner.select(Expression::get_this);
+        child
+            .map(|child| {
+                wrap_shared_expression(py, child, Some(slf.unbind().into_any()), Some("this"))
+            })
+            .transpose()
     }
 
     /// Returns the secondary child expression (".expression" in sqlglot).
     #[getter]
     fn expression(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let inner = &slf.borrow().inner;
-        match inner.get_expression() {
-            Some(child) => {
-                let parent_ref = slf.unbind().into_any();
-                wrap_expression_with_parent(py, child.clone(), parent_ref, "expression").map(Some)
-            }
-            None => Ok(None),
-        }
+        let child = slf.borrow().inner.select(Expression::get_expression);
+        child
+            .map(|child| {
+                wrap_shared_expression(py, child, Some(slf.unbind().into_any()), Some("expression"))
+            })
+            .transpose()
     }
 
     /// Returns the list children (".expressions" in sqlglot).
     #[getter]
     fn expressions(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let inner = &slf.borrow().inner;
-        let exprs = inner.get_expressions();
-        if exprs.is_empty() {
-            return Ok(Vec::new());
-        }
-        let parent_ref = slf.unbind().into_any();
-        exprs
-            .iter()
+        let children = slf
+            .borrow()
+            .inner
+            .select_many(|root| root.get_expressions().iter().collect());
+        let parent = slf.unbind().into_any();
+        children
+            .into_iter()
             .map(|child| {
-                wrap_expression_with_parent(
-                    py,
-                    child.clone(),
-                    parent_ref.clone_ref(py),
-                    "expressions",
-                )
+                wrap_shared_expression(py, child, Some(parent.clone_ref(py)), Some("expressions"))
             })
             .collect()
     }
@@ -513,12 +496,12 @@ impl PyExpression {
 
     #[getter]
     fn is_string(&self) -> bool {
-        matches!(&self.inner, Expression::Literal(lit) if lit.is_string())
+        matches!(&*self.inner, Expression::Literal(lit) if lit.is_string())
     }
 
     #[getter]
     fn is_number(&self) -> bool {
-        match &self.inner {
+        match &*self.inner {
             Expression::Literal(lit) => lit.is_number(),
             Expression::Neg(u) => matches!(&u.this, Expression::Literal(lit) if lit.is_number()),
             _ => false,
@@ -534,7 +517,7 @@ impl PyExpression {
                 false
             }
         };
-        match &self.inner {
+        match &*self.inner {
             Expression::Literal(lit) => check_int(lit),
             Expression::Neg(u) => {
                 matches!(&u.this, Expression::Literal(lit) if check_int(lit))
@@ -545,7 +528,7 @@ impl PyExpression {
 
     #[getter]
     fn is_star(&self) -> bool {
-        match &self.inner {
+        match &*self.inner {
             Expression::Star(_) => true,
             Expression::Column(c) => {
                 matches!(&Expression::Identifier(c.name.clone()), Expression::Identifier(id) if id.name == "*")
@@ -640,34 +623,32 @@ impl PyExpression {
     // === Traversal ===
 
     fn children(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let inner = &slf.borrow().inner;
-        let rust_children: Vec<Expression> = inner.children().into_iter().cloned().collect();
-        let parent_ref = slf.unbind().into_any();
-        rust_children
+        let children = slf.borrow().inner.select_many(|root| root.children());
+        let parent = slf.unbind().into_any();
+        children
             .into_iter()
-            .map(|expr| wrap_expression_with_parent(py, expr, parent_ref.clone_ref(py), "child"))
+            .map(|child| {
+                wrap_shared_expression(py, child, Some(parent.clone_ref(py)), Some("child"))
+            })
             .collect()
     }
 
     #[pyo3(signature = (order = "dfs"))]
     fn walk(slf: Bound<'_, Self>, py: Python<'_>, order: &str) -> PyResult<Vec<Py<PyAny>>> {
-        let order_lower = order.trim().to_ascii_lowercase();
         let inner = &slf.borrow().inner;
-        let nodes: Vec<Expression> = match order_lower.as_str() {
-            "dfs" => inner.dfs().cloned().collect(),
-            "bfs" => inner.bfs().cloned().collect(),
+        let nodes = match order.trim().to_ascii_lowercase().as_str() {
+            "dfs" => inner.select_many(|root| root.dfs().collect()),
+            "bfs" => inner.select_many(|root| root.bfs().collect()),
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "Unsupported walk order: {order}"
                 )))
             }
         };
-        // The root node gets no parent from walk; children get parent set during
-        // subsequent property access. We wrap without parent for walk results
-        // to avoid O(n^2) parent-chain computation.
+        // Walk results retain their existing parent-free behavior.
         nodes
             .into_iter()
-            .map(|expr| wrap_expression(py, expr))
+            .map(|node| wrap_shared_expression(py, node, None, None))
             .collect()
     }
 
@@ -678,23 +659,14 @@ impl PyExpression {
         types: &Bound<'_, PyTuple>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let kinds = extract_kinds(types)?;
-        let inner = &slf.borrow().inner;
-        // Skip self (DFS starts with self) — sqlglot find skips root
-        let found = inner
-            .dfs()
-            .skip(1)
-            .find(|expr| {
-                let vname = expr.variant_name();
-                kinds.iter().any(|k| k == vname)
-            })
-            .cloned();
-        match found {
-            Some(expr) => {
-                // We don't set parent here for perf; parent is set lazily via property access
-                wrap_expression(py, expr).map(Some)
-            }
-            None => Ok(None),
-        }
+        let found = slf.borrow().inner.select(|root| {
+            root.dfs()
+                .skip(1)
+                .find(|expr| kinds.iter().any(|kind| kind == expr.variant_name()))
+        });
+        found
+            .map(|node| wrap_shared_expression(py, node, None, None))
+            .transpose()
     }
 
     #[pyo3(signature = (*types))]
@@ -704,65 +676,68 @@ impl PyExpression {
         types: &Bound<'_, PyTuple>,
     ) -> PyResult<Vec<Py<PyAny>>> {
         let kinds = extract_kinds(types)?;
-        let inner = &slf.borrow().inner;
-        let matches: Vec<Expression> = inner
-            .dfs()
-            .skip(1)
-            .filter(|expr| {
-                let vname = expr.variant_name();
-                kinds.iter().any(|k| k == vname)
-            })
-            .cloned()
-            .collect();
-        matches
+        let nodes = slf.borrow().inner.select_many(|root| {
+            root.dfs()
+                .skip(1)
+                .filter(|expr| kinds.iter().any(|kind| kind == expr.variant_name()))
+                .collect()
+        });
+        nodes
             .into_iter()
-            .map(|expr| wrap_expression(py, expr))
+            .map(|node| wrap_shared_expression(py, node, None, None))
             .collect()
     }
 
     /// Unwrap nested Paren expressions.
     fn unnest(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let inner = &slf.borrow().inner;
-        let mut current = inner;
-        while let Expression::Paren(p) = current {
-            current = &p.this;
-        }
-        if std::ptr::eq(current, inner) {
-            Ok(slf.unbind().into_any())
-        } else {
-            wrap_expression(py, current.clone())
+        let child = slf.borrow().inner.select(|root| {
+            let mut current = root;
+            while let Expression::Paren(paren) = current {
+                current = &paren.this;
+            }
+            (!std::ptr::eq(root, current)).then_some(current)
+        });
+        match child {
+            Some(child) => wrap_shared_expression(py, child, None, None),
+            None => Ok(slf.unbind().into_any()),
         }
     }
 
     /// Unwrap Alias expression.
     fn unalias(slf: Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let inner = &slf.borrow().inner;
-        if let Expression::Alias(a) = inner {
-            wrap_expression(py, a.this.clone())
-        } else {
-            Ok(slf.unbind().into_any())
+        let child = slf.borrow().inner.select(|root| match root {
+            Expression::Alias(alias) => Some(&alias.this),
+            _ => None,
+        });
+        match child {
+            Some(child) => wrap_shared_expression(py, child, None, None),
+            None => Ok(slf.unbind().into_any()),
         }
     }
 
     /// Flatten same-variant chains (e.g., And(And(a,b),c) → [a,b,c]).
     fn flatten(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let target_kind = self.inner.variant_name();
-        let mut result = Vec::new();
-        let mut stack = vec![&self.inner];
-        while let Some(expr) = stack.pop() {
-            if expr.variant_name() == target_kind {
-                // Push children in reverse so left comes out first
-                if let Some(right) = expr.get_expression() {
-                    stack.push(right);
+        let nodes = self.inner.select_many(|root| {
+            let mut result = Vec::new();
+            let mut stack = vec![root];
+            while let Some(expr) = stack.pop() {
+                if expr.variant_name() == root.variant_name() {
+                    if let Some(right) = expr.get_expression() {
+                        stack.push(right);
+                    }
+                    if let Some(left) = expr.get_this() {
+                        stack.push(left);
+                    }
+                } else {
+                    result.push(expr);
                 }
-                if let Some(left) = expr.get_this() {
-                    stack.push(left);
-                }
-            } else {
-                result.push(wrap_expression(py, expr.clone())?);
             }
-        }
-        Ok(result)
+            result
+        });
+        nodes
+            .into_iter()
+            .map(|node| wrap_shared_expression(py, node, None, None))
+            .collect()
     }
 
     /// Alias for children() — sqlglot compat.

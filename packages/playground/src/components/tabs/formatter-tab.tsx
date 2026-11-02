@@ -1,5 +1,5 @@
+import { useSqlTask } from "@/hooks/use-sql-task";
 import { useState, useCallback } from "react";
-import { format } from "@polyglot-sql/sdk";
 import { Button } from "@/components/ui/button";
 import { SqlEditor } from "@/components/shared/sql-editor";
 import { SqlOutput } from "@/components/shared/sql-output";
@@ -12,10 +12,13 @@ export function FormatterTab() {
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleFormat = useCallback(() => {
+  const { run, pending } = useSqlTask([sql]);
+
+  const handleFormat = useCallback(async () => {
     setError(null);
     try {
-      const result = format(sql);
+      const result = await run("format", sql);
+      if (!result) return;
       if (result.success && result.sql) {
         setOutput(result.sql.join(";\n"));
       } else {
@@ -26,12 +29,12 @@ export function FormatterTab() {
       setError(String(e));
       setOutput("");
     }
-  }, [sql]);
+  }, [sql, run]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4">
       <div className="flex flex-wrap items-center gap-3 shrink-0">
-        <Button onClick={handleFormat} size="sm" className="ml-auto">
+        <Button onClick={handleFormat} disabled={pending} size="sm" className="ml-auto">
           <Play className="size-3.5" />
           Format
         </Button>

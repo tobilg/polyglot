@@ -34,6 +34,7 @@ impl DialectImpl for OracleDialect {
         config.identifiers.insert('"', '"');
         // Oracle does not support nested comments
         config.nested_comments = false;
+        config.alternative_quoted_strings = true;
         config
     }
 

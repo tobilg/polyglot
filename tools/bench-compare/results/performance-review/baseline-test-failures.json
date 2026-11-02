@@ -1,0 +1,32 @@
+[
+  {
+    "test": "test_unsigned_integer_dialect_aliases",
+    "sql": "SELECT CAST(x AS UTINYINT)",
+    "read": "duckdb",
+    "write": "clickhouse",
+    "baseline_output": [
+      "SELECT CAST(x AS Nullable(UInt8))"
+    ],
+    "after_matches_baseline": true
+  },
+  {
+    "test": "test_int128_dialect_aliases",
+    "sql": "SELECT CAST(x AS HUGEINT)",
+    "read": "duckdb",
+    "write": "clickhouse",
+    "baseline_output": [
+      "SELECT CAST(x AS Nullable(Int128))"
+    ],
+    "after_matches_baseline": true
+  },
+  {
+    "test": "tpch_query2_transpile_postgres_to_fabric",
+    "sql": "\nselect\n        s_acctbal,\n        s_name,\n        n_name,\n        p_partkey,\n        p_mfgr,\n        s_address,\n        s_phone,\n        s_comment\nfrom\n        part,\n        supplier,\n        partsupp,\n        nation,\n        region\nwhere\n        p_partkey = ps_partkey\n        and s_suppkey = ps_suppkey\n        and p_size = 15\n        and p_type like '%BRASS'\n        and s_nationkey = n_nationkey\n        and n_regionkey = r_regionkey\n        and r_name = 'EUROPE'\n        and ps_supplycost = (\n                select\n                        min(ps_supplycost)\n                from\n                        partsupp,\n                        supplier,\n                        nation,\n                        region\n                where\n                        p_partkey = ps_partkey\n                        and s_suppkey = ps_suppkey\n                        and s_nationkey = n_nationkey\n                        and n_regionkey = r_regionkey\n                        and r_name = 'EUROPE'\n        )\norder by\n        s_acctbal desc,\n        n_name,\n        s_name,\n        p_partkey\nlimit 100\n",
+    "read": "postgresql",
+    "write": "fabric",
+    "baseline_output": [
+      "SELECT TOP 100 s_acctbal, s_name, n_name, p_partkey, p_mfgr, s_address, s_phone, s_comment FROM part, supplier, partsupp, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND p_size = 15 AND p_type LIKE '%BRASS' AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'EUROPE' AND ps_supplycost = (SELECT MIN(ps_supplycost) FROM partsupp, supplier, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'EUROPE') ORDER BY CASE WHEN s_acctbal IS NULL THEN 1 ELSE 0 END DESC, s_acctbal DESC, CASE WHEN n_name IS NULL THEN 1 ELSE 0 END, n_name, CASE WHEN s_name IS NULL THEN 1 ELSE 0 END, s_name, CASE WHEN p_partkey IS NULL THEN 1 ELSE 0 END, p_partkey"
+    ],
+    "after_matches_baseline": true
+  }
+]

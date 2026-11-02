@@ -6,7 +6,8 @@
 mod common;
 
 use common::{
-    parse_dialect, transpilation_known_failures, transpile_test, DialectFixture, TestResults,
+    parse_dialect, transpilation_known_failure, transpile_error_test, transpile_test,
+    upstream_semantic_error, upstream_semantic_expectation, DialectFixture, TestResults,
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -95,16 +96,24 @@ fn run_dialect_transpilation_tests(source_dialect: &str) -> TestResults {
                 None => continue, // Skip unknown dialects
             };
 
-            let known = transpilation_known_failures(source_dialect, target_name);
             let test_id = format!("{}->{}:{}", source_dialect, target_name, i);
 
-            if known.contains(&test_id) {
+            if transpilation_known_failure(source_dialect, target_name, &test.sql, expected) {
                 results.known_failures += 1;
                 continue;
             }
 
-            let result = transpile_test(&test.sql, source_type, target_type, expected);
-            results.record(&test_id, result);
+            let result = if let Some(error) =
+                upstream_semantic_error(source_dialect, target_name, &test.sql, expected)
+            {
+                transpile_error_test(&test.sql, source_type, target_type, error)
+            } else {
+                let expected =
+                    upstream_semantic_expectation(source_dialect, target_name, &test.sql, expected)
+                        .unwrap_or(expected);
+                transpile_test(&test.sql, source_type, target_type, expected)
+            };
+            results.record_with_sql(&test_id, &test.sql, i, result);
         }
     }
 
@@ -224,8 +233,18 @@ mod dialect_pairs {
                 for (i, test) in fixture.transpilation.iter().enumerate() {
                     if let Some(expected) = test.write.get(target.as_str()) {
                         let test_id = format!("{}->{}:{}", source, target, i);
-                        let result = transpile_test(&test.sql, source_type, target_type, expected);
-                        results.record(&test_id, result);
+                        let result = if let Some(error) =
+                            upstream_semantic_error(&source, &target, &test.sql, expected)
+                        {
+                            transpile_error_test(&test.sql, source_type, target_type, error)
+                        } else {
+                            let expected = upstream_semantic_expectation(
+                                &source, &target, &test.sql, expected,
+                            )
+                            .unwrap_or(expected);
+                            transpile_test(&test.sql, source_type, target_type, expected)
+                        };
+                        results.record_with_sql(&test_id, &test.sql, i, result);
                     }
                 }
 

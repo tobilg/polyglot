@@ -6,6 +6,7 @@
 #![allow(clippy::upper_case_acronyms)]
 
 use crate::expr::PyExpression;
+use crate::shared_expression::SharedExpression;
 use polyglot_sql::Expression;
 use pyo3::prelude::*;
 
@@ -17,40 +18,20 @@ macro_rules! define_expression_subclasses {
             pub struct $variant {}
         )*
 
-        // 2. Dispatcher: wrap an Expression into the correct typed Python subclass
+        // Dispatch owned ASTs and shared views through the same class mapping.
         pub fn wrap_expression(py: Python<'_>, expr: Expression) -> PyResult<Py<PyAny>> {
-            let base = PyExpression::from_inner(expr);
-            match &base.inner {
-                $(
-                    Expression::$variant(_) => {
-                        Py::new(
-                            py,
-                            PyClassInitializer::from(base).add_subclass($variant {}),
-                        )
-                        .map(|p| p.into_any())
-                    }
-                )*
-            }
+            wrap_base(py, PyExpression::from_inner(expr))
         }
 
-        // 3. Dispatcher with parent tracking
-        pub fn wrap_expression_with_parent(
-            py: Python<'_>,
-            expr: Expression,
-            parent: Py<PyAny>,
-            arg_key: &str,
-        ) -> PyResult<Py<PyAny>> {
-            let base = PyExpression::from_inner_with_parent(expr, parent, arg_key);
-            match &base.inner {
-                $(
-                    Expression::$variant(_) => {
-                        Py::new(
-                            py,
-                            PyClassInitializer::from(base).add_subclass($variant {}),
-                        )
-                        .map(|p| p.into_any())
-                    }
-                )*
+        pub(crate) fn wrap_shared_expression(py: Python<'_>, inner: SharedExpression, parent: Option<Py<PyAny>>, arg_key: Option<&str>) -> PyResult<Py<PyAny>> {
+            wrap_base(py, PyExpression { inner, parent, arg_key: arg_key.map(str::to_owned) })
+        }
+
+        fn wrap_base(py: Python<'_>, base: PyExpression) -> PyResult<Py<PyAny>> {
+            match &*base.inner {
+                $(Expression::$variant(_) => {
+                    Py::new(py, PyClassInitializer::from(base).add_subclass($variant {})).map(|p| p.into_any())
+                })*
             }
         }
 
@@ -78,6 +59,11 @@ define_expression_subclasses!(
     Except,
     Subquery,
     PipeOperator,
+    PipeQuery,
+    MultiInsert,
+    Per,
+    PartitionByExcluding,
+    StreamSource,
     Pivot,
     PivotAlias,
     Unpivot,
@@ -156,6 +142,7 @@ define_expression_subclasses!(
     Having,
     OrderBy,
     Limit,
+    LimitRange,
     Offset,
     Qualify,
     With,
@@ -639,6 +626,8 @@ define_expression_subclasses!(
     Partition,
     RefreshTriggerProperty,
     UniqueKeyProperty,
+    AggregateKeyProperty,
+    OracleTableProperty,
     RollupProperty,
     PartitionBoundSpec,
     PartitionedOfProperty,
@@ -902,6 +891,8 @@ define_expression_subclasses!(
     Slice,
     VarMap,
     MatchAgainst,
+    DorisMatch,
+    WithFunction,
     MD5Digest,
     MD5NumberLower64,
     MD5NumberUpper64,

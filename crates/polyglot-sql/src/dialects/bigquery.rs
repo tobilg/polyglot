@@ -1800,11 +1800,11 @@ mod tests {
     }
 
     #[test]
-    fn test_json_literal_to_parse_json() {
-        // JSON 'string' literal syntax should be converted to PARSE_JSON()
+    fn test_json_literal_is_preserved() {
+        // Preserve BigQuery's typed JSON literal.
         bigquery_identity(
             "SELECT JSON '\"foo\"' AS json_data",
-            "SELECT PARSE_JSON('\"foo\"') AS json_data",
+            "SELECT JSON '\"foo\"' AS json_data",
         );
     }
 
@@ -1837,10 +1837,10 @@ mod tests {
 
     #[test]
     fn test_json_object_with_json_literals() {
-        // Issue 2: JSON literals in JSON_OBJECT should use PARSE_JSON, not CAST AS JSON
+        // Nested typed JSON literals retain their type and spelling.
         bigquery_identity(
             "SELECT JSON_OBJECT('a', JSON '10') AS json_data",
-            "SELECT JSON_OBJECT('a', PARSE_JSON('10')) AS json_data",
+            "SELECT JSON_OBJECT('a', JSON '10') AS json_data",
         );
     }
 
@@ -1885,9 +1885,9 @@ mod tests {
     }
 
     #[test]
-    fn test_last_day_week_modifier_stripped() {
-        // WEEK(SUNDAY) should become WEEK in BigQuery LAST_DAY function
-        bigquery_identity("LAST_DAY(col, WEEK(MONDAY))", "LAST_DAY(col, WEEK)");
+    fn test_last_day_week_modifier_preserved() {
+        // Only Sunday is the default; Monday changes the final day of the week.
+        bigquery_identity("LAST_DAY(col, WEEK(MONDAY))", "LAST_DAY(col, WEEK(MONDAY))");
     }
 
     #[test]

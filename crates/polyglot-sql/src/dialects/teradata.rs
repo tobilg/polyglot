@@ -93,6 +93,7 @@ impl DialectImpl for TeradataDialect {
             identifier_quote: '"',
             identifier_quote_style: IdentifierQuoteStyle::DOUBLE_QUOTE,
             dialect: Some(DialectType::Teradata),
+            normalize_window_frame_between: true,
             tablesample_keywords: "SAMPLE",
             tablesample_requires_parens: false,
             tz_to_with_time_zone: true,

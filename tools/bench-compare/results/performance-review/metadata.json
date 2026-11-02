@@ -1,0 +1,55 @@
+{
+  "baseline_commit": "5a25f6559a7c4ef3552938f5fe60f0b07d4f1af9",
+  "branch": "perf/ast-runtime-improvements",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+  "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "profile": {
+    "name": "performance",
+    "opt_level": 2,
+    "lto": "off",
+    "codegen_units": 16,
+    "panic": "unwind"
+  },
+  "sampling": "Five batches of at least 100ms after warmup; median. Native and Python timings include result destruction. JavaScript timings include ordinary GC when triggered, without forced GC.",
+  "node": "v24.22.1",
+  "python": "3.14",
+  "wasm_bindgen": "0.2.108",
+  "wasm_target": "wasm32-unknown-unknown",
+  "wasm_panic": "abort",
+  "wasm_main_comparison": "No wasm-opt on either main SDK benchmark artifact; post-link optimization measured separately.",
+  "wasm_flag_experiment": "Same baseline bindgen artifact, wasm-opt -Oz versus -O3, --enable-bulk-memory --enable-nontrapping-float-to-int --strip-producers.",
+  "baseline_confirmation": "Preserved baseline executables were rerun to check drift and cover the newly discovered nested-query case. Competing review compiler/test processes were paused during those runs.",
+  "commands": {
+    "native_build": "cargo build -p polyglot-sql --example performance_review --profile performance --offline",
+    "native_benchmark": "target/performance/examples/performance_review",
+    "python_build_macos": "PYO3_PYTHON=<python> cargo rustc -p polyglot-sql-python --profile performance --offline -- -C link-arg=-undefined -C link-arg=dynamic_lookup",
+    "python_benchmark": "PYTHONPATH=<staged-package> <python> tools/bench-compare/performance_review.py",
+    "wasm_build": "CARGO_PROFILE_PERFORMANCE_PANIC=abort cargo build -p polyglot-sql-wasm --target wasm32-unknown-unknown --profile performance --offline",
+    "sdk_benchmark": "node tools/bench-compare/performance_review.mjs <absolute-sdk-node-bundle>",
+    "compatibility": "PYTHONPATH=<staged-package> <python> tools/bench-compare/performance_contracts.py",
+    "browser_smoke": "Start playground Vite preview on 127.0.0.1:4174 and isolated headless Chrome with debugging port 9223, then node tools/bench-compare/performance_browser_smoke.mjs"
+  },
+  "environment_notes": [
+    "A separate debug Python verification build required -C strip=none -C link-arg=-Wl,-x for the macOS 27 loader issue https://github.com/rust-lang/rust/issues/157750 . Both final benchmark extensions used the same unmodified performance-profile strip setting."
+  ],
+  "bridge_experiment": "Compared direct serde_wasm_bindgen AST queries against JSON exports in the same prototype SDK. Retained JSON: faster in every measured case. The rejected WASM export is archived in bridge-prototype.patch; performance_bridge.mjs requires that experimental export.",
+  "comparison_inputs": {
+    "native": {
+      "before": "native-before.jsonl",
+      "after": "native-after.jsonl",
+      "comparison": "native-comparison.jsonl"
+    },
+    "python": {
+      "before": "python-before.jsonl",
+      "after": "python-after.jsonl",
+      "comparison": "python-comparison.jsonl"
+    },
+    "sdk": {
+      "before": "sdk-before.jsonl",
+      "after": "sdk-after.jsonl",
+      "comparison": "sdk-comparison.jsonl"
+    }
+  },
+  "final_benchmark_conditions": "Native, Python and SDK benchmarks ran sequentially without competing review builds or test runs. The isolated browser was closed before final Python/SDK runs.",
+  "wasm_size_measurement": "Bindgen WASM files from the main comparison; no wasm-opt. gzip.compress(level=9). These are not production-release bundle sizes."
+}

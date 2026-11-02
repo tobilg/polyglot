@@ -463,7 +463,7 @@
       "sql": "SELECT DATE_PART('year', ts) FROM t",
       "write": {
         "duckdb": "SELECT EXTRACT(YEAR FROM ts) FROM t",
-        "postgresql": "SELECT EXTRACT(year FROM ts) FROM t",
+        "postgresql": "SELECT EXTRACT(YEAR FROM ts) FROM t",
         "spark": "SELECT EXTRACT(year FROM ts) FROM t",
         "tsql": "SELECT DATEPART(year, ts) FROM t",
         "mysql": "SELECT DATE_PART('year', ts) FROM t",

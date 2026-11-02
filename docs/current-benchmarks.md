@@ -1,8 +1,8 @@
 # Current Parsing Benchmarks
 
-This report compares the published Polyglot 0.6.0 Python package with SQLGlot and
-the other parsers registered by SQLGlot's upstream `benchmarks/parse.py` script.
-The measurements were recorded on 2026-07-14.
+This report compares Polyglot 0.14.0 built from the current source branch with
+SQLGlot and the other parsers registered by SQLGlot's upstream
+`benchmarks/parse.py` script. Measurements were recorded on **2026-11-02**.
 
 ## Benchmark Setup
 
@@ -10,231 +10,240 @@ The measurements were recorded on 2026-07-14.
 
 | Component | Value |
 |---|---|
-| Machine | Mac mini |
-| Processor | Apple M2, 8 cores (4 performance and 4 efficiency) |
+| Machine | Mac mini (Mac14,3) |
+| Processor | Apple M2, 8 cores |
 | Memory | 16 GB |
 | Architecture | arm64 |
-| Operating system | macOS 26.5.2 (build 25F84) |
+| Operating system | macOS 27.0.1 (build 26A434) |
 | Python | CPython 3.13.9 |
 
 ### Parser Versions
 
 | Package | Version |
 |---|---:|
-| Polyglot | 0.6.0 |
-| SQLGlot | 30.12.0 |
-| SQLGlot compiled extensions (`sqlglot[c]`) | 30.12.0 |
+| Polyglot | 0.14.0 |
+| SQLGlot | 30.27.0 |
+| SQLGlot compiled extensions (`sqlglot[c]`) | 30.27.0 |
 | SQLTree | 0.3.0 |
-| SQLParse | 0.5.5 |
-| SQLFluff | 4.0.4 |
+| SQLParse | 0.6.1 |
+| SQLFluff | 4.5.0 |
 | moz-sql-parser | 4.40.21126 |
-| SQLOxide | 0.1.56 |
+| SQLOxide | 0.61.1 |
 
-Polyglot was installed from the published `polyglot-sql==0.6.0` wheel. SQLGlot
-and its `sqlglot[c]` mypyc-compiled native extensions were installed from the
-published 30.12.0 packages. The benchmark script came from the locally checked
-out SQLGlot v30.12.0 source at commit `64e268a5d95cd84a87ad74ef569fc9bf356fd3fb`.
+Polyglot was built from commit `31b0fc6a050ad5aa80e0f9c912ee8e04f0602dd5` using the production `python_release` profile
+(`opt-level=2`, thin LTO, one codegen unit), and installed as a local editable
+Python package. All comparison packages use the versions pinned in
+[`tools/bench-compare/uv.lock`](../tools/bench-compare/uv.lock).
+SQLGlot's benchmark script and Makefile came from v30.27.0, commit
+`98782638dd6dbdedebad0e6ff6edc6e69598b81e`.
 
-`moz-sql-parser` 4.40 still imports `Iterable` from `collections`, which Python
-3.13 no longer provides. A benchmark-only `sitecustomize.py` alias mapped it to
+The installed SQLGlot package was copied into an isolated working directory.
+The upstream runner measured its compiled modules, temporarily hid that copy's
+extensions to measure pure-Python SQLGlot, and restored them afterward. The
+shared benchmark environment's installed extensions were not modified.
+
+`moz-sql-parser` 4.40 imports `Iterable` from `collections`, which Python 3.13
+no longer provides. A benchmark-only `sitecustomize.py` maps it to
 `collections.abc.Iterable`; no parser source was modified.
 
 ### Method
 
-The benchmark used SQLGlot's unmodified `benchmarks/parse.py` query corpus and
-runner. It contains 16 generated parser stress cases covering short SQL, a
-TPC-H-style query, large lists, joins, unions, CTEs, windows, nested expressions,
-and wide projections.
+The full report uses SQLGlot's unmodified upstream query corpus and runner:
+16 generated stress cases covering short SQL, a TPC-H-style query, large lists,
+joins, unions, CTEs, windows, nested expressions, and wide projections.
 
-For every parser and supported query, the script:
+- Third-party parser/query capability checks run in separate subprocesses with
+  a five-second alarm and a ten-second subprocess timeout.
+- Each supported call is timed using `time.perf_counter()`; the reported value
+  is the fastest of up to five calls. A call exceeding one second stops further
+  repetitions for that parser/query pair.
+- SQLGlot uses `parse_one(..., error_level=IGNORE)`, Polyglot uses `parse_one`,
+  SQLOxide uses its ANSI dialect, and the other parsers use the functions in the
+  upstream script.
+- Parsing measures the selected Python API call, including returned-object
+  creation, without traversing or serializing the AST. The benchmark functions
+  discard their results before the timing interval ends.
+- Benchmark runs execute sequentially after the native build has finished.
 
-1. Runs a capability check in a separate subprocess with a five-second alarm and
-   a ten-second subprocess timeout.
-2. Measures the parse call with `time.perf_counter()`.
-3. Reports the fastest elapsed time from up to five calls. If a call takes more
-   than one second, the script stops repeating that parser/query pair.
+The separate [median-of-five report](benchmark.md) uses the same corpus and
+versions but a different aggregation method; its numbers are labeled separately.
 
-SQLGlot is called through `parse_one(..., error_level=IGNORE)`, Polyglot through
-`parse_one`, SQLOxide with its ANSI dialect, and the other parsers through the
-functions defined in the upstream benchmark. The benchmark measures parsing and
-Python API object creation only; it does not serialize or otherwise consume the
-resulting AST.
+### Reproduce
 
-When compiled SQLGlot modules are present, the script first measures SQLGlot[c],
-temporarily hides the compiled modules to measure pure-Python SQLGlot, and then
-restores them. For this run, the upstream Makefile was copied into the isolated
-environment's site-packages directory so its `hidec` and `showc` targets could
-toggle the installed extensions. The benchmark was then invoked from that
-directory because the upstream script detects compiled modules relative to its
-working directory:
+From this repository, with `external-projects/sqlglot` checked out at the commit
+above:
 
 ```bash
-ROOT="$(pwd)"
-PYTHON="$ROOT/target/performance/sqlglot-all-v0.6.0/.venv/bin/python"
-SITE_PACKAGES="$("$PYTHON" -c \
-  'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+MATURIN_PEP517_ARGS='--profile python_release' \
+  uv sync --project tools/bench-compare --locked --reinstall-package polyglot-sql
 
-cp "$ROOT/external-projects/sqlglot/Makefile" "$SITE_PACKAGES/Makefile"
-cd "$SITE_PACKAGES"
-PYTHONPATH="$ROOT/target/performance/sqlglot-all-v0.6.0/compat" \
+ROOT="$(pwd)"
+PYTHON="$ROOT/tools/bench-compare/.venv/bin/python"
+RUN="$(mktemp -d "$ROOT/target/current-benchmarks.XXXXXX")"
+SITE_PACKAGES="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+cp -R "$SITE_PACKAGES/sqlglot" "$RUN/sqlglot"
+cp "$ROOT/external-projects/sqlglot/Makefile" "$RUN/Makefile"
+mkdir -p "$RUN/compat"
+cat > "$RUN/compat/sitecustomize.py" <<'PYCOMPAT'
+import collections
+import collections.abc
+collections.Iterable = collections.abc.Iterable
+PYCOMPAT
+
+(
+  cd "$RUN"
+  export PYTHONPATH="$RUN:$RUN/compat"
+  export MAKEFLAGS="SO_BACKUP=$RUN/sqlglot-so-backup.tar"
   "$PYTHON" "$ROOT/external-projects/sqlglot/benchmarks/parse.py" \
-    --quiet \
-    --json "$ROOT/target/performance/sqlglot-parse-all-c-v0.6.0.json"
+    --quiet --json "$RUN/parse.json"
+  "$PYTHON" "$ROOT/external-projects/sqlglot/benchmarks/parse.py" \
+    --mode transpile --quiet --json "$RUN/transpile.json"
+)
 ```
 
-The run used an isolated Python environment containing all packages listed
-above. Times are single-machine measurements rather than confidence intervals.
+Recorded raw timings (seconds): [parsing](../tools/bench-compare/results/2026-11-02/parse.json),
+[transpilation](../tools/bench-compare/results/2026-11-02/transpile.json), and
+[environment/build metadata](../tools/bench-compare/results/2026-11-02/metadata.json).
+The metadata includes source and script hashes. Regenerate all six charts with:
 
-## SQLGlot 30.12.0 and Polyglot 0.6.0
+```bash
+uv run --no-project --with matplotlib python tools/bench-compare/plot_current_benchmarks.py \
+  --results tools/bench-compare/results/2026-11-02
+```
+
+## SQLGlot 30.27.0 and Polyglot 0.14.0
 
 | Query | SQLGlot | SQLGlot[c] | Polyglot | SQLGlot / Polyglot | SQLGlot[c] / Polyglot |
 |---|---:|---:|---:|---:|---:|
-| TPC-H | 1.570 ms | 325.8 us | **83.2 us** | 18.87x | 3.92x |
-| Short | 111.7 us | 25.2 us | **6.9 us** | 16.15x | 3.64x |
-| Deep arithmetic | 4.897 ms | 1.468 ms | **325.7 us** | 15.03x | 4.51x |
-| Large `IN` | 286.469 ms | 61.209 ms | **18.340 ms** | 15.62x | 3.34x |
-| Values | 313.012 ms | 65.480 ms | **19.440 ms** | 16.10x | 3.37x |
-| Many joins | 6.621 ms | 1.471 ms | **330.8 us** | 20.01x | 4.45x |
-| Many unions | 24.742 ms | 4.820 ms | **2.159 ms** | 11.46x | 2.23x |
-| Nested subqueries | 707.0 us | 110.0 us | **25.8 us** | 27.37x | 4.26x |
-| Many columns | 7.915 ms | 1.696 ms | **540.8 us** | 14.64x | 3.14x |
-| Large `CASE` | 23.688 ms | 4.891 ms | **1.362 ms** | 17.39x | 3.59x |
-| Complex `WHERE` | 16.883 ms | 3.696 ms | **1.055 ms** | 16.00x | 3.50x |
-| Many CTEs | 9.480 ms | 2.033 ms | **471.8 us** | 20.09x | 4.31x |
-| Many windows | 11.370 ms | 2.828 ms | **737.0 us** | 15.43x | 3.84x |
-| Nested functions | 444.3 us | 79.4 us | **31.8 us** | 13.96x | 2.49x |
-| Large strings | 3.460 ms | 747.6 us | **220.0 us** | 15.73x | 3.40x |
-| Many numbers | 65.632 ms | 14.258 ms | **4.085 ms** | 16.06x | 3.49x |
+| TPC-H | 1.571 ms | 287.6 us | **89.9 us** | 17.48x | 3.20x |
+| Short | 127.2 us | 26.1 us | **7.4 us** | 17.15x | 3.52x |
+| Deep arithmetic | 5.082 ms | 1.565 ms | **347.9 us** | 14.61x | 4.50x |
+| Large `IN` | 287.129 ms | 57.477 ms | **20.732 ms** | 13.85x | 2.77x |
+| Values | 305.104 ms | 67.850 ms | **20.724 ms** | 14.72x | 3.27x |
+| Many joins | 6.549 ms | 1.424 ms | **343.2 us** | 19.08x | 4.15x |
+| Many unions | 24.859 ms | 4.958 ms | **2.466 ms** | 10.08x | 2.01x |
+| Nested subqueries | 659.8 us | 113.9 us | **30.0 us** | 21.99x | 3.80x |
+| Many columns | 7.747 ms | 1.843 ms | **585.1 us** | 13.24x | 3.15x |
+| Large `CASE` | 22.831 ms | 4.965 ms | **1.507 ms** | 15.15x | 3.29x |
+| Complex `WHERE` | 16.881 ms | 3.780 ms | **1.115 ms** | 15.14x | 3.39x |
+| Many CTEs | 9.437 ms | 1.802 ms | **476.7 us** | 19.80x | 3.78x |
+| Many windows | 11.068 ms | 2.866 ms | **794.2 us** | 13.94x | 3.61x |
+| Nested functions | 419.2 us | 76.0 us | **33.9 us** | 12.37x | 2.24x |
+| Large strings | 3.517 ms | 667.0 us | **272.1 us** | 12.93x | 2.45x |
+| Many numbers | 66.143 ms | 13.636 ms | **4.579 ms** | 14.45x | 2.98x |
 
-Across these 16 queries, the geometric-mean ratio is **16.57x in Polyglot's
-favor against pure-Python SQLGlot** and **3.53x in Polyglot's favor against
-SQLGlot[c]**. Polyglot recorded the lowest parse time for every query in this
-run.
+The geometric-mean ratios are **15.10x against pure-Python SQLGlot**
+and **3.19x against SQLGlot[c]**, in Polyglot's favor.
+Polyglot recorded the lowest parse time among these three implementations on
+**16/16 queries**.
 
-![Logarithmic parsing benchmark for SQLGlot compiled extensions 30.12.0 and Polyglot 0.6.0](images/current-benchmarks-core.png)
+![Logarithmic parsing comparison of SQLGlot compiled extensions 30.27.0 and Polyglot 0.14.0](images/current-benchmarks-core.png)
 
-The focused chart compares SQLGlot[c] 30.12.0 with Polyglot 0.6.0 on a
-logarithmic millisecond axis because the queries span more than four orders of
-magnitude. Lower bars indicate shorter parse times. Pure-Python SQLGlot remains
-available in the table above and in the all-parser charts below.
+![Hybrid-scale parsing comparison of SQLGlot compiled extensions 30.27.0 and Polyglot 0.14.0](images/current-benchmarks-core-hybrid.png)
 
-![Hybrid-scale parsing benchmark for SQLGlot compiled extensions 30.12.0 and Polyglot 0.6.0](images/current-benchmarks-core-hybrid.png)
-
-The hybrid y-axis is linear from 0 through 5 ms and logarithmic above 5 ms; the
-dashed line marks the transition. The logarithmic region uses base-2 ticks at
-`5, 10, 20, 40, 80, ...`, so every equally spaced interval represents an exact
-doubling. This focused chart compares only the two native-backed
-implementations, SQLGlot[c] 30.12.0 and Polyglot 0.6.0. It preserves absolute
-differences among the faster and medium-sized cases while compressing the
-largest `large_in` and `values` measurements enough to keep them in the same
-chart. The fully logarithmic focused chart above remains better for comparing
-the smallest sub-millisecond results between the two native-backed
-implementations.
+The focused charts compare the two native implementations. The first uses a
+logarithmic millisecond axis. The hybrid view is linear from 0 through 5 ms,
+then logarithmic with base-2 ticks at `5, 10, 20, 40, ...`; the dashed line marks
+the transition. Lower bars indicate shorter times. Pure-Python SQLGlot remains
+in the table and all-parser charts.
 
 ## All Parsers
 
 | Query | SQLGlot | SQLGlot[c] | SQLTree | SQLParse | SQLFluff | moz-sql-parser | SQLOxide | Polyglot |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| TPC-H | 1.570 ms | 325.8 us | 1.486 ms | 8.526 ms | 124.409 ms | 12.980 ms | 335.8 us | **83.2 us** |
-| Short | 111.7 us | 25.2 us | 107.2 us | 504.1 us | 21.991 ms | 954.1 us | 19.0 us | **6.9 us** |
-| Deep arithmetic | 4.897 ms | 1.468 ms | 4.573 ms | N/A | 873.134 ms | 225.093 ms | 1.677 ms | **325.7 us** |
-| Large `IN` | 286.469 ms | 61.209 ms | 387.226 ms | N/A | N/A | 3.334 s | 78.305 ms | **18.340 ms** |
-| Values | 313.012 ms | 65.480 ms | 436.246 ms | N/A | N/A | N/A | 77.763 ms | **19.440 ms** |
-| Many joins | 6.621 ms | 1.471 ms | 7.182 ms | 35.646 ms | 637.490 ms | 67.938 ms | 1.651 ms | **330.8 us** |
-| Many unions | 24.742 ms | 4.820 ms | 28.215 ms | N/A | 905.975 ms | 233.456 ms | 6.134 ms | **2.159 ms** |
-| Nested subqueries | 707.0 us | 110.0 us | N/A | 1.990 ms | 50.803 ms | 3.649 ms | 115.2 us | **25.8 us** |
-| Many columns | 7.915 ms | 1.696 ms | 9.329 ms | 162.033 ms | 506.592 ms | 122.460 ms | 1.369 ms | **540.8 us** |
-| Large `CASE` | 23.688 ms | 4.891 ms | 25.872 ms | N/A | 2.229 s | 313.229 ms | 4.533 ms | **1.362 ms** |
-| Complex `WHERE` | 16.883 ms | 3.696 ms | N/A | 80.125 ms | 1.286 s | 260.769 ms | 3.237 ms | **1.055 ms** |
-| Many CTEs | 9.480 ms | 2.033 ms | 9.233 ms | 83.036 ms | 321.771 ms | 71.399 ms | 2.421 ms | **471.8 us** |
-| Many windows | 11.370 ms | 2.828 ms | N/A | 132.096 ms | 711.906 ms | 108.786 ms | 1.981 ms | **737.0 us** |
-| Nested functions | 444.3 us | 79.4 us | 431.9 us | 3.001 ms | 49.878 ms | 3.146 ms | 97.5 us | **31.8 us** |
-| Large strings | 3.460 ms | 747.6 us | 10.659 ms | 31.556 ms | 172.561 ms | 42.992 ms | 895.7 us | **220.0 us** |
-| Many numbers | 65.632 ms | 14.258 ms | 95.015 ms | N/A | 4.676 s | 1.248 s | 18.437 ms | **4.085 ms** |
+| TPC-H | 1.571 ms | 287.6 us | 1.421 ms | 8.017 ms | 96.774 ms | 12.412 ms | 294.7 us | **89.9 us** |
+| Short | 127.2 us | 26.1 us | 104.5 us | 455.0 us | 7.096 ms | 942.5 us | 20.2 us | **7.4 us** |
+| Deep arithmetic | 5.082 ms | 1.565 ms | 4.570 ms | N/A | 841.561 ms | 216.517 ms | 1.580 ms | **347.9 us** |
+| Large `IN` | 287.129 ms | 57.477 ms | 377.124 ms | N/A | N/A | 3.184 s | 69.659 ms | **20.732 ms** |
+| Values | 305.104 ms | 67.850 ms | 417.700 ms | N/A | N/A | N/A | 73.165 ms | **20.724 ms** |
+| Many joins | 6.549 ms | 1.424 ms | 6.541 ms | 33.870 ms | 553.577 ms | 65.810 ms | 1.676 ms | **343.2 us** |
+| Many unions | 24.859 ms | 4.958 ms | 27.917 ms | N/A | 694.322 ms | 194.561 ms | 6.970 ms | **2.466 ms** |
+| Nested subqueries | 659.8 us | 113.9 us | N/A | 1.819 ms | N/A | 3.913 ms | 133.9 us | **30.0 us** |
+| Many columns | 7.747 ms | 1.843 ms | 10.208 ms | 41.453 ms | 444.265 ms | 120.822 ms | 1.290 ms | **585.1 us** |
+| Large `CASE` | 22.831 ms | 4.965 ms | 25.355 ms | N/A | 1.971 s | 306.169 ms | 4.418 ms | **1.507 ms** |
+| Complex `WHERE` | 16.881 ms | 3.780 ms | N/A | 77.919 ms | 1.163 s | 250.504 ms | 2.934 ms | **1.115 ms** |
+| Many CTEs | 9.437 ms | 1.802 ms | 8.848 ms | 42.073 ms | 245.053 ms | 70.508 ms | 2.264 ms | **476.7 us** |
+| Many windows | 11.068 ms | 2.866 ms | N/A | 66.314 ms | 572.387 ms | 107.637 ms | 1.963 ms | **794.2 us** |
+| Nested functions | 419.2 us | 76.0 us | 456.1 us | 2.195 ms | 33.019 ms | 3.154 ms | 91.9 us | **33.9 us** |
+| Large strings | 3.517 ms | 667.0 us | 10.708 ms | 17.061 ms | 131.117 ms | 41.204 ms | 892.5 us | **272.1 us** |
+| Many numbers | 66.143 ms | 13.636 ms | 91.870 ms | N/A | 3.269 s | 1.255 s | 16.139 ms | **4.579 ms** |
 
-![Grouped parsing benchmark for all available parsers](images/current-benchmarks-all.png)
+![Logarithmic parsing benchmark for all available parsers](images/current-benchmarks-all.png)
 
 ![Hybrid-scale parsing benchmark for all available parsers](images/current-benchmarks-all-hybrid.png)
 
-The all-parser hybrid view uses the same linear 0-5 ms region and base-2
-logarithmic region above the dashed transition. Its `5, 10, 20, 40, ...` ticks
-therefore have consistent doubling intervals. It keeps the faster parsers
-visible while still showing multi-second SQLFluff and moz-sql-parser results.
-The fully logarithmic version above provides the clearest relative comparison
-across the entire parser set.
+The all-parser charts use the same logarithmic and hybrid scales described
+above. Polyglot recorded the lowest time among measured parsers on
+**16/16 queries**. Against SQLOxide, which also completed all 16 queries, the
+geometric-mean ratio was **3.29x in Polyglot's favor**. Capability coverage was:
 
-Polyglot, SQLGlot, SQLGlot[c], and SQLOxide completed all 16 capability checks.
-SQLTree completed 13, SQLParse 10, SQLFluff 14, and moz-sql-parser 15. Missing
-bars and `N/A` cells mean that the parser errored or timed out during capability
-discovery; they do not represent measured parse times.
+| Parser | Completed queries |
+|---|---:|
+| SQLGlot | 16/16 |
+| SQLGlot[c] | 16/16 |
+| SQLTree | 13/16 |
+| SQLParse | 10/16 |
+| SQLFluff | 13/16 |
+| moz-sql-parser | 15/16 |
+| SQLOxide | 16/16 |
+| Polyglot | 16/16 |
+
+Missing bars and `N/A` cells indicate an error or timeout during capability
+discovery. They are not measured parse times and do not imply a correctness
+comparison between parsers.
 
 ## Transpilation
 
-The same upstream script also supports `--mode transpile`. In this mode,
-SQLGlot is called through `transpile(..., error_level=IGNORE)[0]` and Polyglot
-through `transpile(...)[0]`. The registered third-party transpiler set contains
-only Polyglot, so all three measured implementations completed all 16 queries.
-
-The run used the same machine, isolated environment, package versions,
-capability checks, and fastest-of-up-to-five timing method as the parsing
-benchmark. Its invocation added `--mode transpile` and wrote a separate result:
-
-```bash
-"$PYTHON" "$ROOT/external-projects/sqlglot/benchmarks/parse.py" \
-  --mode transpile \
-  --quiet \
-  --json "$ROOT/target/performance/sqlglot-transpile-all-c-v0.6.0.json"
-```
-
-No explicit input or output dialect was supplied. These results therefore
-measure each library's default parse-plus-SQL-generation path, not the cost of a
-specific cross-dialect rewrite.
+The same upstream runner's `--mode transpile` calls SQLGlot through
+`transpile(..., error_level=IGNORE)[0]` and Polyglot through `transpile(...)[0]`.
+All three measured implementations completed all 16 queries. This uses the
+same fastest-of-up-to-five timing method and package versions as parsing.
+No explicit source or target dialect is supplied, so this measures the default
+parse-plus-SQL-generation path rather than a particular cross-dialect rewrite.
 
 | Query | SQLGlot | SQLGlot[c] | Polyglot | SQLGlot / Polyglot | SQLGlot[c] / Polyglot |
 |---|---:|---:|---:|---:|---:|
-| TPC-H | 2.112 ms | 418.7 us | **147.1 us** | 14.35x | 2.85x |
-| Short | 151.5 us | 33.2 us | **8.9 us** | 16.99x | 3.72x |
-| Deep arithmetic | 5.647 ms | 1.439 ms | **426.6 us** | 13.24x | 3.37x |
-| Large `IN` | 303.003 ms | 63.033 ms | **21.272 ms** | 14.24x | 2.96x |
-| Values | 324.346 ms | 69.840 ms | **23.768 ms** | 13.65x | 2.94x |
-| Many joins | 8.867 ms | 1.961 ms | **391.3 us** | 22.66x | 5.01x |
-| Many unions | 31.080 ms | 6.623 ms | **2.342 ms** | 13.27x | 2.83x |
-| Nested subqueries | 965.5 us | 177.8 us | **30.8 us** | 31.40x | 5.78x |
-| Many columns | 8.869 ms | 2.056 ms | **592.9 us** | 14.96x | 3.47x |
-| Large `CASE` | 25.340 ms | 5.549 ms | **1.462 ms** | 17.33x | 3.79x |
-| Complex `WHERE` | 21.289 ms | 4.610 ms | **1.134 ms** | 18.78x | 4.07x |
-| Many CTEs | 12.333 ms | 2.524 ms | **482.0 us** | 25.59x | 5.24x |
-| Many windows | 13.794 ms | 3.266 ms | **793.5 us** | 17.38x | 4.12x |
-| Nested functions | 418.9 us | 92.5 us | **33.3 us** | 12.58x | 2.78x |
-| Large strings | 3.569 ms | 828.0 us | **301.5 us** | 11.84x | 2.75x |
-| Many numbers | 70.271 ms | 14.562 ms | **4.449 ms** | 15.79x | 3.27x |
+| TPC-H | 2.096 ms | 421.7 us | **102.1 us** | 20.53x | 4.13x |
+| Short | 155.3 us | 34.9 us | **11.3 us** | 13.70x | 3.08x |
+| Deep arithmetic | 6.129 ms | 1.597 ms | **417.2 us** | 14.69x | 3.83x |
+| Large `IN` | 311.853 ms | 65.701 ms | **21.975 ms** | 14.19x | 2.99x |
+| Values | 333.098 ms | 76.852 ms | **21.988 ms** | 15.15x | 3.50x |
+| Many joins | 8.655 ms | 1.968 ms | **395.7 us** | 21.87x | 4.97x |
+| Many unions | 32.420 ms | 6.940 ms | **2.387 ms** | 13.58x | 2.91x |
+| Nested subqueries | 922.8 us | 187.6 us | **30.6 us** | 30.17x | 6.13x |
+| Many columns | 8.999 ms | 2.276 ms | **628.1 us** | 14.33x | 3.62x |
+| Large `CASE` | 26.359 ms | 6.143 ms | **1.583 ms** | 16.65x | 3.88x |
+| Complex `WHERE` | 20.330 ms | 4.925 ms | **1.182 ms** | 17.20x | 4.17x |
+| Many CTEs | 12.691 ms | 2.585 ms | **493.2 us** | 25.73x | 5.24x |
+| Many windows | 13.916 ms | 3.573 ms | **849.1 us** | 16.39x | 4.21x |
+| Nested functions | 463.5 us | 98.5 us | **37.0 us** | 12.51x | 2.66x |
+| Large strings | 3.863 ms | 814.0 us | **347.2 us** | 11.12x | 2.34x |
+| Many numbers | 70.886 ms | 15.492 ms | **4.801 ms** | 14.76x | 3.23x |
 
-Across these queries, the transpilation geometric-mean ratio is **16.50x in
-Polyglot's favor against pure-Python SQLGlot** and **3.58x in Polyglot's favor
-against SQLGlot[c]**. Polyglot recorded the lowest transpilation time for every
-query in this run.
+The geometric-mean ratios are **16.44x against pure-Python SQLGlot**
+and **3.69x against SQLGlot[c]**, in Polyglot's favor.
+Polyglot recorded the lowest transpilation time on **16/16 queries**.
 
-![Logarithmic transpilation benchmark for SQLGlot compiled extensions 30.12.0 and Polyglot 0.6.0](images/current-benchmarks-transpile.png)
+![Logarithmic transpilation comparison of SQLGlot compiled extensions 30.27.0 and Polyglot 0.14.0](images/current-benchmarks-transpile.png)
 
-The focused logarithmic chart compares SQLGlot[c] 30.12.0 with Polyglot 0.6.0
-across the complete corpus. Pure-Python SQLGlot remains available in the table.
+![Hybrid-scale transpilation comparison of SQLGlot compiled extensions 30.27.0 and Polyglot 0.14.0](images/current-benchmarks-transpile-hybrid.png)
 
-![Hybrid-scale transpilation benchmark for SQLGlot compiled extensions 30.12.0 and Polyglot 0.6.0](images/current-benchmarks-transpile-hybrid.png)
-
-The hybrid transpilation chart follows the parsing chart's scale: linear from 0
-through 5 ms, then base-2 logarithmic ticks at `5, 10, 20, 40, 80, ...`. Equal
-spacing above the transition therefore represents an exact doubling.
+The focused transpilation charts use the same logarithmic and linear-then-log
+scales as the parsing charts.
 
 ## Interpretation
 
-These tools do not all provide equivalent behavior. SQLParse is primarily a
-non-validating parser/tokenizer, SQLFluff performs richer structural work, and
-the parsers differ in accepted syntax, error recovery, dialect defaults, and AST
-construction. The benchmark measures the specific public calls selected by
-SQLGlot's script, not equivalent correctness or feature coverage.
+These tools perform different work and accept different syntax. SQLParse is
+primarily a non-validating parser/tokenizer, SQLFluff performs richer structural
+work, and parsers differ in error recovery, dialect defaults, and AST creation.
+The benchmark measures specific public calls, not equivalent correctness or
+feature coverage. Ratios are geometric means of per-query ratios, with every
+query weighted equally.
 
-The fastest-of-five method also favors best-case latency and does not show
-variance, cold-start cost, memory usage, throughput under concurrency, or
-end-to-end work such as AST serialization and SQL generation. The results should
-therefore be read as a reproducible snapshot for this corpus and environment,
-not as a universal performance claim.
+Fastest-of-five timings describe best-case latency for this machine and corpus.
+They do not provide confidence intervals, cold-start cost, memory usage, or
+concurrent throughput. Parsing excludes downstream AST use and SQL generation;
+the transpilation section includes SQL generation. The machine was a normal
+interactive development environment. Versions, OS, and installation method differ
+from the previous report, so these results are not a controlled before/after
+measurement of Polyglot's recent optimizations.

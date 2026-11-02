@@ -1925,6 +1925,7 @@ pub(super) fn rewrite_unnest_expansion(
             comments: Vec::new(),
             nesting_group: 0,
             directed: false,
+            nearest: None,
         }
     }
 

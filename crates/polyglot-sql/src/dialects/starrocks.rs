@@ -76,6 +76,18 @@ impl DialectImpl for StarRocksDialect {
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
+            Expression::Select(mut select) => {
+                if let Some(from) = &mut select.from {
+                    for expr in &mut from.expressions {
+                        if let Expression::Unnest(f) = expr {
+                            if f.alias.is_none() {
+                                f.alias = Some(crate::expressions::Identifier::new("unnest"));
+                            }
+                        }
+                    }
+                }
+                Ok(Expression::Select(select))
+            }
             // IFNULL is native in StarRocks (MySQL-style)
             Expression::IfNull(f) => Ok(Expression::IfNull(f)),
 
@@ -162,6 +174,76 @@ impl StarRocksDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
+            "TIME_SLICE" => {
+                use crate::expressions::{Literal, Var};
+                let mut f = f;
+                if f.args.len() >= 3 && !matches!(&f.args[1], Expression::Interval(_)) {
+                    let unit_name = match &f.args[2] {
+                        Expression::Literal(lit) => match lit.as_ref() {
+                            Literal::String(s) => Some(s.to_ascii_uppercase()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let unit = match unit_name.as_deref() {
+                        Some("YEAR") => Some(IntervalUnit::Year),
+                        Some("QUARTER") => Some(IntervalUnit::Quarter),
+                        Some("MONTH") => Some(IntervalUnit::Month),
+                        Some("WEEK") => Some(IntervalUnit::Week),
+                        Some("DAY") => Some(IntervalUnit::Day),
+                        Some("HOUR") => Some(IntervalUnit::Hour),
+                        Some("MINUTE") => Some(IntervalUnit::Minute),
+                        Some("SECOND") => Some(IntervalUnit::Second),
+                        Some("MILLISECOND") => Some(IntervalUnit::Millisecond),
+                        Some("MICROSECOND") => Some(IntervalUnit::Microsecond),
+                        _ => None,
+                    };
+                    if let Some(unit) = unit {
+                        let count = f.args.remove(1);
+                        f.args.remove(1);
+                        f.args.insert(
+                            1,
+                            Expression::Interval(Box::new(Interval {
+                                this: Some(count),
+                                unit: Some(IntervalUnitSpec::Simple {
+                                    unit,
+                                    use_plural: false,
+                                }),
+                            })),
+                        );
+                    }
+                }
+                if let Some(Expression::Interval(interval)) = f.args.get_mut(1) {
+                    if let Some(Expression::Literal(lit)) = &interval.this {
+                        if let Literal::String(value) = lit.as_ref() {
+                            if let Ok(value) = value.parse::<i64>() {
+                                interval.this = Some(Expression::number(value));
+                            }
+                        }
+                    }
+                }
+                if f.args.len() == 3 && matches!(&f.args[1], Expression::Interval(_)) {
+                    let boundary = match &f.args[2] {
+                        Expression::Column(c) if c.table.is_none() => {
+                            Some(c.name.name.to_ascii_uppercase())
+                        }
+                        Expression::Literal(lit) => match lit.as_ref() {
+                            Literal::String(s) => Some(s.to_ascii_uppercase()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(boundary) =
+                        boundary.filter(|s| matches!(s.as_str(), "FLOOR" | "CEIL"))
+                    {
+                        f.args[2] = Expression::Var(Box::new(Var { this: boundary }));
+                    }
+                }
+                Ok(Expression::Function(Box::new(f)))
+            }
+            "LIKE" if f.args.len() == 2 => Ok(Expression::Like(Box::new(
+                crate::expressions::LikeOp::new(f.args[0].clone(), f.args[1].clone()),
+            ))),
             // NVL -> IFNULL
             "NVL" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
                 "IFNULL".to_string(),

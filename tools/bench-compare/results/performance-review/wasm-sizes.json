@@ -1,0 +1,17 @@
+[
+  {
+    "variant": "unoptimized",
+    "bytes": 46426693,
+    "gzip_bytes": 7909337
+  },
+  {
+    "variant": "Oz",
+    "bytes": 38958807,
+    "gzip_bytes": 9094146
+  },
+  {
+    "variant": "O3",
+    "bytes": 39358683,
+    "gzip_bytes": 9102080
+  }
+]

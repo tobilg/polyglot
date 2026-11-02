@@ -4,6 +4,110 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.14.0] - 2026-11-02
+
+### Added
+
+- Parsing and generation for ClickHouse pipe queries, stream watermarks, and
+  `LIMIT AFTER`/`UNTIL` boundaries; Trino query-local SQL routines; DuckDB
+  nearest joins; Hive/Spark multiple inserts; and Doris match predicates with
+  analyzer selection. Unsupported target dialects report conversion errors.
+- Python expression subclasses and type stubs for the ten new AST variants,
+  including `PipeQuery`, `MultiInsert`, `WithFunction`, and `DorisMatch`.
+
+### Changed
+
+- Rust parsing shares source text for token ranges, and AST JSON decoding avoids
+  intermediate copies for standard inputs. AST diffing, type annotation,
+  validation, and lineage reuse matching data and scope lookups.
+- Python AST traversal uses immutable shared views instead of copying descendant
+  subtrees. TypeScript read-only traversal avoids rebuilding containers, and
+  `findFirst` stops visiting once it finds a match.
+- Playground parsing, formatting, transpilation, validation, and lineage run in
+  a Web Worker. Tabs ignore results from superseded requests or edited inputs,
+  and lineage reuses its result to collect source tables.
+- Public Rust AST types gain expression variants and fields for the new syntax,
+  including join, DML, DDL, and refresh options. Callers constructing these types
+  directly or matching enums exhaustively may need to update their code.
+- Compatibility fixtures now target SQLGlot 30.27.0 and ClickHouse
+  26.10.2.103-stable. Benchmark entry points share a locked environment with
+  SQLGlot[c] 30.27.0, SQLFluff 4.5.0, SQLParse 0.6.1, and SQLOxide 0.61.1.
+  Benchmark tooling now requires Python 3.10 or newer and includes SQLOxide on
+  Python 3.14.
+
+### Fixed
+
+- Dialect round trips retain additional table and column options, constraints,
+  view properties, materialized-view refresh schedules, replacement keys, and
+  structured update targets across MySQL, PostgreSQL, Oracle, ClickHouse,
+  StarRocks, Spark, Databricks, and Snowflake.
+- Literal and expression handling preserves Oracle alternative quotes,
+  Hive/Spark escapes, PostgreSQL's internal `"char"` type, decimal precision,
+  Trino temporal precision and time zones, SQLite operator grouping, and
+  DuckDB regex, lambda, interval, and explicit sort semantics.
+- Cross-dialect generation preserves date-format fields, filtered counts,
+  array boundaries, NULL behavior, JSON key/index distinctions, and T-SQL
+  pagination scope. Conversions that cannot preserve source semantics now
+  report unsupported cases, including affected JSON, numeric, temporal, array,
+  and locking operations.
+- ClickHouse fixture extraction handles quoted SQL correctly and excludes
+  vendor-marked negative tests from successful round-trip expectations.
+
+## [0.13.5] - 2026-10-31
+
+### Added
+
+- Projection upstream references expose `pathTransformKind`, `pathFunctions`,
+  and `pathWindow` across Rust, TypeScript, Python, and Go. These describe
+  transformations through CTEs, derived tables, and set-operation branches;
+  the projection's existing `transformKind` retains its meaning. Paths to the
+  same source column merge their functions and strongest transform kind.
+  ([#516](https://github.com/tobilg/polyglot/pull/516))
+
+### Changed
+
+- OpenLineage prepares and scopes each query once, then resolves all output
+  columns against that shared scope.
+  ([#512](https://github.com/tobilg/polyglot/pull/512))
+- Rust callers constructing `ColumnReferenceFact` directly must supply the new
+  path metadata fields. Shared Rust verification also includes the DuckDB
+  decimal-precision regression suite.
+
+### Fixed
+
+- Star expansion applies `EXCEPT`/`EXCLUDE`, `REPLACE`, and `RENAME` throughout
+  qualification, query analysis, lineage, and OpenLineage. Stars over CTEs,
+  derived tables, `PIVOT`, and `UNPIVOT` expose their output columns; quoted
+  modifier names retain dialect-specific case rules. ClickHouse pattern
+  exclusions remain unexpanded and produce an OpenLineage warning.
+  ([#516](https://github.com/tobilg/polyglot/pull/516))
+- Query analysis and lineage resolve pivot aggregates and pivot fields, unpivot
+  passthrough columns, ClickHouse `ARRAY JOIN` aliases, literal Snowflake
+  `IDENTIFIER` table names, and lateral outer references. Traced constants no
+  longer acquire spurious upstream columns, and path metadata respects nested
+  query scopes and quoted function identities.
+  ([#516](https://github.com/tobilg/polyglot/pull/516))
+- DuckDB preserves leading-dot decimal literals, including trailing zeroes,
+  signs, exponents, and maximum-precision fractions, without inserting a
+  leading zero that changes inferred decimal precision.
+  ([#508](https://github.com/tobilg/polyglot/pull/508))
+- `QUALIFY` emulation reuses projected window results and preserves output
+  names, correlated subqueries, `DISTINCT`, ordering, and row limits, including
+  nested CTEs. `DISTINCT ON` runs after the qualification filter; unresolved
+  wildcard outputs report errors. Redshift retains native `QUALIFY` syntax.
+- `UNION BY NAME` conversion aligns known output names and fills missing
+  columns with `NULL`, preserving branch-local ordering, limits, and anonymous
+  parameter binding order. Unknown or ambiguous outputs report errors.
+- MySQL generation preserves explicit and source-default NULL ordering for
+  queries and windows, including aliases and known ordinal sort keys. Unsafe
+  rewrites involving unresolved ordinals or `RANGE`/`GROUPS` frames report
+  errors. StarRocks and Doris use native NULL-ordering syntax.
+- Casts from other dialects to ClickHouse preserve nullable scalar values,
+  including typed `NULL`, parameterized types, and wide or unsigned integers.
+  Native ClickHouse casts retain explicit nullability, map keys stay
+  non-nullable, and unsupported NULL container casts report errors in strict
+  mode.
+
 ## [0.13.4] - Unreleased
 
 ### Added
@@ -2199,6 +2303,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.14.0]: https://github.com/tobilg/polyglot/compare/v0.13.5...v0.14.0
+[0.13.5]: https://github.com/tobilg/polyglot/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/tobilg/polyglot/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/tobilg/polyglot/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/tobilg/polyglot/compare/v0.13.1...v0.13.2

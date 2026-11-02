@@ -1,0 +1,51 @@
+{
+  "rust": {
+    "passed": 2755,
+    "failed": 3,
+    "ignored": 5,
+    "failure_status": "All three are reproduced by the untouched baseline; see baseline-test-failures.json."
+  },
+  "python": {
+    "passed": 327,
+    "skipped": 2,
+    "build": "Final optimized performance-profile extension; same settings as baseline."
+  },
+  "ffi": {
+    "passed": 87
+  },
+  "compatibility": {
+    "cases": 1540,
+    "matched": 1540
+  },
+  "worker_client": {
+    "passed": 4,
+    "coverage": [
+      "Concurrent request IDs",
+      "Failure recovery and late error isolation",
+      "Requests queued during WASM initialization",
+      "Initialization errors reach queued requests"
+    ]
+  },
+  "minimal_features": "cargo check -p polyglot-sql --no-default-features --features transpile --offline passed on final core code.",
+  "sdk": {
+    "passed": 644,
+    "scope": "642 tests in the full final SDK suite, plus two worker-startup regression tests. Four worker tests passed in the final targeted rerun."
+  },
+  "typechecks": {
+    "sdk": "passed",
+    "playground": "passed"
+  },
+  "playground_build": "passed; production Vite build",
+  "browser": {
+    "passed": true,
+    "checks": [
+      "Metadata returned through worker at startup",
+      "Transpile and format return SQL",
+      "Only the first tab editor mounts initially",
+      "Visited tab retains its output",
+      "No page runtime exceptions"
+    ],
+    "artifact": "browser-smoke.json"
+  },
+  "diff_check": "passed"
+}

@@ -110,7 +110,13 @@ fn test_clickhouse_normalized_roundtrip_coverage() {
 
             match normalized_roundtrip_test(&test.sql) {
                 Ok(()) => passed += 1,
-                Err(_) => failed += 1,
+                Err(error) => {
+                    failed += 1;
+                    println!(
+                        "FAIL [{}] {}\n  {}\n{}",
+                        file.category, test.description, test.sql, error
+                    );
+                }
             }
         }
 
