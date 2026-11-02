@@ -99,39 +99,75 @@ function processValue(
   return value;
 }
 
-/**
- * Collect immediate expression children while preserving the legacy grouping
- * of direct Expression arrays exposed by `getChildren()`.
- */
+/** Read-only traversal never rebuilds arrays or ordinary payload structs. */
+function visitValue(
+  value: unknown,
+  location: ExpressionLocation,
+  visitor: (node: Expression, location: ExpressionLocation) => boolean,
+  visitArray?: (nodes: Expression[], location: ExpressionLocation) => void,
+): boolean {
+  if (value === null || value === undefined) return true;
+  if (isExpressionValue(value)) return visitor(value, location);
+  if (Array.isArray(value)) {
+    if (
+      visitArray &&
+      location.index === null &&
+      value.length > 0 &&
+      value.every(isExpressionValue)
+    ) {
+      visitArray(value, location);
+      return true;
+    }
+    // Match Array.forEach's original length snapshot if a visitor mutates it.
+    const length = value.length;
+    for (let index = 0; index < length; index++) {
+      if (
+        !visitValue(value[index], { ...location, index }, visitor, visitArray)
+      )
+        return false;
+    }
+  } else if (typeof value === 'object') {
+    for (const fieldValue of Object.values(value)) {
+      if (!visitValue(fieldValue, location, visitor, visitArray)) return false;
+    }
+  }
+  return true;
+}
+
+/** Collect children, preserving the legacy grouping of direct expression arrays. */
 export function collectExpressionChildren(
   parent: Expression,
 ): Array<{ key: string; value: Expression | Expression[] }> {
-  const children: Array<{
-    key: string;
-    value: Expression | Expression[];
-  }> = [];
-  const innerData = getExprData(parent);
-  if (!innerData || typeof innerData !== 'object') return children;
-
-  for (const [key, value] of Object.entries(innerData)) {
-    processValue(
+  const children: Array<{ key: string; value: Expression | Expression[] }> = [];
+  const data = getExprData(parent);
+  if (!data || typeof data !== 'object') return children;
+  for (const [key, value] of Object.entries(data)) {
+    visitValue(
       value,
       { parent, key, index: null },
-      {
-        cloneContainers: false,
-        onExpression: (node, location) => {
-          children.push({ key: location.key, value: node });
-          return node;
-        },
-        onExpressionArray: (nodes, location) => {
-          children.push({ key: location.key, value: nodes });
-        },
+      (node, location) => {
+        children.push({ key: location.key, value: node });
+        return true;
       },
-      false,
+      (nodes, location) => {
+        children.push({ key: location.key, value: nodes });
+      },
     );
   }
-
   return children;
+}
+
+/** Stop immediately when a visitor returns false, including inside containers. */
+export function visitExpressionChildrenWhile(
+  parent: Expression,
+  visitor: (node: Expression, location: ExpressionLocation) => boolean,
+): boolean {
+  const data = getExprData(parent);
+  if (!data || typeof data !== 'object') return true;
+  for (const [key, value] of Object.entries(data)) {
+    if (!visitValue(value, { parent, key, index: null }, visitor)) return false;
+  }
+  return true;
 }
 
 /** Visit every immediate expression child below an expression payload. */
@@ -139,23 +175,10 @@ export function visitExpressionChildren(
   parent: Expression,
   visitor: (node: Expression, location: ExpressionLocation) => void,
 ): void {
-  const innerData = getExprData(parent);
-  if (!innerData || typeof innerData !== 'object') return;
-
-  for (const [key, value] of Object.entries(innerData)) {
-    processValue(
-      value,
-      { parent, key, index: null },
-      {
-        cloneContainers: false,
-        onExpression: (node, location) => {
-          visitor(node, location);
-          return node;
-        },
-      },
-      false,
-    );
-  }
+  visitExpressionChildrenWhile(parent, (node, location) => {
+    visitor(node, location);
+    return true;
+  });
 }
 
 /**

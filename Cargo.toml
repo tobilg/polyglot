@@ -13,7 +13,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.13.5"
+version = "0.14.0"
 edition = "2021"
 license = "MIT"
 authors = ["polyglot contributors"]
@@ -67,4 +67,13 @@ lto = "thin"
 inherits = "release"
 opt-level = 2
 lto = "thin"
+panic = "unwind"
+
+# Reproducible before/after measurements without a whole-program LTO rebuild.
+# Keep these settings fixed when comparing runtime changes.
+[profile.performance]
+inherits = "release"
+opt-level = 2
+lto = "off"
+codegen-units = 16
 panic = "unwind"

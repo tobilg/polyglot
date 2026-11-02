@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
+import { runSql } from "@/lib/sql-client";
+import { ErrorDisplay } from "@/components/shared/error-display";
 import { useLocation, useNavigate, Navigate, Routes, Route } from "react-router-dom";
-import { getDialects, getVersion } from "@polyglot-sql/sdk";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -44,12 +45,24 @@ function capitalize(s: string): string {
 }
 
 function AppLayout() {
-  const dialects = useMemo(() => getDialects(), []);
-  const version = useMemo(() => getVersion(), []);
+  const [{ dialects, version }, setMetadata] = useState({ dialects: [] as string[], version: "…" });
+  const [startupError, setStartupError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    runSql("metadata").then((metadata) => {
+      if (active) setMetadata(metadata);
+    }).catch((error) => {
+      if (active) setStartupError(String(error));
+    });
+    return () => { active = false; };
+  }, []);
   const location = useLocation();
   const navigate = useNavigate();
 
   const { mainTab, subTab } = parseTabFromPath(location.pathname);
+  const [visited, setVisited] = useState(() => new Set([mainTab]));
+  // Record visits during render so the first frame mounts the selected tab.
+  if (!visited.has(mainTab)) setVisited(new Set([...visited, mainTab]));
 
   const setActiveTab = (tab: string) => {
     if (tab === "validate") navigate("/validate/syntax");
@@ -64,6 +77,7 @@ function AppLayout() {
       <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
         <Header version={version} />
         <main className="flex-1 min-h-0 flex flex-col max-w-7xl w-full mx-auto px-4 py-4">
+          <ErrorDisplay error={startupError} />
           <Tabs value={mainTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
             <TabsList className="mb-4 shrink-0">
               <TabsTrigger value="transpile" className="gap-1.5">
@@ -92,19 +106,19 @@ function AppLayout() {
             </TabsList>
 
             <TabsContent value="transpile" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
-              <TranspileTab dialects={dialects} />
+              {visited.has("transpile") && <TranspileTab dialects={dialects} />}
             </TabsContent>
             <TabsContent value="ast" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
-              <AstExplorerTab dialects={dialects} />
+              {visited.has("ast") && <AstExplorerTab dialects={dialects} />}
             </TabsContent>
             <TabsContent value="format" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
-              <FormatterTab />
+              {visited.has("format") && <FormatterTab />}
             </TabsContent>
             <TabsContent value="validate" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
-              <ValidationTab dialects={dialects} mode={subTab ?? "syntax"} onModeChange={setSubTab} />
+              {visited.has("validate") && <ValidationTab dialects={dialects} mode={subTab ?? "syntax"} onModeChange={setSubTab} />}
             </TabsContent>
             <TabsContent value="lineage" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
-              <LineageTab dialects={dialects} />
+              {visited.has("lineage") && <LineageTab dialects={dialects} />}
             </TabsContent>
           </Tabs>
         </main>

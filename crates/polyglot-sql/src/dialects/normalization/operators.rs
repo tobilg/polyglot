@@ -1189,7 +1189,7 @@ pub(super) fn rewrite(
                         inferred_type: None,
                     }));
                     let condition = Expression::Eq(Box::new(BinaryOp::new(
-                        effective_pattern,
+                        pattern,
                         Expression::Literal(Box::new(Literal::String(String::new()))),
                     )));
                     Ok(Expression::Case(Box::new(Case {
@@ -1317,7 +1317,7 @@ pub(super) fn rewrite(
 
                     // WHEN pattern = '' THEN 0
                     let empty_pattern_check = Expression::Eq(Box::new(BinaryOp::new(
-                        effective_pattern.clone(),
+                        pattern.clone(),
                         Expression::Literal(Box::new(Literal::String(String::new()))),
                     )));
 

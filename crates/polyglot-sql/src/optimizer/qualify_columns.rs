@@ -4540,6 +4540,7 @@ mod tests {
             comments: vec![],
             nesting_group: 0,
             directed: false,
+            nearest: None,
         };
         let reserved = get_reserved_words(None);
         quote_join(&mut join, &reserved);

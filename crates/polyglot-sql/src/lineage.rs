@@ -20,6 +20,7 @@ use crate::scope::{
 };
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
 /// The ordered output description of a query.
@@ -1004,6 +1005,7 @@ struct ScopeId(usize);
 
 struct IndexedScope {
     scope: Scope,
+    output_index: OnceCell<OutputIndex>,
     subquery_scopes: Vec<ScopeId>,
     derived_table_scopes: Vec<ScopeId>,
     cte_scopes: Vec<ScopeId>,
@@ -1014,6 +1016,7 @@ struct LineageScopeContext {
     scopes: Vec<IndexedScope>,
     /// Usage analysis must not claim undeclared qualifiers as physical tables.
     conservative: bool,
+    include_source_queries: bool,
 }
 
 /// Reuse the lineage resolver for analysis of non-output column occurrences.
@@ -1044,6 +1047,13 @@ impl ScopedLineage {
             ctes: Vec::new(),
             dialect,
         })
+    }
+
+    /// OpenLineage consumes terminal fields and branch metadata, not copies of
+    /// intermediate queries. Resolution policy remains identical to public lineage.
+    pub(crate) fn without_source_queries(mut self) -> Self {
+        self.context.include_source_queries = false;
+        self
     }
 
     pub(crate) fn named(&self, column: &str) -> Result<LineageNode> {
@@ -1160,6 +1170,7 @@ impl LineageScopeContext {
         let mut context = Self {
             scopes: Vec::new(),
             conservative: false,
+            include_source_queries: true,
         };
         let root = context.insert_scope(scope);
         (context, root)
@@ -1186,6 +1197,7 @@ impl LineageScopeContext {
         let id = ScopeId(self.scopes.len());
         self.scopes.push(IndexedScope {
             scope,
+            output_index: OnceCell::new(),
             subquery_scopes,
             derived_table_scopes,
             cte_scopes,
@@ -1297,13 +1309,21 @@ fn to_node_inner(
     }
 
     // 2. Find the select expression for this column
-    let select_expr = find_select_expr(effective_expr, lookup_column, dialect)?;
+    let select_expr = if let Expression::Select(select) = effective_expr {
+        context
+            .indexed(scope_id)
+            .output_index
+            .get_or_init(|| OutputIndex::new(select, dialect))
+            .find(select, lookup_column, dialect)?
+    } else {
+        find_select_expr(effective_expr, lookup_column, dialect)?
+    };
     let column_name = resolve_column_name(&column, &select_expr);
 
     // 3. Trim source if requested
     // Internal fact consumers need physical leaf sources, not a copy of the
     // entire SELECT for every output. Public lineage retains its source ASTs.
-    let node_source = if context.conservative {
+    let node_source = if context.conservative || !context.include_source_queries {
         Expression::Null(crate::expressions::Null)
     } else if trim_selects {
         trim_source(effective_expr, &select_expr)
@@ -1579,7 +1599,11 @@ fn handle_set_operation(
             .unwrap_or_else(|| format!("_{col_index}")),
     };
 
-    let mut node = LineageNode::new(&col_name, scope_expr.clone(), scope_expr.clone());
+    let mut node = if context.include_source_queries {
+        LineageNode::new(&col_name, scope_expr.clone(), scope_expr.clone())
+    } else {
+        LineageNode::new(&col_name, Expression::null(), Expression::null())
+    };
     if let Some(scope_type) = scope_type_override {
         apply_scope_context_with_type(
             &mut node,
@@ -2927,6 +2951,100 @@ fn leftmost_output_select(expression: &Expression) -> Option<&Select> {
         Expression::Cte(cte) => leftmost_output_select(&cte.this),
         Expression::Paren(paren) => leftmost_output_select(&paren.this),
         _ => None,
+    }
+}
+
+/// One output lookup table per immutable scope. Duplicate names remain
+/// ambiguous even when multiple outputs originate in the same projection.
+struct OutputIndex {
+    names: HashMap<String, Option<usize>>,
+    ordinals: Vec<usize>,
+    wildcard_start: Option<usize>,
+}
+
+impl OutputIndex {
+    fn new(select: &Select, dialect: Option<DialectType>) -> Self {
+        let mut index = Self {
+            names: HashMap::new(),
+            ordinals: Vec::new(),
+            wildcard_start: None,
+        };
+        for entry in output_layout(select) {
+            let name = match entry.column {
+                OutputColumn::Named { name, ordinal } => {
+                    if ordinal.is_some() {
+                        index.ordinals.push(entry.projection_index);
+                    }
+                    Some(normalize_column_name(&name, dialect))
+                }
+                OutputColumn::Unnamed { ordinal } => {
+                    if ordinal.is_some() {
+                        index.ordinals.push(entry.projection_index);
+                    }
+                    None
+                }
+                OutputColumn::Wildcard { start_ordinal, .. } => {
+                    if index.wildcard_start.is_none() {
+                        index.wildcard_start = Some(start_ordinal.unwrap_or(0));
+                    }
+                    Some("*".to_owned())
+                }
+            };
+            if let Some(name) = name {
+                index
+                    .names
+                    .entry(name)
+                    .and_modify(|value| *value = None)
+                    .or_insert(Some(entry.projection_index));
+            }
+        }
+        index
+    }
+
+    fn find(
+        &self,
+        select: &Select,
+        column: &ColumnRef<'_>,
+        dialect: Option<DialectType>,
+    ) -> Result<Expression> {
+        match column {
+            ColumnRef::Name(name) => {
+                match self.names.get(&normalize_column_name(name, dialect)) {
+                    Some(Some(index)) => return Ok(select.expressions[*index].clone()),
+                    Some(None) => {
+                        return Err(name_resolution_error(
+                            name,
+                            ColumnResolutionReason::Ambiguous,
+                        ))
+                    }
+                    None => {}
+                }
+                if let Some(expression) = synthesize_star_passthrough_expr(select, name, dialect) {
+                    return Ok(expression);
+                }
+                Err(name_resolution_error(
+                    name,
+                    if self.wildcard_start.is_some() {
+                        ColumnResolutionReason::Indeterminate
+                    } else {
+                        ColumnResolutionReason::NotFound
+                    },
+                ))
+            }
+            ColumnRef::Index(ordinal) => {
+                if let Some(index) = self.ordinals.get(*ordinal) {
+                    return Ok(select.expressions[*index].clone());
+                }
+                Err(ordinal_resolution_error(
+                    *ordinal,
+                    if self.wildcard_start.is_some_and(|start| *ordinal >= start) {
+                        ColumnResolutionReason::Indeterminate
+                    } else {
+                        ColumnResolutionReason::NotFound
+                    },
+                ))
+            }
+        }
     }
 }
 
@@ -4583,6 +4701,48 @@ fn collect_column_refs(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn indexed_output_lookup_matches_uncached_resolution() {
+        for dialect in [
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+            DialectType::Snowflake,
+        ] {
+            for sql in [
+                "SELECT x AS a, y AS b FROM t",
+                "SELECT x AS a, y AS a FROM t",
+                "SELECT *, x AS a FROM t",
+                "SELECT x AS a, t.*, y AS b FROM t",
+                "SELECT x AS \"MiXeD\", 1 + 2 FROM t",
+            ] {
+                let expression = crate::parse_one(sql, dialect).unwrap();
+                let Expression::Select(select) = expression else {
+                    unreachable!()
+                };
+                let index = OutputIndex::new(&select, Some(dialect));
+                for name in ["a", "b", "x", "*", "MiXeD", "missing"] {
+                    assert_eq!(
+                        index
+                            .find(&select, &ColumnRef::Name(name), Some(dialect))
+                            .map_err(|e| e.to_string()),
+                        find_select_expr_by_name(&select, name, Some(dialect))
+                            .map_err(|e| e.to_string()),
+                        "{sql}: {name}",
+                    );
+                }
+                for ordinal in 0..5 {
+                    assert_eq!(
+                        index
+                            .find(&select, &ColumnRef::Index(ordinal), Some(dialect))
+                            .map_err(|e| e.to_string()),
+                        find_select_expr_by_ordinal(&select, ordinal).map_err(|e| e.to_string()),
+                        "{sql}: {ordinal}",
+                    );
+                }
+            }
+        }
+    }
+
     use super::*;
     use crate::dialects::{Dialect, DialectType};
     use crate::expressions::DataType;

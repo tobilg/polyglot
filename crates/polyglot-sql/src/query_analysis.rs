@@ -463,7 +463,7 @@ struct NullabilityContext<'a> {
 
 struct NullabilityScope<'a> {
     scope: &'a Scope,
-    selected: Scope,
+    selected: HashMap<String, &'a SourceInfo>,
     bindings: HashMap<String, &'a Expression>,
     ctes: HashMap<String, usize>,
     derived: Vec<usize>,
@@ -530,7 +530,7 @@ impl<'a> NullabilityContext<'a> {
         };
         self.scopes.push(NullabilityScope {
             scope,
-            selected: crate::scope::selected_reference_scope(scope),
+            selected: crate::scope::selected_reference_sources(scope),
             bindings,
             ctes: HashMap::new(),
             derived: Vec::new(),
@@ -1682,7 +1682,7 @@ impl NullabilityContext<'_> {
         }
         if source.kind == SourceKind::Table {
             let mut resolver = crate::resolver::Resolver::new(
-                &frame.selected,
+                frame.scope,
                 self.mapping_schema.unwrap_or(&self.empty_schema),
                 false,
             );
@@ -1720,7 +1720,7 @@ impl NullabilityContext<'_> {
                         crate::set_operation::identifier_key(identifier, Some(self.dialect)) == key
                     })
                 })
-                .filter_map(|(name, _)| frame.selected.sources.get_key_value(name));
+                .filter_map(|(name, _)| frame.selected.get_key_value(name));
             let binding = matches.next();
             if matches.next().is_some() {
                 return Unknown;
@@ -1728,7 +1728,7 @@ impl NullabilityContext<'_> {
             binding
         } else {
             let mut binding = None;
-            for (name, source) in &frame.selected.sources {
+            for (name, source) in &frame.selected {
                 // An open source can also provide this column. Do not pick a
                 // known source just because the other source lacks metadata.
                 let Some(columns) = self.source_columns(frame, name, source) else {

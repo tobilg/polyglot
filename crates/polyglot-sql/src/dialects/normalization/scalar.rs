@@ -2750,6 +2750,9 @@ pub(super) fn rewrite(
                         // ARRAY_SORT(x) or ARRAY_SORT(x, lambda) -> SORT_ARRAY(x) for Hive, LIST_SORT for DuckDB
                         "ARRAY_SORT" if f.args.len() >= 1 => {
                             match target {
+                                DialectType::DuckDB if source == DialectType::DuckDB => {
+                                    Ok(Expression::Function(f))
+                                }
                                 DialectType::Hive => {
                                     let mut args = f.args;
                                     args.truncate(1); // Drop lambda comparator
@@ -5165,6 +5168,30 @@ pub(super) fn rewrite(
                                                     ))),
                                                 ),
                                             )),
+                                            "NANOSECOND" => {
+                                                Expression::Mul(Box::new(BinaryOp::new(
+                                                    paren_diff,
+                                                    Expression::Literal(Box::new(Literal::Number(
+                                                        "86400000000000.0".into(),
+                                                    ))),
+                                                )))
+                                            }
+                                            "MICROSECOND" => {
+                                                Expression::Mul(Box::new(BinaryOp::new(
+                                                    paren_diff,
+                                                    Expression::Literal(Box::new(Literal::Number(
+                                                        "86400000000.0".into(),
+                                                    ))),
+                                                )))
+                                            }
+                                            "MILLISECOND" => {
+                                                Expression::Mul(Box::new(BinaryOp::new(
+                                                    paren_diff,
+                                                    Expression::Literal(Box::new(Literal::Number(
+                                                        "86400000.0".into(),
+                                                    ))),
+                                                )))
+                                            }
                                             "MONTH" => Expression::Div(Box::new(
                                                 crate::expressions::BinaryOp::new(
                                                     paren_diff,
@@ -8116,7 +8143,16 @@ pub(super) fn rewrite(
                                         "HH" => "HOUR".to_string(),
                                         "MI" | "N" => "MINUTE".to_string(),
                                         "SS" | "S" => "SECOND".to_string(),
-                                        _ => raw_unit, // preserve original case
+                                        _ => {
+                                            if matches!(
+                                                target,
+                                                DialectType::PostgreSQL | DialectType::Redshift
+                                            ) {
+                                                raw_unit.to_ascii_uppercase()
+                                            } else {
+                                                raw_unit
+                                            }
+                                        }
                                     };
                                     Ok(Expression::Extract(Box::new(
                                         crate::expressions::ExtractFunc {
@@ -16981,7 +17017,10 @@ pub(super) fn normalize_bigquery_function(
                     let coalesce = Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
                         original_name: None,
                         expressions: vec![
-                            Expression::Identifier(crate::expressions::Identifier::new("x")),
+                            operators::cast_expr(
+                                Expression::Identifier(crate::expressions::Identifier::new("x")),
+                                DataType::Text,
+                            ),
                             null_text,
                         ],
                         inferred_type: None,
@@ -17144,4 +17183,1090 @@ pub(super) fn expr_to_string(expr: &Expression) -> String {
         Expression::Identifier(id) => id.name.clone(),
         _ => "1".to_string(),
     }
+}
+
+pub(super) fn normalize_source_functions(
+    e: &Expression,
+    context: &NormalizationContext,
+) -> Result<Option<Expression>> {
+    let call = |name: &str, args: Vec<Expression>| {
+        Expression::Function(Box::new(Function::new(name, args)))
+    };
+    if context.source == DialectType::Presto && context.target == DialectType::Presto {
+        if matches!(e, Expression::Cast(c) | Expression::TryCast(c) if matches!(c.to, DataType::Time { precision: Some(_), .. } | DataType::Timestamp { precision: Some(_), .. }))
+        {
+            return Err(crate::error::Error::unsupported(
+                "Presto temporal types do not accept precision parameters",
+                "Presto",
+            ));
+        }
+    }
+    if context.source == DialectType::PostgreSQL
+        && matches!(
+            context.target,
+            DialectType::Spark | DialectType::Databricks | DialectType::Hive
+        )
+        && matches!(e, Expression::Unnest(u) if u.with_ordinality)
+    {
+        return Err(crate::error::Error::unsupported(
+            "WITH ORDINALITY is one-based; POSEXPLODE positions require an explicit offset",
+            "target dialect",
+        ));
+    }
+    if context.source == DialectType::Teradata && context.target == DialectType::Snowflake {
+        if let Expression::Table(t) = e {
+            if t.table_sample.is_some() {
+                let mut t = t.clone();
+                let sample = t.table_sample.as_mut().unwrap();
+                match &sample.size {
+                    Expression::Literal(l) => {
+                        if let Literal::Number(n) = l.as_ref() {
+                            if let Ok(count) = n.parse::<i64>() {
+                                sample.method = SampleMethod::Row;
+                                sample.unit_after_size = true;
+                                sample.size = Expression::number(count);
+                            } else {
+                                return Err(crate::error::Error::unsupported("Teradata fractional SAMPLE has a fixed count, not Bernoulli sampling", "Snowflake"));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(crate::error::Error::unsupported(
+                            "Teradata multiple SAMPLE sets cannot be discarded",
+                            "Snowflake",
+                        ))
+                    }
+                }
+                return Ok(Some(Expression::Table(t)));
+            }
+        }
+    }
+    if context.source == DialectType::DuckDB && context.target == DialectType::PostgreSQL {
+        if let Expression::Interval(i) = e {
+            if i.unit.is_none() {
+                if let Some(Expression::Literal(l)) = &i.this {
+                    if let Literal::String(text) = l.as_ref() {
+                        let parts: Vec<_> = text.split_whitespace().collect();
+                        if parts.len() == 2 && parts[1].eq_ignore_ascii_case("QUARTER") {
+                            let amount = if parts[0].contains('.') {
+                                parts[0].trim_end_matches('0').trim_end_matches('.')
+                            } else {
+                                parts[0]
+                            };
+                            if let Ok(amount) = amount.parse::<i64>() {
+                                if let Some(months) = amount.checked_mul(3) {
+                                    return Ok(Some(Expression::Interval(Box::new(Interval {
+                                        this: Some(Expression::string(format!("{months} MONTH"))),
+                                        unit: None,
+                                    }))));
+                                }
+                            }
+                            return Err(crate::error::Error::unsupported(
+                                "Fractional QUARTER interval requires exact month conversion",
+                                "PostgreSQL",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if context.source == DialectType::Trino && context.target == DialectType::DuckDB {
+        if let Expression::Literal(l) = e {
+            if let Literal::Time(t) = l.as_ref() {
+                if t.contains(['+', '-']) {
+                    return Ok(Some(operators::cast_expr(
+                        Expression::string(t),
+                        DataType::Time {
+                            precision: None,
+                            timezone: true,
+                        },
+                    )));
+                }
+            }
+        }
+    }
+    if context.source == DialectType::Hive
+        && matches!(context.target, DialectType::Presto | DialectType::Trino)
+    {
+        if let Expression::IntDiv(f) = e {
+            let quotient = Expression::Div(Box::new(BinaryOp::new(
+                operators::cast_expr(
+                    f.this.clone(),
+                    DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
+                ),
+                f.expression.clone(),
+            )));
+            return Ok(Some(operators::cast_expr(
+                call("TRUNCATE", vec![quotient]),
+                DataType::BigInt { length: None },
+            )));
+        }
+    }
+    if context.target == DialectType::Materialize {
+        if let Expression::CreateTable(t) = e {
+            if t.constraints
+                .iter()
+                .any(|c| matches!(c, TableConstraint::Unique { .. }))
+                || t.columns.iter().any(|c| {
+                    c.unique
+                        || c.constraints
+                            .iter()
+                            .any(|c| matches!(c, ColumnConstraint::Unique))
+                })
+            {
+                return Err(crate::error::Error::unsupported(
+                    "Materialize does not enforce UNIQUE constraints",
+                    "Materialize",
+                ));
+            }
+        }
+    }
+    if context.source == DialectType::Oracle && context.target == DialectType::BigQuery {
+        if matches!(e, Expression::Table(t) if t.version.as_ref().is_some_and(|v| matches!(v.this.as_ref(), Expression::Var(v) if v.this.eq_ignore_ascii_case("TIMESTAMP"))))
+        {
+            return Err(crate::error::Error::unsupported(
+                "Oracle flashback TIMESTAMP requires an explicit source time zone",
+                "BigQuery",
+            ));
+        }
+    }
+    if context.source == DialectType::TSQL
+        && context.target == DialectType::DuckDB
+        && matches!(e, Expression::JsonValue(_))
+    {
+        return Err(crate::error::Error::unsupported(
+            "SQL Server JSON_VALUE requires the 4000-character limit and path-mode behavior",
+            "DuckDB",
+        ));
+    }
+    if context.source == DialectType::Presto && context.target == DialectType::BigQuery {
+        if matches!(e, Expression::AggregateFunction(f) if f.name.eq_ignore_ascii_case("APPROX_PERCENTILE") && f.args.len() > 2)
+        {
+            return Err(crate::error::Error::unsupported(
+                "APPROX_PERCENTILE accuracy has no BigQuery equivalent",
+                "BigQuery",
+            ));
+        }
+    }
+    if context.source == DialectType::Snowflake
+        && matches!(
+            context.target,
+            DialectType::Presto | DialectType::TSQL | DialectType::BigQuery
+        )
+    {
+        if let Expression::ToNumber(n) = e {
+            if n.safe.is_some() && n.format.is_none() && n.precision.is_none() && n.scale.is_none()
+            {
+                if context.target == DialectType::BigQuery {
+                    return Err(crate::error::Error::unsupported(
+                        "TRY_TO_NUMBER precision 38 scale 0 requires bounded rounding",
+                        "BigQuery",
+                    ));
+                }
+                let Expression::Cast(cast) = operators::cast_expr(
+                    *n.this.clone(),
+                    DataType::Decimal {
+                        precision: Some(38),
+                        scale: Some(0),
+                    },
+                ) else {
+                    unreachable!()
+                };
+                return Ok(Some(Expression::TryCast(cast)));
+            }
+        }
+    }
+    if context.target == DialectType::SQLite {
+        if let Expression::Cast(c) = e {
+            if matches!(&c.to, DataType::Custom { name } if name.eq_ignore_ascii_case("DATETIME")) {
+                return Ok(Some(call("DATETIME", vec![c.this.clone()])));
+            }
+        }
+    }
+    if context.target == DialectType::BigQuery {
+        if let Expression::DayOfWeek(f) = e {
+            if !matches!(
+                context.source,
+                DialectType::MySQL | DialectType::Trino | DialectType::Presto
+            ) {
+                return Ok(None);
+            }
+            let date = if context.source == DialectType::MySQL {
+                operators::cast_expr(f.this.clone(), DataType::Date)
+            } else {
+                f.this.clone()
+            };
+            let dow = Expression::Extract(Box::new(ExtractFunc {
+                this: date,
+                field: DateTimeField::Custom("DAYOFWEEK".into()),
+            }));
+            return Ok(Some(
+                if matches!(context.source, DialectType::Trino | DialectType::Presto) {
+                    let shifted =
+                        Expression::Add(Box::new(BinaryOp::new(dow, Expression::number(5))));
+                    Expression::Paren(Box::new(Paren {
+                        this: Expression::Add(Box::new(BinaryOp::new(
+                            call("MOD", vec![shifted, Expression::number(7)]),
+                            Expression::number(1),
+                        ))),
+                        trailing_comments: vec![],
+                    }))
+                } else {
+                    dow
+                },
+            ));
+        }
+        match e {
+            Expression::Sum(a) | Expression::Avg(a) | Expression::Min(a) | Expression::Max(a)
+                if a.filter.is_some() =>
+            {
+                let mut a = a.clone();
+                a.this = call(
+                    "IF",
+                    vec![a.filter.take().unwrap(), a.this, Expression::Null(Null)],
+                );
+                return Ok(Some(match e {
+                    Expression::Sum(_) => Expression::Sum(a),
+                    Expression::Avg(_) => Expression::Avg(a),
+                    Expression::Min(_) => Expression::Min(a),
+                    _ => Expression::Max(a),
+                }));
+            }
+            Expression::Count(c) if c.filter.is_some() => {
+                if c.star {
+                    return Ok(Some(call("COUNTIF", vec![c.filter.clone().unwrap()])));
+                }
+                let mut c = c.clone();
+                if let Some(value) = c.this.take() {
+                    c.this = Some(call(
+                        "IF",
+                        vec![c.filter.take().unwrap(), value, Expression::Null(Null)],
+                    ));
+                }
+                return Ok(Some(Expression::Count(c)));
+            }
+            Expression::ArrayAgg(a) if a.filter.is_some() => {
+                return Err(crate::error::Error::unsupported(
+                    "ARRAY_AGG FILTER cannot preserve NULL array elements in BigQuery",
+                    "BigQuery",
+                ))
+            }
+            _ => {}
+        }
+    }
+    if matches!(context.target, DialectType::TSQL | DialectType::Fabric) {
+        if let Expression::CountIf(a) = e {
+            if context.source == DialectType::Snowflake {
+                return Err(crate::error::Error::unsupported(
+                    "Snowflake COUNT_IF returns NULL when no rows satisfy the condition",
+                    "TSQL",
+                ));
+            }
+            let condition = a
+                .filter
+                .clone()
+                .map(|filter| Expression::And(Box::new(BinaryOp::new(filter, a.this.clone()))))
+                .unwrap_or_else(|| a.this.clone());
+            return Ok(Some(call(
+                "COUNT_BIG",
+                vec![call(
+                    "IIF",
+                    vec![condition, Expression::number(1), Expression::Null(Null)],
+                )],
+            )));
+        }
+    }
+    if context.source == DialectType::TSQL && context.target == DialectType::Trino {
+        if let Expression::JsonQuery(f) = e {
+            if let Expression::Literal(l) = &f.path {
+                if let Literal::String(path) = l.as_ref() {
+                    if path.starts_with('$') {
+                        let mut f = f.clone();
+                        f.path = Expression::string(format!("lax {path}"));
+                        return Ok(Some(Expression::JsonQuery(f)));
+                    }
+                }
+            }
+        }
+    }
+    if let Expression::Div(op) = e {
+        if context.source == DialectType::MySQL
+            && matches!(
+                context.target,
+                DialectType::DuckDB | DialectType::ClickHouse
+            )
+        {
+            let mut op = op.clone();
+            if !matches!(&op.right, Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF"))
+            {
+                op.right = Expression::Function(Box::new(Function::new(
+                    if context.target == DialectType::ClickHouse {
+                        "nullIf"
+                    } else {
+                        "NULLIF"
+                    },
+                    vec![op.right, Expression::number(0)],
+                )));
+            }
+            return Ok(Some(Expression::Div(op)));
+        }
+        if matches!(
+            context.source,
+            DialectType::DuckDB | DialectType::ClickHouse
+        ) && context.target == DialectType::PostgreSQL
+        {
+            let nonzero = matches!(&op.right, Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(n) if n.parse::<f64>().is_ok_and(|v| v != 0.0)));
+            fn guards_zero(e: &Expression) -> bool {
+                let zero = |e: &Expression| matches!(e, Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(n) if n.parse::<f64>().is_ok_and(|v| v == 0.0)));
+                match e {
+                    Expression::Function(f) => {
+                        f.name.eq_ignore_ascii_case("NULLIF")
+                            && f.args.len() == 2
+                            && zero(&f.args[1])
+                    }
+                    Expression::NullIf(f) => zero(&f.expression),
+                    Expression::Cast(c) => guards_zero(&c.this),
+                    Expression::Paren(p) => guards_zero(&p.this),
+                    _ => false,
+                }
+            }
+            // An explicit NULLIF already prevents zero, including the generated
+            // lowering of DuckDB // (whose zero result is NULL rather than infinity).
+            if !nonzero && !guards_zero(&op.right) {
+                return Err(crate::error::Error::unsupported(
+                    "IEEE division by zero requires infinity/NaN-preserving lowering",
+                    "PostgreSQL",
+                ));
+            }
+        }
+    }
+    if context.source == DialectType::BigQuery {
+        if let Expression::Literal(l) = e {
+            if let Literal::ByteString(bytes) = l.as_ref() {
+                if context.target == DialectType::PostgreSQL {
+                    if !bytes.is_ascii() || bytes.contains('\\') {
+                        return Err(crate::error::Error::unsupported(
+                            "Escaped BigQuery bytes require lossless byte-literal decoding",
+                            "PostgreSQL",
+                        ));
+                    }
+                    let hex: String = bytes
+                        .as_bytes()
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
+                    return Ok(Some(Expression::Function(Box::new(Function::new(
+                        "DECODE",
+                        vec![Expression::string(hex), Expression::string("hex")],
+                    )))));
+                }
+                if context.target == DialectType::DuckDB
+                    && bytes.is_ascii()
+                    && !bytes.contains('\\')
+                    && !bytes.chars().any(char::is_control)
+                {
+                    return Ok(Some(operators::cast_expr(
+                        Expression::string(bytes),
+                        DataType::VarBinary { length: None },
+                    )));
+                }
+            }
+        }
+    }
+    if context.source == DialectType::SQLite {
+        if let Expression::JsonExtract(f) = e {
+            if !f.arrow_syntax {
+                if context.target != DialectType::SQLite {
+                    return Err(crate::error::Error::unsupported("SQLite JSON_EXTRACT dynamic SQL scalar types have no verified target mapping", "target dialect"));
+                }
+                let mut f = f.clone();
+                f.source_dialect = Some(DialectType::SQLite);
+                return Ok(Some(Expression::JsonExtract(f)));
+            }
+        }
+    }
+    if context.target == DialectType::BigQuery {
+        if let Expression::Cast(c) = e {
+            if let DataType::Decimal {
+                precision: Some(p),
+                scale,
+            } = c.to
+            {
+                let scale = scale.unwrap_or(0);
+                if p.saturating_sub(scale) > 29 || scale > 9 {
+                    // BigQuery does not allow precision/scale parameters on CAST.
+                    // Widening an integer with scale zero is exact; other inputs
+                    // need the source rounding and overflow checks as well.
+                    let bounded_integer = match &c.this {
+                        Expression::Cast(inner)
+                        | Expression::TryCast(inner)
+                        | Expression::SafeCast(inner) => {
+                            data_type_numeric_kind(&inner.to) == NumericKind::Integer
+                        }
+                        Expression::Literal(literal) => matches!(literal.as_ref(),
+                            Literal::Number(number) if number.parse::<i64>().is_ok()),
+                        _ => false,
+                    };
+                    if scale == 0 && bounded_integer {
+                        let mut c = c.clone();
+                        c.to = DataType::Custom {
+                            name: "BIGNUMERIC".into(),
+                        };
+                        return Ok(Some(Expression::Cast(c)));
+                    }
+                    return Err(crate::error::Error::unsupported(
+                        "Wide decimal casts require precision and scale enforcement",
+                        "BigQuery",
+                    ));
+                }
+            }
+        }
+    }
+    let Expression::Function(f) = e else {
+        return Ok(None);
+    };
+    let source = context.source;
+    let target = context.target;
+    let name = f.name.to_ascii_uppercase();
+    let call = |name: &str, args: Vec<Expression>| {
+        Expression::Function(Box::new(Function::new(name.to_string(), args)))
+    };
+    if source == DialectType::TSQL && target == DialectType::DuckDB && name == "JSON_VALUE" {
+        return Err(crate::error::Error::unsupported(
+            "SQL Server JSON_VALUE requires the 4000-character limit and path-mode behavior",
+            "DuckDB",
+        ));
+    }
+    if source == DialectType::MySQL
+        && target == DialectType::BigQuery
+        && name == "DAYOFWEEK"
+        && f.args.len() == 1
+    {
+        return Ok(Some(Expression::Extract(Box::new(ExtractFunc {
+            this: operators::cast_expr(f.args[0].clone(), DataType::Date),
+            field: DateTimeField::Custom("DAYOFWEEK".into()),
+        }))));
+    }
+    if source == DialectType::BigQuery
+        && target == DialectType::StarRocks
+        && name == "DATE_DIFF"
+        && f.args.len() == 3
+        && (matches!(&f.args[2], Expression::Column(c) if c.name.name.eq_ignore_ascii_case("DAY"))
+            || matches!(&f.args[2], Expression::Var(v) if v.this.eq_ignore_ascii_case("DAY")))
+    {
+        let args = f.args[..2]
+            .iter()
+            .map(|a| match a {
+                Expression::Literal(l) => match l.as_ref() {
+                    Literal::Date(d) => operators::cast_expr(Expression::string(d), DataType::Date),
+                    _ => a.clone(),
+                },
+                _ => a.clone(),
+            })
+            .collect();
+        return Ok(Some(call("DATEDIFF", args)));
+    }
+    if source == DialectType::DuckDB
+        && target == DialectType::Snowflake
+        && matches!(name.as_str(), "LIST_SORT" | "ARRAY_SORT")
+        && f.args.len() == 2
+        && !matches!(&f.args[1], Expression::Literal(_))
+    {
+        return Err(crate::error::Error::unsupported(
+            "DuckDB list sorting requires explicit direction and NULL ordering",
+            "Snowflake",
+        ));
+    }
+    if source == DialectType::Snowflake
+        && name == "CURRENT_TIMESTAMP"
+        && f.args.is_empty()
+        && matches!(target, DialectType::DuckDB | DialectType::PostgreSQL)
+    {
+        return Ok(Some(Expression::CurrentTimestamp(
+            crate::expressions::CurrentTimestamp {
+                precision: None,
+                sysdate: false,
+            },
+        )));
+    }
+    if source == DialectType::DuckDB
+        && name == "RANGE"
+        && target == DialectType::BigQuery
+        && (1..=3).contains(&f.args.len())
+    {
+        let (start, end, step) = match f.args.len() {
+            1 => (
+                Expression::number(0),
+                f.args[0].clone(),
+                Expression::number(1),
+            ),
+            2 => (f.args[0].clone(), f.args[1].clone(), Expression::number(1)),
+            _ => (f.args[0].clone(), f.args[1].clone(), f.args[2].clone()),
+        };
+        let positive = match &step {
+            Expression::Literal(l) => {
+                matches!(l.as_ref(), Literal::Number(n) if n.parse::<i64>().is_ok_and(|n| n > 0))
+            }
+            _ => false,
+        };
+        let negative = matches!(&step, Expression::Neg(n) if matches!(&n.this, Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(v) if v.parse::<i64>().is_ok_and(|n| n > 0))));
+        if !positive && !negative {
+            return Err(crate::error::Error::unsupported(
+                "RANGE requires a constant nonzero integer step",
+                "BigQuery",
+            ));
+        }
+        let end = if positive {
+            Expression::Sub(Box::new(BinaryOp::new(end, Expression::number(1))))
+        } else {
+            Expression::Add(Box::new(BinaryOp::new(end, Expression::number(1))))
+        };
+        return Ok(Some(call("GENERATE_ARRAY", vec![start, end, step])));
+    }
+    if matches!(source, DialectType::Spark | DialectType::Databricks)
+        && target == DialectType::Snowflake
+        && name == "ARRAY_INSERT"
+        && f.args.len() == 3
+    {
+        fn integer(e: &Expression) -> Option<i64> {
+            match e {
+                Expression::Literal(l) => match l.as_ref() {
+                    Literal::Number(n) => n.parse().ok(),
+                    _ => None,
+                },
+                Expression::Neg(n) => integer(&n.this).and_then(i64::checked_neg),
+                _ => None,
+            }
+        }
+        if let Some(index) = integer(&f.args[1]) {
+            if index == -1 {
+                return Ok(Some(call(
+                    "ARRAY_APPEND",
+                    vec![f.args[0].clone(), f.args[2].clone()],
+                )));
+            }
+            let length = match &f.args[0] {
+                Expression::Array(a) => Some(a.expressions.len()),
+                Expression::ArrayFunc(a) => Some(a.expressions.len()),
+                Expression::Function(a)
+                    if a.name.eq_ignore_ascii_case("ARRAY") && a.qualified_name.is_empty() =>
+                {
+                    Some(a.args.len())
+                }
+                _ => None,
+            };
+            if let Some(length) = length {
+                let length = length as i64;
+                if (1..=length + 1).contains(&index) || (-length - 1..=-2).contains(&index) {
+                    return Ok(Some(call(
+                        "ARRAY_INSERT",
+                        vec![
+                            f.args[0].clone(),
+                            Expression::number(if index > 0 { index - 1 } else { index + 1 }),
+                            f.args[2].clone(),
+                        ],
+                    )));
+                }
+            }
+        }
+        return Err(crate::error::Error::unsupported(
+            "ARRAY_INSERT requires NULL-preserving padding for out-of-range indices",
+            "Snowflake",
+        ));
+    }
+    if source == DialectType::Trino && target == DialectType::BigQuery {
+        if name == "FROM_BASE"
+            && f.args.len() == 2
+            && matches!(&f.args[1], Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(n) if n == "16"))
+        {
+            return Ok(Some(operators::cast_expr(
+                call(
+                    "REGEXP_REPLACE",
+                    vec![
+                        f.args[0].clone(),
+                        Expression::string("^([+-]?)"),
+                        Expression::string(r"\10x"),
+                    ],
+                ),
+                DataType::BigInt { length: None },
+            )));
+        }
+        if name == "TO_HEX" && f.args.len() == 1 {
+            return Ok(Some(call("UPPER", vec![e.clone()])));
+        }
+    }
+    if source == DialectType::TSQL
+        && target == DialectType::MySQL
+        && name == "FORMAT"
+        && f.args.len() == 2
+        && matches!(&f.args[1], Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) if s == "ffffff"))
+    {
+        return Ok(Some(call(
+            "DATE_FORMAT",
+            vec![f.args[0].clone(), Expression::string("%f")],
+        )));
+    }
+    if matches!(source, DialectType::PostgreSQL | DialectType::Redshift)
+        && target == DialectType::Snowflake
+        && name == "DATE_PART"
+        && f.args.len() == 2
+    {
+        let part = match &f.args[0] {
+            Expression::Literal(l) => match l.as_ref() {
+                Literal::String(s) => Some(s.as_str()),
+                _ => None,
+            },
+            Expression::Column(c) if c.table.is_none() => Some(c.name.name.as_str()),
+            Expression::Var(v) => Some(v.this.as_str()),
+            _ => None,
+        };
+        if let Some(part) = part {
+            return Ok(Some(call(
+                "DATE_PART",
+                vec![
+                    Expression::column(part.to_ascii_uppercase()),
+                    f.args[1].clone(),
+                ],
+            )));
+        }
+    }
+    if source == DialectType::PostgreSQL
+        && target == DialectType::MySQL
+        && name == "MAKE_INTERVAL"
+        && f.args.len() == 1
+    {
+        if let Expression::NamedArgument(arg) = &f.args[0] {
+            if arg.name.name.eq_ignore_ascii_case("days") {
+                return Ok(Some(Expression::Interval(Box::new(Interval {
+                    this: Some(arg.value.clone()),
+                    unit: Some(IntervalUnitSpec::Simple {
+                        unit: IntervalUnit::Day,
+                        use_plural: false,
+                    }),
+                }))));
+            }
+        }
+    }
+    if source == DialectType::Snowflake
+        && name == "TRY_TO_NUMBER"
+        && f.args.len() == 1
+        && matches!(
+            target,
+            DialectType::Presto | DialectType::TSQL | DialectType::BigQuery
+        )
+    {
+        if target == DialectType::BigQuery {
+            return Err(crate::error::Error::unsupported(
+                "TRY_TO_NUMBER precision 38 scale 0 requires bounded rounding",
+                "BigQuery",
+            ));
+        }
+        let Expression::Cast(cast) = operators::cast_expr(
+            f.args[0].clone(),
+            DataType::Decimal {
+                precision: Some(38),
+                scale: Some(0),
+            },
+        ) else {
+            unreachable!()
+        };
+        return Ok(Some(Expression::TryCast(cast)));
+    }
+    if source == DialectType::Databricks
+        && name == "UNIFORM"
+        && f.args.len() == 2
+        && target == DialectType::DuckDB
+    {
+        if f.args.iter().all(|a| matches!(a, Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(n) if n.parse::<i64>().is_ok()))) {
+            let width = Expression::Add(Box::new(BinaryOp::new(Expression::Sub(Box::new(BinaryOp::new(f.args[1].clone(), f.args[0].clone()))), Expression::number(1))));
+            let width = Expression::Paren(Box::new(Paren { this: width, trailing_comments: vec![] }));
+            let scaled = Expression::Mul(Box::new(BinaryOp::new(call("RANDOM", vec![]), width)));
+            return Ok(Some(operators::cast_expr(call("FLOOR", vec![Expression::Add(Box::new(BinaryOp::new(f.args[0].clone(), scaled)))]), DataType::BigInt { length: None })));
+        }
+    }
+    if source == DialectType::ClickHouse
+        && matches!(name.as_str(), "JSONEXTRACTRAW" | "JSONEXTRACTSTRING")
+        && target == DialectType::PostgreSQL
+    {
+        return Err(crate::error::Error::unsupported("ClickHouse JSON extraction defaults and return types have no verified PostgreSQL mapping", "PostgreSQL"));
+    }
+    if source == DialectType::DuckDB && name == "RANGE" && target == DialectType::PostgreSQL {
+        return Err(crate::error::Error::unsupported(
+            "DuckDB RANGE returns a list; PostgreSQL GENERATE_SERIES returns rows",
+            "PostgreSQL",
+        ));
+    }
+    if source == DialectType::Presto
+        && name == "APPROX_PERCENTILE"
+        && f.args.len() > 2
+        && target == DialectType::BigQuery
+    {
+        return Err(crate::error::Error::unsupported(
+            "APPROX_PERCENTILE accuracy has no BigQuery equivalent",
+            "BigQuery",
+        ));
+    }
+    if source == DialectType::SQLite {
+        if matches!(name.as_str(), "MIN" | "MAX")
+            && f.args.len() > 1
+            && target == DialectType::DuckDB
+        {
+            let nulls = f
+                .args
+                .iter()
+                .cloned()
+                .map(|arg| {
+                    Expression::IsNull(Box::new(IsNull {
+                        this: arg,
+                        not: false,
+                        postfix_form: false,
+                    }))
+                })
+                .reduce(|a, b| Expression::Or(Box::new(BinaryOp::new(a, b))))
+                .unwrap();
+            return Ok(Some(Expression::Case(Box::new(Case {
+                operand: None,
+                whens: vec![(nulls, Expression::Null(Null))],
+                else_: Some(call(
+                    if name == "MIN" { "LEAST" } else { "GREATEST" },
+                    f.args.clone(),
+                )),
+                comments: vec![],
+                inferred_type: None,
+            }))));
+        }
+        if name == "CONCAT_WS" && f.args.len() >= 2 && target == DialectType::Snowflake {
+            // SQLite skips NULL values, including their separators. Snowflake's
+            // CONCAT_WS propagates NULL; coalescing to '' would insert extra separators.
+            return Ok(Some(call(
+                "ARRAY_TO_STRING",
+                vec![
+                    call("ARRAY_CONSTRUCT_COMPACT", f.args[1..].to_vec()),
+                    f.args[0].clone(),
+                ],
+            )));
+        }
+        if name == "JSON_EXTRACT" && f.args.len() > 2 && target == DialectType::DuckDB {
+            return Ok(Some(call(
+                "TO_JSON",
+                vec![call(
+                    "JSON_EXTRACT",
+                    vec![
+                        f.args[0].clone(),
+                        Expression::Array(Box::new(Array {
+                            expressions: f.args[1..].to_vec(),
+                            inferred_type: None,
+                        })),
+                    ],
+                )],
+            )));
+        }
+    }
+    if source == DialectType::MySQL
+        && name == "DATE_ADD"
+        && f.args.len() == 2
+        && target == DialectType::DuckDB
+    {
+        let mut value = f.args[0].clone();
+        if matches!(&value, Expression::Literal(l) if matches!(l.as_ref(), Literal::String(_))) {
+            value = operators::cast_expr(
+                value,
+                DataType::Timestamp {
+                    precision: None,
+                    timezone: false,
+                },
+            );
+        }
+        return Ok(Some(Expression::Add(Box::new(BinaryOp::new(
+            value,
+            f.args[1].clone(),
+        )))));
+    }
+    if source == DialectType::BigQuery
+        && target == DialectType::ClickHouse
+        && name == "FROM_HEX"
+        && f.args.len() == 1
+    {
+        return Ok(Some(call("UNHEX", f.args.clone())));
+    }
+    if source == DialectType::DuckDB
+        && name == "ARRAY_SLICE"
+        && f.args.len() == 3
+        && matches!(
+            target,
+            DialectType::Spark | DialectType::Databricks | DialectType::Presto | DialectType::Trino
+        )
+    {
+        fn int(e: &Expression) -> Option<i64> {
+            match e {
+                Expression::Literal(l) => match l.as_ref() {
+                    Literal::Number(n) => n.parse().ok(),
+                    _ => None,
+                },
+                Expression::Neg(n) => int(&n.this).map(|v| -v),
+                _ => None,
+            }
+        }
+        if let (Some(start), Some(end)) = (int(&f.args[1]), int(&f.args[2])) {
+            if start >= 0 && end >= 0 {
+                let start = start.max(1);
+                return Ok(Some(call(
+                    "SLICE",
+                    vec![
+                        f.args[0].clone(),
+                        Expression::number(start),
+                        Expression::number((end - start + 1).max(0)),
+                    ],
+                )));
+            }
+        }
+        // End indices cannot be copied into a length argument. In particular,
+        // inspecting the array length must not evaluate a volatile input twice.
+        return Err(crate::error::Error::unsupported(
+            "ARRAY_SLICE with negative or dynamic bounds requires single-evaluation lowering",
+            "target dialect",
+        ));
+    }
+    if source == DialectType::DuckDB
+        && name == "REGEXP_MATCHES"
+        && f.args.len() == 3
+        && matches!(target, DialectType::PostgreSQL | DialectType::Redshift)
+    {
+        if let Expression::Literal(l) = &f.args[2] {
+            if let Literal::String(flags) = l.as_ref() {
+                if flags.chars().all(|c| matches!(c, 'i' | 'c')) {
+                    let insensitive = flags.chars().rev().next() == Some('i');
+                    return Ok(Some(if insensitive {
+                        Expression::RegexpILike(Box::new(RegexpILike {
+                            this: Box::new(f.args[0].clone()),
+                            expression: Box::new(f.args[1].clone()),
+                            flag: None,
+                        }))
+                    } else {
+                        Expression::RegexpLike(Box::new(RegexpFunc {
+                            this: f.args[0].clone(),
+                            pattern: f.args[1].clone(),
+                            options: None,
+                            flags: None,
+                        }))
+                    }));
+                }
+            }
+        }
+    }
+    if matches!(name.as_str(), "TRUNC" | "TRUNCATE")
+        && f.args.len() == 1
+        && matches!(source, DialectType::Oracle | DialectType::Snowflake)
+        && target == DialectType::MySQL
+    {
+        if source == DialectType::Oracle {
+            let date = matches!(&f.args[0], Expression::Cast(c) if matches!(c.to, DataType::Date | DataType::Timestamp { .. }))
+                || matches!(&f.args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::Date(_) | Literal::Timestamp(_)));
+            if date {
+                return Ok(Some(operators::cast_expr(
+                    f.args[0].clone(),
+                    DataType::Date,
+                )));
+            }
+            let numeric = matches!(&f.args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::Number(_)))
+                || matches!(&f.args[0], Expression::Cast(c) if data_type_numeric_kind(&c.to) != NumericKind::Unknown);
+            if !numeric {
+                return Err(crate::error::Error::unsupported(
+                    "Oracle TRUNC requires a known numeric or datetime operand type",
+                    "MySQL",
+                ));
+            }
+        }
+        return Ok(Some(call(
+            "TRUNCATE",
+            vec![f.args[0].clone(), Expression::number(0)],
+        )));
+    }
+    if source == DialectType::ClickHouse {
+        if f.args.len() == 1 {
+            let mapped = match (name.as_str(), target) {
+                ("TODAYOFWEEK", DialectType::DuckDB) => Some("ISODOW"),
+                ("TODAYOFWEEK", DialectType::Snowflake) => Some("DAYOFWEEKISO"),
+                ("TOISOWEEK", DialectType::DuckDB) => Some("WEEKOFYEAR"),
+                ("TOISOWEEK", DialectType::Snowflake) => Some("WEEKISO"),
+                ("TOISOYEAR", DialectType::Snowflake) => Some("YEAROFWEEKISO"),
+                ("ISINFINITE", DialectType::DuckDB) => Some("ISINF"),
+                ("ISINFINITE", DialectType::BigQuery) => Some("IS_INF"),
+                ("ARRAYREVERSE", DialectType::BigQuery) => Some("ARRAY_REVERSE"),
+                _ => None,
+            };
+            if let Some(mapped) = mapped {
+                return Ok(Some(call(mapped, f.args.clone())));
+            }
+            if name == "TOISOYEAR" && target == DialectType::DuckDB {
+                return Ok(Some(Expression::Extract(Box::new(ExtractFunc {
+                    this: f.args[0].clone(),
+                    field: DateTimeField::Custom("ISOYEAR".into()),
+                }))));
+            }
+        }
+        if matches!(name.as_str(), "TRIMLEFT" | "TRIMRIGHT" | "TRIMBOTH")
+            && (1..=2).contains(&f.args.len())
+        {
+            if target == DialectType::DuckDB {
+                return Ok(Some(call(
+                    match name.as_str() {
+                        "TRIMLEFT" => "LTRIM",
+                        "TRIMRIGHT" => "RTRIM",
+                        _ => "TRIM",
+                    },
+                    f.args.clone(),
+                )));
+            }
+            let position = match name.as_str() {
+                "TRIMLEFT" => TrimPosition::Leading,
+                "TRIMRIGHT" => TrimPosition::Trailing,
+                _ => TrimPosition::Both,
+            };
+            return Ok(Some(Expression::Trim(Box::new(TrimFunc {
+                this: f.args[0].clone(),
+                characters: f.args.get(1).cloned(),
+                position,
+                sql_standard_syntax: target != DialectType::DuckDB,
+                position_explicit: target == DialectType::ClickHouse
+                    || position != TrimPosition::Both,
+                inferred_type: None,
+            }))));
+        }
+        if name == "COUNTMATCHES" && f.args.len() == 2 && target == DialectType::Snowflake {
+            return Ok(Some(call("REGEXP_COUNT", f.args.clone())));
+        }
+    }
+    if source == DialectType::PostgreSQL && target == DialectType::DuckDB {
+        if name == "SHA256" && f.args.len() == 1 {
+            return Ok(Some(call("UNHEX", vec![call("SHA256", f.args.clone())])));
+        }
+        if name == "BTRIM" && (1..=2).contains(&f.args.len()) {
+            return Ok(Some(call("TRIM", f.args.clone())));
+        }
+    }
+    if source == DialectType::MySQL
+        && name == "TIMESTAMPADD"
+        && f.args.len() == 3
+        && target == DialectType::DuckDB
+    {
+        let unit = match &f.args[0] {
+            Expression::Column(c) => c.name.name.as_str(),
+            Expression::Identifier(i) => &i.name,
+            Expression::Var(v) => &v.this,
+            _ => return Ok(None),
+        };
+        let unit = unit.to_ascii_uppercase();
+        let unit = unit.strip_prefix("SQL_TSI_").unwrap_or(&unit);
+        let interval = Expression::Interval(Box::new(Interval {
+            this: Some(f.args[1].clone()),
+            unit: Some(IntervalUnitSpec::Simple {
+                unit: temporal::parse_interval_unit_static(unit),
+                use_plural: false,
+            }),
+        }));
+        let value = match &f.args[2] {
+            Expression::Literal(l) if matches!(l.as_ref(), Literal::String(_)) => {
+                operators::cast_expr(
+                    f.args[2].clone(),
+                    DataType::Timestamp {
+                        precision: None,
+                        timezone: false,
+                    },
+                )
+            }
+            _ => f.args[2].clone(),
+        };
+        return Ok(Some(Expression::Add(Box::new(BinaryOp::new(
+            value, interval,
+        )))));
+    }
+    if matches!(source, DialectType::PostgreSQL | DialectType::BigQuery)
+        && name == "MAKE_INTERVAL"
+        && matches!(target, DialectType::DuckDB | DialectType::Snowflake)
+    {
+        let positional = if source == DialectType::PostgreSQL {
+            &["year", "month", "week", "day", "hour", "minute", "second"][..]
+        } else {
+            &["year", "month", "day", "hour", "minute", "second"][..]
+        };
+        let mut components = Vec::new();
+        for (index, arg) in f.args.iter().enumerate() {
+            let (unit, value) = if let Expression::NamedArgument(arg) = arg {
+                let unit = match arg.name.name.to_ascii_lowercase().as_str() {
+                    "year" | "years" => "year",
+                    "month" | "months" => "month",
+                    "week" | "weeks" => "week",
+                    "day" | "days" => "day",
+                    "hour" | "hours" => "hour",
+                    "minute" | "mins" => "minute",
+                    "second" | "secs" => "second",
+                    _ => {
+                        return Err(crate::error::Error::unsupported(
+                            "Unknown MAKE_INTERVAL argument",
+                            "target dialect",
+                        ))
+                    }
+                };
+                (unit, &arg.value)
+            } else {
+                (
+                    *positional.get(index).ok_or_else(|| {
+                        crate::error::Error::unsupported(
+                            "MAKE_INTERVAL argument count",
+                            "target dialect",
+                        )
+                    })?,
+                    arg,
+                )
+            };
+            if matches!(value, Expression::Null(_)) {
+                return Ok(Some(Expression::Null(Null)));
+            }
+            let value = match value {
+                Expression::Literal(l) => match l.as_ref() {
+                    Literal::String(s) | Literal::Number(s) => s.clone(),
+                    _ => return Ok(None),
+                },
+                Expression::Neg(n) => match &n.this {
+                    Expression::Literal(l) => match l.as_ref() {
+                        Literal::Number(s) => format!("-{s}"),
+                        _ => return Ok(None),
+                    },
+                    _ => return Ok(None),
+                },
+                _ => {
+                    return Err(crate::error::Error::unsupported(
+                        "Nonliteral MAKE_INTERVAL requires expression lowering",
+                        "target dialect",
+                    ))
+                }
+            };
+            components.push(format!("{value} {unit}"));
+        }
+        let value = if components.is_empty() {
+            "0 second".to_string()
+        } else {
+            components.join(if target == DialectType::Snowflake {
+                ", "
+            } else {
+                " "
+            })
+        };
+        return Ok(Some(Expression::Interval(Box::new(Interval {
+            this: Some(Expression::string(value)),
+            unit: None,
+        }))));
+    }
+    if source == DialectType::SQLite && name == "CONCAT" {
+        // SQLite CONCAT ignores NULL arguments. Retain this source contract through generation.
+        let mut f = f.clone();
+        f.source_dialect = Some(source);
+        return Ok(Some(Expression::Function(f)));
+    }
+    Ok(None)
 }

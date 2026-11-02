@@ -8,6 +8,7 @@ use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
+    DuckDBSampleAlias,
     ArrayAggCollectList,
     ArrayAggWithinGroupFilter,
     ArrayAggFilter,
@@ -50,6 +51,11 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::DuckDBSampleAlias => Ok(match e {
+                Expression::Variance(f) => Expression::VarSamp(f),
+                Expression::Stddev(f) => Expression::StddevSamp(f),
+                other => other,
+            }),
             Action::SnowflakeMedianToClickHouse => {
                 let mut agg = if let Expression::Median(agg) = e {
                     *agg
@@ -339,12 +345,12 @@ pub(super) fn rewrite(
                                     )))
                                 }
                                 DialectType::SQLite => {
-                                    // GROUP_CONCAT(x, sep) - no ORDER BY support
+                                    // SQLite supports aggregate ORDER BY (3.44 and later).
                                     Ok(Expression::GroupConcat(Box::new(
                                         crate::expressions::GroupConcatFunc {
                                             this: x,
                                             separator: Some(sep),
-                                            order_by: None,
+                                            order_by: Some(order_by),
                                             distinct,
                                             filter: None,
                                             limit: None,
@@ -410,7 +416,7 @@ pub(super) fn rewrite(
                                     crate::expressions::GroupConcatFunc {
                                         this: sa.this,
                                         separator: sa.separator,
-                                        order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
+                                        order_by: sa.order_by,
                                         distinct: sa.distinct,
                                         filter: sa.filter,
                                         limit: None,
@@ -618,15 +624,14 @@ pub(super) fn rewrite(
                             )))
                         }
                         DialectType::SQLite => {
-                            // GROUP_CONCAT stays as GROUP_CONCAT but ORDER BY is removed
-                            // SQLite GROUP_CONCAT doesn't support ORDER BY
+                            // Preserve aggregate ordering when converting to SQLite.
                             // Expand CONCAT(a,b,c) -> a || b || c
                             let this = expand_concat_to_dpipe(gc.this);
                             Ok(Expression::GroupConcat(Box::new(
                                 crate::expressions::GroupConcatFunc {
                                     this,
                                     separator: gc.separator,
-                                    order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
+                                    order_by: gc.order_by,
                                     distinct: gc.distinct,
                                     filter: gc.filter,
                                     limit: None,

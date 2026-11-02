@@ -76,6 +76,7 @@ impl DialectImpl for SnowflakeDialect {
             identifier_quote: '"',
             identifier_quote_style: IdentifierQuoteStyle::DOUBLE_QUOTE,
             dialect: Some(DialectType::Snowflake),
+            supports_column_join_marks: true,
             // Snowflake-specific settings from Python sqlglot
             parameter_token: "$",
             matched_by_source: false,
@@ -2807,7 +2808,7 @@ impl SnowflakeDialect {
                 distinct: false,
                 trailing_comments: Vec::new(),
                 use_bracket_syntax: false,
-                no_parens: f.no_parens,
+                no_parens: false,
                 quoted: false,
                 span: None,
                 inferred_type: None,
@@ -3073,6 +3074,10 @@ impl SnowflakeDialect {
                             })));
                         }
                     }
+                }
+                let mut f = f;
+                if f.args.len() == 2 {
+                    f.args[1] = Self::normalize_format_arg(f.args[1].clone());
                 }
                 Ok(Expression::Function(Box::new(f)))
             }

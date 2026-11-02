@@ -1,35 +1,44 @@
 # Polyglot vs SQLGlot Parsing Benchmark
 
-**Engines:** polyglot-sql 0.5.16 and SQLGlot 30.12.0 installed with the
-`sqlglot[c]` mypyc-compiled native extensions
+**Recorded:** 2026-11-02
 
-**Environment:** Apple M2, arm64, macOS 26.5.2, Python 3.13.9
+**Engines:** locally built polyglot-sql 0.14.0 and SQLGlot 30.27.0
+with the `sqlglot[c]` 30.27.0 mypyc-compiled native extensions verified active.
 
-**Method:** median-of-five Python API calls using the shared SQLGlot parser corpus.
-Polyglot was built with the production `python_release` profile (`opt-level=2`, thin LTO).
+**Environment:** Apple M2, 8 cores, 16 GB RAM,
+arm64, macOS 27.0.1 (build 26A434), CPython 3.13.9.
 
-| Query | Polyglot | SQLGlot | SQLGlot / Polyglot |
+**Method:** median of five Python API calls per parser/query using the same
+16-query corpus as SQLGlot v30.27.0's upstream benchmark. Polyglot was
+built from commit `31b0fc6a050ad5aa80e0f9c912ee8e04f0602dd5` using the production
+`python_release` profile (`opt-level=2`, thin LTO, one codegen unit). SQLGlot uses
+`parse_one(..., error_level=IGNORE)`; Polyglot uses `parse_one`. Results are
+created and discarded without AST traversal or serialization.
+
+| Query | Polyglot | SQLGlot[c] | SQLGlot[c] / Polyglot |
 |---|---:|---:|---:|
-| TPC-H | 103.5 us | 389.3 us | 3.76x |
-| Short | 9.3 us | 28.0 us | 3.00x |
-| Deep arithmetic | 377.7 us | 1.29 ms | 3.43x |
-| Large `IN` | 17.76 ms | 57.77 ms | 3.25x |
-| Values | 19.14 ms | 62.33 ms | 3.26x |
-| Many joins | 374.0 us | 1.59 ms | 4.26x |
-| Many unions | 2.29 ms | 5.12 ms | 2.23x |
-| Nested subqueries | 25.8 us | 111.5 us | 4.32x |
-| Many columns | 531.7 us | 1.80 ms | 3.39x |
-| Large `CASE` | 1.38 ms | 5.25 ms | 3.80x |
-| Complex `WHERE` | 1.00 ms | 3.82 ms | 3.81x |
-| Many CTEs | 452.5 us | 1.97 ms | 4.35x |
-| Many windows | 800.1 us | 2.74 ms | 3.43x |
-| Nested functions | 35.1 us | 75.9 us | 2.16x |
-| Large strings | 232.8 us | 756.5 us | 3.25x |
-| Many numbers | 3.97 ms | 13.99 ms | 3.52x |
+| TPC-H | 95.2 us | 358.7 us | 3.77x |
+| Short | 9.1 us | 26.0 us | 2.85x |
+| Deep arithmetic | 359.2 us | 1.464 ms | 4.07x |
+| Large `IN` | 20.645 ms | 64.594 ms | 3.13x |
+| Values | 21.032 ms | 69.282 ms | 3.29x |
+| Many joins | 357.6 us | 1.850 ms | 5.17x |
+| Many unions | 2.546 ms | 5.032 ms | 1.98x |
+| Nested subqueries | 28.0 us | 113.5 us | 4.05x |
+| Many columns | 643.9 us | 1.874 ms | 2.91x |
+| Large `CASE` | 1.499 ms | 5.162 ms | 3.44x |
+| Complex `WHERE` | 1.150 ms | 3.884 ms | 3.38x |
+| Many CTEs | 472.5 us | 2.108 ms | 4.46x |
+| Many windows | 795.3 us | 2.872 ms | 3.61x |
+| Nested functions | 35.7 us | 78.8 us | 2.20x |
+| Large strings | 267.3 us | 759.3 us | 2.84x |
+| Many numbers | 4.588 ms | 15.637 ms | 3.41x |
 
-The geometric mean is **3.39x in Polyglot's favor** for this corpus and environment. This is
-not a universal speed claim; results depend on query shapes, hardware, versions, and build
-profiles.
+The geometric mean is **3.32x in Polyglot's favor**. Polyglot was
+faster on **16/16 queries**.
+This is a measurement of these Python API calls on this corpus and machine;
+query shapes, build settings, parser semantics, and background activity affect
+results. Five calls do not establish confidence intervals.
 
 ## Reproduce
 
@@ -37,5 +46,21 @@ profiles.
 make bench-simple-quick
 ```
 
-Focused Rust timing, allocation, Python concurrency, and native-profile results are documented
-in [`performance-benchmarks.md`](performance-benchmarks.md).
+To preserve exact timings as JSON, after building the locked benchmark
+environment with the command above:
+
+```bash
+uv run --project tools/bench-compare --locked python tools/bench-compare/bench_simple.py \
+  --core-only --iterations 5 --json target/parse-median.json
+```
+
+Recorded [raw median timings](../tools/bench-compare/results/2026-11-02/parse-median.json)
+are in seconds; the `sqlglot` keys refer to the compiled SQLGlot[c] installation.
+See the [environment and build metadata](../tools/bench-compare/results/2026-11-02/metadata.json)
+for package versions and source hashes.
+
+The [full comparison](current-benchmarks.md) includes all parsers, pure-Python
+SQLGlot, transpilation, and charts. It reports fastest-of-up-to-five timings,
+so its values and aggregate ratios differ from this median-of-five report.
+Focused Rust timing, allocation, Python concurrency, and native-profile results
+remain documented in [performance-benchmarks.md](performance-benchmarks.md).

@@ -685,21 +685,9 @@ impl DialectImpl for TSQLDialect {
             // In TSQL, bare expressions in aliased subqueries need explicit aliases
             Expression::Subquery(subquery) => self.transform_subquery(*subquery),
 
-            // Convert JsonQuery struct to ISNULL(JSON_QUERY(..., path), JSON_VALUE(..., path))
-            Expression::JsonQuery(f) => {
-                let json_query = Expression::Function(Box::new(Function::new(
-                    "JSON_QUERY".to_string(),
-                    vec![f.this.clone(), f.path.clone()],
-                )));
-                let json_value = Expression::Function(Box::new(Function::new(
-                    "JSON_VALUE".to_string(),
-                    vec![f.this, f.path],
-                )));
-                Ok(Expression::Function(Box::new(Function::new(
-                    "ISNULL".to_string(),
-                    vec![json_query, json_value],
-                ))))
-            }
+            // JSON_QUERY deliberately returns NULL for scalar JSON values.
+            // Substituting JSON_VALUE changes that behavior.
+            Expression::JsonQuery(f) => Ok(Expression::JsonQuery(f)),
             // Convert JsonValue struct to Function("JSON_VALUE", ...) for uniform handling
             Expression::JsonValue(f) => Ok(Expression::Function(Box::new(Function::new(
                 "JSON_VALUE".to_string(),
@@ -1521,6 +1509,7 @@ impl TSQLDialect {
             comments: Vec::new(),
             nesting_group: 0,
             directed: false,
+            nearest: None,
         }
     }
 
@@ -2914,23 +2903,11 @@ impl TSQLDialect {
                 ))))
             }
 
-            // JSON_QUERY with 1 arg: add '$' path and wrap in ISNULL
-            // JSON_QUERY with 2 args: leave as-is (already processed or inside ISNULL)
+            // SQL Server's optional path defaults to the root document.
             "JSON_QUERY" if f.args.len() == 1 => {
-                let this = f.args.into_iter().next().unwrap();
-                let path = Expression::Literal(Box::new(Literal::String("$".to_string())));
-                let json_query = Expression::Function(Box::new(Function::new(
-                    "JSON_QUERY".to_string(),
-                    vec![this.clone(), path.clone()],
-                )));
-                let json_value = Expression::Function(Box::new(Function::new(
-                    "JSON_VALUE".to_string(),
-                    vec![this, path],
-                )));
-                Ok(Expression::Function(Box::new(Function::new(
-                    "ISNULL".to_string(),
-                    vec![json_query, json_value],
-                ))))
+                let mut f = f;
+                f.args.push(Expression::string("$"));
+                Ok(Expression::Function(Box::new(f)))
             }
 
             // SPLIT -> STRING_SPLIT (returns a table, needs CROSS APPLY)
@@ -3832,21 +3809,17 @@ mod tests {
     }
 
     #[test]
-    fn test_json_query_isnull_wrapper_simple() {
-        // JSON_QUERY with two args needs ISNULL wrapper when transpiling to TSQL
+    fn test_json_query_preserves_null_on_scalar() {
+        // Microsoft documents JSON_QUERY as extracting objects/arrays only.
         let dialect = Dialect::get(DialectType::TSQL);
         let result = dialect
             .transpile(r#"JSON_QUERY(x, '$')"#, DialectType::TSQL)
             .expect("transpile failed");
-        assert!(
-            result[0].contains("ISNULL"),
-            "JSON_QUERY should be wrapped with ISNULL: {}",
-            result[0]
-        );
+        assert_eq!(result[0], "JSON_QUERY(x, '$')");
     }
 
     #[test]
-    fn test_json_query_isnull_wrapper_nested() {
+    fn test_json_query_default_path_with_nested_calls() {
         let dialect = Dialect::get(DialectType::TSQL);
         let result = dialect
             .transpile(
@@ -3854,10 +3827,10 @@ mod tests {
                 DialectType::TSQL,
             )
             .expect("transpile failed");
-        let expected = r#"ISNULL(JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'), JSON_VALUE(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'))"#;
+        let expected = r#"JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$')"#;
         assert_eq!(
             result[0], expected,
-            "JSON_QUERY should be wrapped with ISNULL"
+            "JSON_QUERY must preserve object/array extraction"
         );
     }
 }

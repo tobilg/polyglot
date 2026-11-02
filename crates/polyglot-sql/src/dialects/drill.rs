@@ -4,7 +4,7 @@
 //!
 //! Key characteristics:
 //! - Uses backticks for identifiers
-//! - Backslash string escapes
+//! - SQL-standard strings with literal backslashes
 //! - No TRY_CAST support (must use CAST)
 //! - NULLS LAST is default ordering
 //! - Functions: REPEATED_COUNT (array size), REPEATED_CONTAINS (array contains)

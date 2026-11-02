@@ -73,28 +73,32 @@ pub(crate) fn scope_query(expression: &Expression) -> &Expression {
 /// A lightweight resolution view containing only selected sources. CTE
 /// declarations remain available, but do not themselves cause ambiguity.
 pub(crate) fn selected_reference_scope(scope: &Scope) -> Scope {
-    let query = scope_query(&scope.expression);
-    let aliases: HashSet<_> = walk_in_scope(query, false)
+    let mut selected = Scope::new(scope_query(&scope.expression).clone());
+    selected.cte_sources = scope.cte_sources.clone();
+    selected.sources = selected_reference_sources(scope)
+        .into_iter()
+        .map(|(name, source)| (name, source.clone()))
+        .collect();
+    selected
+}
+
+/// Read-only consumers share source ASTs with their scope. Only validation,
+/// which binds aliases in its copy, needs the owned view above.
+pub(crate) fn selected_reference_sources(scope: &Scope) -> HashMap<String, &SourceInfo> {
+    let aliases: HashSet<_> = walk_in_scope(scope_query(&scope.expression), false)
         .filter_map(|node| match node {
             Expression::Table(table) => {
-                Some(table.alias.as_ref().unwrap_or(&table.name).name.clone())
+                Some(table.alias.as_ref().unwrap_or(&table.name).name.as_str())
             }
             _ => None,
         })
         .collect();
-    let mut selected = Scope::new(query.clone());
-    selected.cte_sources = scope.cte_sources.clone();
-    selected.sources = scope
+    scope
         .sources
         .iter()
-        .filter(|(name, source)| {
-            // Source keys use the spelling of the actual FROM/JOIN binding.
-            // Folding here can accidentally retain an unused, quoted CTE.
-            source.kind != SourceKind::Cte || aliases.contains(*name)
-        })
-        .map(|(name, source)| (name.clone(), source.clone()))
-        .collect();
-    selected
+        .filter(|(name, source)| source.kind != SourceKind::Cte || aliases.contains(name.as_str()))
+        .map(|(name, source)| (name.clone(), source))
+        .collect()
 }
 
 /// Information about a source (table or subquery) in a scope
@@ -308,7 +312,7 @@ impl Scope {
         } else {
             SourceKind::Table
         };
-        let info = SourceInfo::new(expression.clone(), is_scope, kind);
+        let info = SourceInfo::new(expression, is_scope, kind);
         self.sources.insert(name.clone(), info.clone());
         self.lateral_sources.insert(name, info);
         self.clear_cache();

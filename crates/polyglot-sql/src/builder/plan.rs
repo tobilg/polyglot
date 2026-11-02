@@ -750,6 +750,7 @@ impl Evaluator {
                         comments: Vec::new(),
                         nesting_group: 0,
                         directed: false,
+                        nearest: None,
                     },
                 )?;
             }

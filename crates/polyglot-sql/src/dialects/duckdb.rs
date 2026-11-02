@@ -33,7 +33,7 @@ fn normalize_json_path(path: Expression) -> Expression {
             };
             // Skip paths that are already normalized (start with $ or /)
             // Also skip JSON pointer syntax and back-of-list syntax [#-i]
-            if s.starts_with('$') || s.starts_with('/') || s.contains("[#") {
+            if s.starts_with('$') || s.starts_with('/') || s.contains("[#") || s.contains('\'') {
                 return path;
             }
             // Create JSONPath expression: $.key
@@ -524,11 +524,16 @@ impl DialectImpl for DuckDBDialect {
             )))),
 
             // ===== Pattern matching =====
-            // RegexpLike (~) -> REGEXP_FULL_MATCH in DuckDB
-            Expression::RegexpLike(f) => Ok(Expression::Function(Box::new(Function::new(
-                "REGEXP_FULL_MATCH".to_string(),
-                vec![f.this, f.pattern],
-            )))),
+            // DuckDB 2.0 uses partial matching for ~, like REGEXP_MATCHES.
+            // https://duckdb.org/docs/2.0/operations_manual/migration
+            Expression::RegexpLike(f) => {
+                let mut args = vec![f.this, f.pattern];
+                args.extend(f.flags);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP_MATCHES".to_string(),
+                    args,
+                ))))
+            }
 
             // ===== Time functions =====
             // CurrentTime -> CURRENT_TIME (no parens in DuckDB)
@@ -1271,6 +1276,7 @@ impl DialectImpl for DuckDBDialect {
                                         comments: Vec::new(),
                                         nesting_group: 0,
                                         directed: false,
+                                        nearest: None,
                                     });
                                 } else {
                                     // Keep non-UNNEST expressions in FROM (comma-separated)
@@ -1587,7 +1593,7 @@ impl DuckDBDialect {
     }
 
     /// Transform interval to split embedded value+unit strings (e.g., '1 hour' -> '1' HOUR)
-    /// DuckDB requires INTERVAL 'value' UNIT format, not INTERVAL 'value unit' format
+    /// Fractional values must retain their embedded unit to avoid truncation.
     fn transform_interval(&self, interval: Interval) -> Result<Expression> {
         // Only transform if:
         // 1. There's a string literal value
@@ -1601,6 +1607,11 @@ impl DuckDBDialect {
             if let Literal::String(ref s) = lit.as_ref() {
                 // Try to parse the string as "value unit" format
                 if let Some((value, unit)) = Self::parse_interval_string(s) {
+                    // Unit keywords truncate fractional values in DuckDB. Keep
+                    // the string form to preserve fractions of days/months.
+                    if value.contains('.') {
+                        return Ok(Expression::Interval(Box::new(interval)));
+                    }
                     // Create new interval with separated value and unit
                     return Ok(Expression::Interval(Box::new(Interval {
                         this: Some(Expression::Literal(Box::new(Literal::String(
@@ -2524,8 +2535,38 @@ impl DuckDBDialect {
                 ))))
             }
 
+            "LIST_SORT" | "LIST_REVERSE_SORT" | "ARRAY_REVERSE_SORT" => {
+                let mut f = f;
+                if f.name.eq_ignore_ascii_case("LIST_REVERSE_SORT") {
+                    f.name = "ARRAY_REVERSE_SORT".into();
+                }
+                for argument in f.args.iter_mut().skip(1) {
+                    if let Expression::Literal(literal) = argument {
+                        if let Literal::String(value) = literal.as_mut() {
+                            let normalized = value.to_ascii_uppercase();
+                            if matches!(
+                                normalized.as_str(),
+                                "ASC" | "DESC" | "NULLS FIRST" | "NULLS LAST"
+                            ) {
+                                *value = normalized;
+                            }
+                        }
+                    }
+                }
+                Ok(Expression::Function(Box::new(f)))
+            }
+
             // ARRAY_SORT is native to DuckDB (but drop the lambda comparator)
             "ARRAY_SORT" => {
+                // Ordering and NULL-placement arguments are native DuckDB options.
+                // Only the comparator-lambda form belongs to other dialects.
+                if !f
+                    .args
+                    .iter()
+                    .any(|arg| matches!(arg, Expression::Lambda(_)))
+                {
+                    return Ok(Expression::Function(Box::new(f)));
+                }
                 let args = vec![f.args.into_iter().next().unwrap()];
                 Ok(Expression::Function(Box::new(Function::new(
                     "ARRAY_SORT".to_string(),
@@ -6144,12 +6185,16 @@ impl DuckDBDialect {
                     trailing_comments: Vec::new(),
                     inferred_type: None,
                 }));
-                let two_pi_u2 = if let Expression::Div(div) = u2 {
-                    let numerator = Expression::Mul(Box::new(BinaryOp::new(two_pi, div.left)));
-                    Expression::Div(Box::new(BinaryOp::new(numerator, div.right)))
+                // Preserve the division's grouping: reassociation changes rounding.
+                let u2 = if matches!(u2, Expression::Div(_)) {
+                    Expression::Paren(Box::new(Paren {
+                        this: u2,
+                        trailing_comments: vec![],
+                    }))
                 } else {
-                    Expression::Mul(Box::new(BinaryOp::new(two_pi, u2)))
+                    u2
                 };
+                let two_pi_u2 = Expression::Mul(Box::new(BinaryOp::new(two_pi, u2)));
                 let cos_part = Expression::Function(Box::new(Function::new(
                     "COS".to_string(),
                     vec![two_pi_u2],

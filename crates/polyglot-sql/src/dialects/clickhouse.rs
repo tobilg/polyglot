@@ -149,13 +149,9 @@ impl DialectImpl for ClickHouseDialect {
         };
 
         match expr {
-            // TryCast stays as TryCast (ClickHouse doesn't have TRY_CAST by default)
-            // But we can emulate with toXOrNull functions
-            Expression::TryCast(c) => {
-                // For simplicity, just use regular CAST
-                // ClickHouse has toXOrNull/toXOrZero functions for safe casts
-                Ok(Expression::Cast(c))
-            }
+            // ClickHouse 26.10 has native TRY_CAST; converting it to CAST loses
+            // its error-to-NULL behavior (vendor fixture 05316_trino_compatible_syntax).
+            Expression::TryCast(c) => Ok(Expression::TryCast(c)),
 
             // SafeCast -> CAST in ClickHouse
             Expression::SafeCast(c) => Ok(Expression::Cast(c)),
@@ -409,6 +405,9 @@ impl ClickHouseDialect {
                 "STR_TO_DATE".to_string(),
                 f.args,
             )))),
+            "NULLIF" => Ok(Expression::Function(Box::new(Function::new(
+                "nullIf", f.args,
+            )))),
             "JSONEXTRACTSTRING" => Ok(Expression::Function(Box::new(Function::new(
                 "JSONExtractString".to_string(),
                 f.args,
@@ -442,7 +441,10 @@ impl ClickHouseDialect {
                 for arg in iter {
                     expr = Expression::And(Box::new(BinaryOp::new(expr, arg)));
                 }
-                Ok(expr)
+                Ok(Expression::Paren(Box::new(Paren {
+                    this: expr,
+                    trailing_comments: Vec::new(),
+                })))
             }
             "OR" if f.args.len() >= 2 => {
                 let mut iter = f.args.into_iter();
@@ -450,10 +452,15 @@ impl ClickHouseDialect {
                 for arg in iter {
                     expr = Expression::Or(Box::new(BinaryOp::new(expr, arg)));
                 }
-                self.transform_expr(expr)
+                self.transform_expr(expr).map(|this| {
+                    Expression::Paren(Box::new(Paren {
+                        this,
+                        trailing_comments: Vec::new(),
+                    }))
+                })
             }
             "XOR" if f.args.len() >= 2 => {
-                let mut iter = f.args.into_iter().map(Self::wrap_nested_xor_arg);
+                let mut iter = f.args.into_iter();
                 let mut expr = iter.next().unwrap();
                 for arg in iter {
                     expr = Expression::Function(Box::new(Function::new(
@@ -695,16 +702,5 @@ impl ClickHouseDialect {
 
     fn transform_cast(&self, c: Cast) -> Result<Expression> {
         Ok(Expression::Cast(Box::new(c)))
-    }
-
-    fn wrap_nested_xor_arg(expr: Expression) -> Expression {
-        if matches!(&expr, Expression::Function(f) if f.name.eq_ignore_ascii_case("XOR")) {
-            Expression::Paren(Box::new(Paren {
-                this: expr,
-                trailing_comments: Vec::new(),
-            }))
-        } else {
-            expr
-        }
     }
 }

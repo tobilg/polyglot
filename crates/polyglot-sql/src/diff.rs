@@ -9,8 +9,11 @@ use crate::dialects::DialectType;
 use crate::expressions::Expression;
 use crate::generator::{Generator, GeneratorConfig};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::ops::Range;
 
 /// Types of edits that can occur between two ASTs
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,51 +119,89 @@ pub fn changes_only(edits: Vec<Edit>) -> Vec<Edit> {
 // ---------------------------------------------------------------------------
 
 /// Flattened tree representation with explicit parent/child index maps.
-struct IndexedTree {
-    nodes: Vec<Expression>,
+struct IndexedTree<'a> {
+    nodes: Vec<Cow<'a, Expression>>,
+    fingerprints: Vec<OnceCell<NodeFingerprint>>,
+    leaves: Vec<usize>,
+    leaf_ranges: Vec<Range<usize>>,
+    leaf_positions: Vec<usize>,
     parents: Vec<Option<usize>>,
     children_indices: Vec<Vec<usize>>,
 }
 
-impl IndexedTree {
+impl<'a> IndexedTree<'a> {
     fn empty() -> Self {
         Self {
             nodes: Vec::new(),
+            fingerprints: Vec::new(),
+            leaves: Vec::new(),
+            leaf_ranges: Vec::new(),
+            leaf_positions: Vec::new(),
             parents: Vec::new(),
             children_indices: Vec::new(),
         }
     }
 
-    fn build(root: &Expression) -> Self {
+    fn build(root: &'a Expression) -> Self {
         let mut tree = Self::empty();
         tree.add_expr(root, None);
+        tree.leaves = (0..tree.nodes.len()).filter(|&i| tree.is_leaf(i)).collect();
+        tree.leaf_positions.resize(tree.nodes.len(), usize::MAX);
+        tree.leaf_ranges.resize(tree.nodes.len(), 0..0);
+        for (position, &id) in tree.leaves.iter().enumerate() {
+            tree.leaf_positions[id] = position;
+            tree.leaf_ranges[id] = position..position + 1;
+        }
+        // Nodes are inserted in preorder, so descendant leaves form a single
+        // interval. This avoids materializing a descendant set for every pair.
+        for id in (0..tree.nodes.len()).rev() {
+            if let (Some(&first), Some(&last)) = (
+                tree.children_indices[id].first(),
+                tree.children_indices[id].last(),
+            ) {
+                tree.leaf_ranges[id] = tree.leaf_ranges[first].start..tree.leaf_ranges[last].end;
+            }
+        }
         tree
     }
 
-    fn add_expr(&mut self, expr: &Expression, parent_idx: Option<usize>) {
+    fn add_expr(&mut self, expr: &'a Expression, parent_idx: Option<usize>) {
         // Skip bare Identifier nodes — they're names, not diff targets
         if matches!(expr, Expression::Identifier(_)) {
             return;
         }
 
-        let idx = self.nodes.len();
-        self.nodes.push(expr.clone());
-        self.parents.push(parent_idx);
-        self.children_indices.push(Vec::new());
-
-        if let Some(p) = parent_idx {
-            self.children_indices[p].push(idx);
-        }
-
+        let idx = self.add_node(Cow::Borrowed(expr), parent_idx);
         self.add_children(expr, idx);
     }
 
-    fn add_children(&mut self, expr: &Expression, parent_idx: usize) {
+    fn add_node(&mut self, expr: Cow<'a, Expression>, parent_idx: Option<usize>) -> usize {
+        let idx = self.nodes.len();
+        self.nodes.push(expr);
+        self.fingerprints.push(OnceCell::new());
+        self.parents.push(parent_idx);
+        self.children_indices.push(Vec::new());
+        if let Some(p) = parent_idx {
+            self.children_indices[p].push(idx);
+        }
+        idx
+    }
+
+    fn fingerprint(&self, idx: usize, dialect: Option<DialectType>) -> &NodeFingerprint {
+        self.fingerprints[idx]
+            .get_or_init(|| NodeFingerprint::new(node_sql(&self.nodes[idx], dialect)))
+    }
+
+    fn add_children(&mut self, expr: &'a Expression, parent_idx: usize) {
         match expr {
             Expression::Select(select) => {
                 if let Some(with) = &select.with {
                     for cte in &with.ctes {
-                        self.add_expr(&Expression::Cte(Box::new(cte.clone())), Some(parent_idx));
+                        let id = self.add_node(
+                            Cow::Owned(Expression::Cte(Box::new(cte.clone()))),
+                            Some(parent_idx),
+                        );
+                        self.add_expr(&cte.this, Some(id));
                     }
                 }
                 for e in &select.expressions {
@@ -172,7 +213,14 @@ impl IndexedTree {
                     }
                 }
                 for join in &select.joins {
-                    self.add_expr(&Expression::Join(Box::new(join.clone())), Some(parent_idx));
+                    let id = self.add_node(
+                        Cow::Owned(Expression::Join(Box::new(join.clone()))),
+                        Some(parent_idx),
+                    );
+                    self.add_expr(&join.this, Some(id));
+                    if let Some(on) = &join.on {
+                        self.add_expr(on, Some(id));
+                    }
                 }
                 if let Some(w) = &select.where_clause {
                     self.add_expr(&w.this, Some(parent_idx));
@@ -187,7 +235,11 @@ impl IndexedTree {
                 }
                 if let Some(ob) = &select.order_by {
                     for o in &ob.expressions {
-                        self.add_expr(&Expression::Ordered(Box::new(o.clone())), Some(parent_idx));
+                        let id = self.add_node(
+                            Cow::Owned(Expression::Ordered(Box::new(o.clone()))),
+                            Some(parent_idx),
+                        );
+                        self.add_expr(&o.this, Some(id));
                     }
                 }
                 if let Some(limit) = &select.limit {
@@ -355,23 +407,9 @@ impl IndexedTree {
         self.children_indices[idx].is_empty()
     }
 
+    #[cfg(test)]
     fn leaf_indices(&self) -> Vec<usize> {
-        (0..self.nodes.len()).filter(|&i| self.is_leaf(i)).collect()
-    }
-
-    /// Get all leaf descendants of a node (including itself if it is a leaf).
-    fn leaf_descendants(&self, idx: usize) -> Vec<usize> {
-        let mut result = Vec::new();
-        let mut stack = vec![idx];
-        while let Some(i) = stack.pop() {
-            if self.is_leaf(i) {
-                result.push(i);
-            }
-            for &child in &self.children_indices[i] {
-                stack.push(child);
-            }
-        }
-        result
+        self.leaves.clone()
     }
 }
 
@@ -379,34 +417,54 @@ impl IndexedTree {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Compute Dice coefficient on character bigrams of two strings.
-fn dice_coefficient(a: &str, b: &str) -> f64 {
-    // For very short strings, use exact equality
-    if a.len() < 2 || b.len() < 2 {
-        return if a == b { 1.0 } else { 0.0 };
+/// Immutable per-node matching data, shared by all candidate comparisons.
+struct NodeFingerprint {
+    sql: String,
+    bigrams: HashMap<(char, char), usize>,
+    total: usize,
+}
+
+impl NodeFingerprint {
+    fn new(sql: String) -> Self {
+        let mut bigrams = HashMap::new();
+        let mut previous = None;
+        let mut total = 0;
+        for ch in sql.chars() {
+            if let Some(prev) = previous {
+                *bigrams.entry((prev, ch)).or_insert(0) += 1;
+                total += 1;
+            }
+            previous = Some(ch);
+        }
+        Self {
+            sql,
+            bigrams,
+            total,
+        }
     }
-    let a_bigrams = bigram_histo(a);
-    let b_bigrams = bigram_histo(b);
-    let common: usize = a_bigrams
-        .iter()
-        .map(|(k, v)| v.min(b_bigrams.get(k).unwrap_or(&0)))
-        .sum();
-    let total: usize = a_bigrams.values().sum::<usize>() + b_bigrams.values().sum::<usize>();
-    if total == 0 {
-        1.0
-    } else {
-        2.0 * common as f64 / total as f64
+
+    fn dice(&self, other: &Self) -> f64 {
+        // Retain byte-length handling for short strings, including Unicode.
+        if self.sql.len() < 2 || other.sql.len() < 2 {
+            return if self.sql == other.sql { 1.0 } else { 0.0 };
+        }
+        let common: usize = self
+            .bigrams
+            .iter()
+            .map(|(key, value)| value.min(other.bigrams.get(key).unwrap_or(&0)))
+            .sum();
+        let total = self.total + other.total;
+        if total == 0 {
+            1.0
+        } else {
+            2.0 * common as f64 / total as f64
+        }
     }
 }
 
-/// Build a frequency histogram of character bigrams.
-fn bigram_histo(s: &str) -> HashMap<(char, char), usize> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut map = HashMap::new();
-    for w in chars.windows(2) {
-        *map.entry((w[0], w[1])).or_insert(0) += 1;
-    }
-    map
+#[cfg(test)]
+fn dice_coefficient(a: &str, b: &str) -> f64 {
+    NodeFingerprint::new(a.to_owned()).dice(&NodeFingerprint::new(b.to_owned()))
 }
 
 /// Generate SQL string for an expression, optionally with a dialect.
@@ -574,14 +632,14 @@ impl Ord for MatchCandidate {
 // ChangeDistiller: three-phase algorithm
 // ---------------------------------------------------------------------------
 
-struct ChangeDistiller {
+struct ChangeDistiller<'a> {
     config: DiffConfig,
-    src_tree: IndexedTree,
-    tgt_tree: IndexedTree,
+    src_tree: IndexedTree<'a>,
+    tgt_tree: IndexedTree<'a>,
     matchings: HashMap<usize, usize>, // src_idx -> tgt_idx
 }
 
-impl ChangeDistiller {
+impl<'a> ChangeDistiller<'a> {
     fn new(config: DiffConfig) -> Self {
         Self {
             config,
@@ -591,7 +649,12 @@ impl ChangeDistiller {
         }
     }
 
-    fn diff(&mut self, source: &Expression, target: &Expression, delta_only: bool) -> Vec<Edit> {
+    fn diff(
+        &mut self,
+        source: &'a Expression,
+        target: &'a Expression,
+        delta_only: bool,
+    ) -> Vec<Edit> {
         self.src_tree = IndexedTree::build(source);
         self.tgt_tree = IndexedTree::build(target);
 
@@ -608,17 +671,17 @@ impl ChangeDistiller {
     // -- Phase 1: Leaf matching -----------------------------------------------
 
     fn match_leaves(&mut self) {
-        let src_leaves = self.src_tree.leaf_indices();
-        let tgt_leaves = self.tgt_tree.leaf_indices();
+        let src_leaves = self.src_tree.leaves.clone();
+        let tgt_leaves = self.tgt_tree.leaves.clone();
 
         // Pre-compute SQL strings for all leaves
-        let src_sql: Vec<String> = src_leaves
+        let src_sql: Vec<&NodeFingerprint> = src_leaves
             .iter()
-            .map(|&i| node_sql(&self.src_tree.nodes[i], self.config.dialect))
+            .map(|&i| self.src_tree.fingerprint(i, self.config.dialect))
             .collect();
-        let tgt_sql: Vec<String> = tgt_leaves
+        let tgt_sql: Vec<&NodeFingerprint> = tgt_leaves
             .iter()
-            .map(|&i| node_sql(&self.tgt_tree.nodes[i], self.config.dialect))
+            .map(|&i| self.tgt_tree.fingerprint(i, self.config.dialect))
             .collect();
 
         let mut heap = BinaryHeap::new();
@@ -629,7 +692,7 @@ impl ChangeDistiller {
                 if !is_same_type(&self.src_tree.nodes[si], &self.tgt_tree.nodes[ti]) {
                     continue;
                 }
-                let score = dice_coefficient(&src_sql[si_pos], &tgt_sql[ti_pos]);
+                let score = src_sql[si_pos].dice(tgt_sql[ti_pos]);
                 if score >= self.config.t {
                     let parent_sim = parent_similarity_score(
                         si,
@@ -684,9 +747,8 @@ impl ChangeDistiller {
         let mut counter = 0usize;
 
         for &si in &src_internal {
-            let src_leaves: HashSet<usize> =
-                self.src_tree.leaf_descendants(si).into_iter().collect();
-            let src_sql = node_sql(&self.src_tree.nodes[si], self.config.dialect);
+            let src_range = self.src_tree.leaf_ranges[si].clone();
+            let src_leaves = &self.src_tree.leaves[src_range];
 
             for &ti in &tgt_internal {
                 if matched_tgt.contains(&ti) {
@@ -696,16 +758,15 @@ impl ChangeDistiller {
                     continue;
                 }
 
-                let tgt_leaves: HashSet<usize> =
-                    self.tgt_tree.leaf_descendants(ti).into_iter().collect();
+                let tgt_leaves = &self.tgt_tree.leaf_ranges[ti];
 
                 // Count leaf descendants matched to each other
                 let common = src_leaves
                     .iter()
                     .filter(|&&sl| {
-                        self.matchings
-                            .get(&sl)
-                            .map_or(false, |&tl| tgt_leaves.contains(&tl))
+                        self.matchings.get(&sl).map_or(false, |&tl| {
+                            tgt_leaves.contains(&self.tgt_tree.leaf_positions[tl])
+                        })
                     })
                     .count();
 
@@ -723,10 +784,16 @@ impl ChangeDistiller {
                     self.config.t
                 };
 
-                let tgt_sql = node_sql(&self.tgt_tree.nodes[ti], self.config.dialect);
-                let dice = dice_coefficient(&src_sql, &tgt_sql);
-
-                if leaf_sim >= 0.8 || (leaf_sim >= t && dice >= self.config.f) {
+                // SQL similarity cannot change the decision outside this band.
+                // Keep candidate order and scores unchanged for greedy matching.
+                if leaf_sim >= 0.8
+                    || (leaf_sim >= t
+                        && self
+                            .src_tree
+                            .fingerprint(si, self.config.dialect)
+                            .dice(self.tgt_tree.fingerprint(ti, self.config.dialect))
+                            >= self.config.f)
+                {
                     heap.push(MatchCandidate {
                         score: leaf_sim,
                         parent_sim: parent_similarity_score(
@@ -809,7 +876,7 @@ impl ChangeDistiller {
         for i in 0..self.src_tree.nodes.len() {
             if !self.matchings.contains_key(&i) {
                 edits.push(Edit::Remove {
-                    expression: self.src_tree.nodes[i].clone(),
+                    expression: self.src_tree.nodes[i].as_ref().clone(),
                 });
             }
         }
@@ -818,20 +885,20 @@ impl ChangeDistiller {
         for i in 0..self.tgt_tree.nodes.len() {
             if !matched_tgt.contains(&i) {
                 edits.push(Edit::Insert {
-                    expression: self.tgt_tree.nodes[i].clone(),
+                    expression: self.tgt_tree.nodes[i].as_ref().clone(),
                 });
             }
         }
 
         // Matched pairs → Update / Move / Keep
         for (&src_idx, &tgt_idx) in &self.matchings {
-            let src_node = &self.src_tree.nodes[src_idx];
-            let tgt_node = &self.tgt_tree.nodes[tgt_idx];
+            let src_node = self.src_tree.nodes[src_idx].as_ref();
+            let tgt_node = self.tgt_tree.nodes[tgt_idx].as_ref();
 
-            let src_sql = node_sql(src_node, self.config.dialect);
-            let tgt_sql = node_sql(tgt_node, self.config.dialect);
-
-            if is_updatable(src_node) && src_sql != tgt_sql {
+            if is_updatable(src_node)
+                && self.src_tree.fingerprint(src_idx, self.config.dialect).sql
+                    != self.tgt_tree.fingerprint(tgt_idx, self.config.dialect).sql
+            {
                 edits.push(Edit::Update {
                     source: src_node.clone(),
                     target: tgt_node.clone(),
@@ -871,6 +938,17 @@ mod tests {
         let dialect = Dialect::get(DialectType::Generic);
         let ast = dialect.parse(sql).unwrap();
         ast.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn cached_dice_retains_short_and_unicode_matching() {
+        assert_eq!(dice_coefficient("a", "a"), 1.0);
+        assert_eq!(dice_coefficient("a", "b"), 0.0);
+        assert_eq!(dice_coefficient("", ""), 1.0);
+        // Preserve the original byte-length/bigram behavior for one-character
+        // multibyte strings, even though their histogram is empty.
+        assert_eq!(dice_coefficient("é", "π"), 1.0);
+        assert_eq!(dice_coefficient("abab", "abac"), 2.0 / 3.0);
     }
 
     fn count_edits(edits: &[Edit]) -> (usize, usize, usize, usize, usize) {
@@ -1086,7 +1164,8 @@ mod tests {
 
     #[test]
     fn test_is_leaf() {
-        let tree = IndexedTree::build(&parse("SELECT a, 1 FROM t"));
+        let expression = parse("SELECT a, 1 FROM t");
+        let tree = IndexedTree::build(&expression);
         // Root (Select) should not be a leaf
         assert!(!tree.is_leaf(0));
         // Leaf nodes should exist in the tree
@@ -1128,6 +1207,7 @@ mod tests {
             comments: vec![],
             nesting_group: 0,
             directed: false,
+            nearest: None,
         }));
         let join_right = Expression::Join(Box::new(crate::expressions::Join {
             this: Expression::Table(Box::new(crate::expressions::TableRef::new("t"))),
@@ -1143,6 +1223,7 @@ mod tests {
             comments: vec![],
             nesting_group: 0,
             directed: false,
+            nearest: None,
         }));
         assert!(!is_same_type(&join_left, &join_right));
     }

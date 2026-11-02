@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Simple parse benchmark comparing polyglot-sql vs sqlglot and other parsers.
 
-Uses the same timing approach as sqlglot/benchmarks/parse.py: median-of-N,
-no subprocesses, no pyperf.
+Uses the SQLGlot query corpus with median-of-N timings (the upstream runner
+reports the minimum). Capability checks run in subprocesses; timings do not
+use pyperf.
 
 Run from the repository root:
 
@@ -13,6 +14,7 @@ Run from the repository root:
 
 import argparse
 import inspect
+import json
 import os
 import subprocess
 import sys
@@ -463,6 +465,7 @@ def main():
         default=5,
         help="Number of iterations per benchmark (default: 5).",
     )
+    parser.add_argument("--json", metavar="FILE", help="Write results in seconds as JSON.")
     args = parser.parse_args()
 
     results = {}
@@ -494,6 +497,11 @@ def main():
                 continue
             key = f"{parser_name}:{query_name}"
             results[key] = _bench(key, parse_fn, sql, iterations=args.iterations)
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as output:
+            json.dump(results, output, indent=2)
+            output.write("\n")
 
     _print_table(list(parsers.keys()), results, valid_pairs)
 

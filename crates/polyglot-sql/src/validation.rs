@@ -3143,57 +3143,73 @@ fn bind_scope_projection_aliases(
             search: None,
         });
     }
-    for projection in projections.iter_mut() {
-        let mut references = ProjectionAliasBindings::new();
-        for node in walk_in_scope(projection, false) {
-            if !crate::binding::lateral_aliases(dialect) {
-                break;
+    // Prepare the lexical source context once for all aliases. Each alias still
+    // sees only preceding, unambiguous lateral aliases under the dialect rules.
+    let mut typed_sources = if check_types {
+        apply_projection_alias_bindings(Expression::Select(type_select), bindings)
+    } else {
+        Expression::null()
+    };
+    let mut bind_projections =
+        |mut annotator: Option<&mut crate::optimizer::annotate_types::TypeAnnotator<'_>>| {
+            for projection in projections.iter_mut() {
+                let mut references = ProjectionAliasBindings::new();
+                for node in walk_in_scope(projection, false) {
+                    if !crate::binding::lateral_aliases(dialect) {
+                        break;
+                    }
+                    let Expression::Column(column) = node else {
+                        continue;
+                    };
+                    let Some(key) = projection_reference_key(column) else {
+                        continue;
+                    };
+                    let name = normalize_identifier(column.name.clone(), strategy).name;
+                    if inputs.contains(&name) {
+                        continue;
+                    }
+                    if let Some(Some(data_type)) = aliases.get(&name) {
+                        references.insert(key, data_type.clone());
+                    }
+                }
+                let original =
+                    std::mem::replace(projection, Expression::Null(crate::expressions::Null));
+                *projection = apply_projection_alias_bindings(original, &references);
+                bindings.extend(references);
+                if let Expression::Alias(alias) = projection {
+                    let name = normalize_identifier(alias.alias.clone(), strategy).name;
+                    // Duplicate names are not evidence of an unambiguous binding.
+                    if aliases.contains_key(&name) {
+                        aliases.insert(name, None);
+                        continue;
+                    }
+                    if !check_types {
+                        aliases.insert(name, Some(DataType::Unknown));
+                        continue;
+                    }
+                    let mut typed = apply_projection_alias_bindings(alias.this.clone(), bindings);
+                    annotator
+                        .as_deref_mut()
+                        .expect("type checking context")
+                        .annotate_in_place(&mut typed);
+                    let data_type = typed.inferred_type().cloned().unwrap_or(DataType::Unknown);
+                    aliases.insert(name, Some(data_type));
+                }
             }
-            let Expression::Column(column) = node else {
-                continue;
-            };
-            let Some(key) = projection_reference_key(column) else {
-                continue;
-            };
-            let name = normalize_identifier(column.name.clone(), strategy).name;
-            if inputs.contains(&name) {
-                continue;
-            }
-            if let Some(Some(data_type)) = aliases.get(&name) {
-                references.insert(key, data_type.clone());
-            }
-        }
-        let original = std::mem::replace(projection, Expression::Null(crate::expressions::Null));
-        *projection = apply_projection_alias_bindings(original, &references);
-        bindings.extend(references);
-        if let Expression::Alias(alias) = projection {
-            let name = normalize_identifier(alias.alias.clone(), strategy).name;
-            // Duplicate names are not evidence of an unambiguous binding.
-            if aliases.contains_key(&name) {
-                aliases.insert(name, None);
-                continue;
-            }
-            if !check_types {
-                aliases.insert(name, Some(DataType::Unknown));
-                continue;
-            }
-            let mut typed = Expression::Select(type_select.clone());
-            if let Expression::Select(query) = &mut typed {
-                query.expressions.push(alias.this.clone());
-            }
-            // Child queries were bound first. Their aliases must contribute
-            // their actual types, not remain unresolved inputs in this copy.
-            typed = apply_projection_alias_bindings(typed, bindings);
-            annotate_types(&mut typed, Some(resolver_schema), Some(dialect));
-            let data_type = match typed {
-                Expression::Select(query) => query.expressions[0]
-                    .inferred_type()
-                    .cloned()
-                    .unwrap_or(DataType::Unknown),
-                _ => unreachable!(),
-            };
-            aliases.insert(name, Some(data_type));
-        }
+        };
+    if check_types {
+        let Expression::Select(ref mut type_select) = typed_sources else {
+            unreachable!()
+        };
+        crate::optimizer::annotate_types::with_select_type_context(
+            type_select,
+            Some(resolver_schema),
+            Some(dialect),
+            None,
+            |_, annotator| bind_projections(Some(annotator)),
+        );
+    } else {
+        bind_projections(None);
     }
     select.expressions = projections;
     // Only clause-specific output visibility is enabled. JOIN ON remains an

@@ -139,6 +139,7 @@ pub fn dialect_identity_test(
         let skip_identify = matches!(
             dialect,
             DialectType::StarRocks
+                | DialectType::Doris
                 | DialectType::Exasol
                 | DialectType::TSQL
                 | DialectType::Fabric
@@ -393,4 +394,23 @@ pub fn pretty_test(input: &str, expected: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Verify that invalid/unsafe upstream rewrites produce a diagnostic instead of SQL.
+pub fn transpile_error_test(
+    sql: &str,
+    source: DialectType,
+    target: DialectType,
+    expected: &str,
+) -> Result<(), String> {
+    match Dialect::get(source).transpile(sql, target) {
+        Err(error) if error.to_string().contains(expected) => Ok(()),
+        Err(error) => Err(format!(
+            "Expected diagnostic containing {expected:?}, got {error}"
+        )),
+        Ok(sql) => Err(format!(
+            "Expected a diagnostic, got SQL: {}",
+            sql.join("; ")
+        )),
+    }
 }

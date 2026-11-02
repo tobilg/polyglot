@@ -1,0 +1,224 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "area": "AST diff",
+      "change": "Borrow nodes, cache generated SQL and bigrams, and index descendant-leaf ranges.",
+      "measurements": [
+        "diff_width"
+      ]
+    },
+    {
+      "id": 2,
+      "area": "Type annotation and validation",
+      "change": "Reuse bottom-up type results and static function mappings; prepare source schemas once per projection list.",
+      "measurements": [
+        "annotate_arithmetic",
+        "validation_cte_aliases",
+        "validation_width"
+      ]
+    },
+    {
+      "id": 3,
+      "area": "Lineage and OpenLineage",
+      "change": "Index output lookups and omit unused intermediate query copies in the private OpenLineage resolver.",
+      "measurements": [
+        "openlineage_width"
+      ]
+    },
+    {
+      "id": 4,
+      "area": "Scope sharing",
+      "change": "Use borrowed source views for nullability analysis and remove a redundant lateral-source clone. Public owned Scope construction remains unchanged.",
+      "measurements": [
+        "analysis_width",
+        "build_scope_ctes"
+      ]
+    },
+    {
+      "id": 5,
+      "area": "Python AST access",
+      "change": "Share immutable AST storage for child views, walks, and searches while preserving independent builder results.",
+      "measurements": [
+        "python_walk_dfs",
+        "python_walk_bfs",
+        "python_find_all_add"
+      ]
+    },
+    {
+      "id": 6,
+      "area": "AST JSON decoding",
+      "change": "Deserialize valid AST JSON directly; retain the legacy compatibility and error fallback.",
+      "measurements": [
+        "ast_json_compat_decode"
+      ]
+    },
+    {
+      "id": 7,
+      "area": "SDK AST helpers",
+      "change": "Avoid rebuilding containers in read-only traversal and stop findFirst immediately. Retain the JSON bridge with the faster core decoder: the structured bridge prototype was about 35% slower in the same-build comparison.",
+      "measurements": [
+        "sdk_get_table_names",
+        "sdk_node_count",
+        "sdk_find_first_root"
+      ]
+    },
+    {
+      "id": 8,
+      "area": "Transpilation passes",
+      "change": "Skip inapplicable built-in passes, including boolean rewrites over scalar-only nested queries. Preserve pass order and custom callbacks.",
+      "measurements": [
+        "transpile_pg_tsql",
+        "transpile_pg_duckdb",
+        "transpile_nested_pg_fabric"
+      ]
+    },
+    {
+      "id": 9,
+      "area": "Complexity guards and formatting",
+      "change": "Use path-free AST guard traversal and the borrowed parser-token path for formatting.",
+      "measurements": [
+        "format_pipeline",
+        "generate_pipeline"
+      ]
+    },
+    {
+      "id": 10,
+      "area": "Token storage",
+      "change": "Keep source offsets instead of per-token Arc handles, compact empty comment slots, and borrow unchanged Unicode text during parsing. Retain the original public Unicode tokenizer cursor after detecting a regression.",
+      "measurements": [
+        "parse_ascii_numbers",
+        "parse_mixed_unicode_numbers",
+        "tokenize_mixed_unicode_numbers"
+      ]
+    },
+    {
+      "id": 11,
+      "area": "WASM compiler settings",
+      "change": "Compared wasm-opt -Oz and -O3 on the same Rust artifact. Retain -Oz: -O3 produced no consistent runtime win and increased bundle size.",
+      "measurements": [
+        "wasm-flags-comparison.jsonl",
+        "wasm-sizes.json"
+      ]
+    },
+    {
+      "id": 12,
+      "area": "Playground responsiveness",
+      "change": "Run SQL operations and WASM startup in a dedicated Web Worker; queue requests during asynchronous initialization, mount tabs on first visit, ignore stale responses, and reuse lineage results to collect source tables.",
+      "measurements": [
+        "browser-smoke.json"
+      ]
+    }
+  ],
+  "notes": [
+    "Synthetic workloads; speedups apply to the named workload and size, not every query.",
+    "The main before/after comparison uses the fixed performance profile, not the production release profiles.",
+    "WASM init timings are single observations and are not evidence of a startup-speed improvement.",
+    "The public owned Scope API still requires owned ASTs; this work does not remove all scope-construction cloning.",
+    "The playground retains its existing transpile-then-format behavior to preserve displayed SQL.",
+    "Python child views keep the root AST alive until the last view is released; copy() continues to create an independent AST.",
+    "The main performance-profile WASM artifact grew from 46,426,693 to 50,441,180 bytes (+8.65%); gzip grew from 7,909,337 to 8,871,330 bytes (+12.16%). Production release size has not been measured.",
+    "findFirst matching the root is a best-case early-exit microbenchmark. The nested Fabric case exposes the previous repeated-recursion behavior; neither is an overall throughput estimate.",
+    "Three Rust test expectations already disagree with baseline output. Final output still matches that baseline; see baseline-test-failures.json."
+  ],
+  "verification": "verification.json",
+  "benchmark_metadata": "metadata.json",
+  "representative_measurements": [
+    {
+      "suite": "python",
+      "operation": "transpile_nested_pg_fabric",
+      "size": 12,
+      "before_us": 226842.792,
+      "after_us": 140.0173076923077,
+      "speedup": 1620.1053693911465
+    },
+    {
+      "suite": "python",
+      "operation": "python_find_all_add",
+      "size": 256,
+      "before_us": 6813.655533333334,
+      "after_us": 14.352360792192881,
+      "speedup": 474.74109883300133
+    },
+    {
+      "suite": "python",
+      "operation": "python_walk_dfs",
+      "size": 256,
+      "before_us": 6883.505533333333,
+      "after_us": 22.52074420175636,
+      "speedup": 305.65177916263076
+    },
+    {
+      "suite": "native",
+      "operation": "diff_width",
+      "size": 200,
+      "before_us": 147523.666,
+      "after_us": 11176.157444444445,
+      "speedup": 13.199855740519522
+    },
+    {
+      "suite": "native",
+      "operation": "validation_cte_aliases",
+      "size": 200,
+      "before_us": 31673.4895,
+      "after_us": 2506.73855,
+      "speedup": 12.635338256556512
+    },
+    {
+      "suite": "native",
+      "operation": "annotate_arithmetic",
+      "size": 256,
+      "before_us": 845.9520336134453,
+      "after_us": 78.60526315789474,
+      "speedup": 10.762027879916612
+    },
+    {
+      "suite": "native",
+      "operation": "openlineage_width",
+      "size": 200,
+      "before_us": 16121.94642857143,
+      "after_us": 2676.4945263157897,
+      "speedup": 6.023530506062115
+    },
+    {
+      "suite": "native",
+      "operation": "ast_json_compat_decode",
+      "size": 1000,
+      "before_us": 6725.0972,
+      "after_us": 1308.4393896103895,
+      "speedup": 5.139785039643689
+    },
+    {
+      "suite": "sdk",
+      "operation": "sdk_get_table_names",
+      "size": 1000,
+      "before_us": 9339.738636363605,
+      "after_us": 3600.580357142917,
+      "speedup": 2.5939536713394578
+    },
+    {
+      "suite": "native",
+      "operation": "transpile_pg_tsql",
+      "size": 1000,
+      "before_us": 15288.458285714285,
+      "after_us": 10961.9208,
+      "speedup": 1.3946878986495035
+    },
+    {
+      "suite": "native",
+      "operation": "format_pipeline",
+      "size": 1000,
+      "before_us": 2506.025,
+      "after_us": 2053.981306122449,
+      "speedup": 1.2200816981781246
+    },
+    {
+      "suite": "native",
+      "operation": "parse_mixed_unicode_numbers",
+      "size": 10000,
+      "before_us": 5377.576736842105,
+      "after_us": 4525.027173913043,
+      "speedup": 1.188407611747404
+    }
+  ]
+}

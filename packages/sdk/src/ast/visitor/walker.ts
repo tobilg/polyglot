@@ -28,6 +28,7 @@ import {
 import {
   collectExpressionChildren,
   visitExpressionChildren,
+  visitExpressionChildrenWhile,
 } from './traversal';
 import type { NodePredicate, VisitorCallback, VisitorConfig } from './types';
 
@@ -162,19 +163,16 @@ export function findFirst(
   predicate: NodePredicate,
 ): Expression | undefined {
   let result: Expression | undefined;
-
-  // Use a simple flag since we can't truly stop early
-  let found = false;
-
-  walk(node, {
-    enter: (n, parent) => {
-      if (!found && predicate(n, parent)) {
-        result = n;
-        found = true;
-      }
-    },
-  });
-
+  const search = (current: Expression, parent: Expression | null): boolean => {
+    if (predicate(current, parent)) {
+      result = current;
+      return false;
+    }
+    return visitExpressionChildrenWhile(current, (child, location) =>
+      search(child, location.parent),
+    );
+  };
+  search(node, null);
   return result;
 }
 

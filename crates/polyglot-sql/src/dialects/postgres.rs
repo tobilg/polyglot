@@ -686,22 +686,22 @@ impl DialectImpl for PostgresDialect {
             // JSON FUNCTIONS
             // ============================================
             // JSONExtract -> use arrow syntax (->) in PostgreSQL for simple literal paths
-            // Complex paths (like column references) should use JSON_EXTRACT_PATH function
+            // Preserve native arrow operands, which may be computed keys or signed indexes.
             Expression::JsonExtract(mut f) => {
                 // Only use arrow syntax for simple literal paths (string or non-negative number)
                 // Complex expressions like column references should use function form
-                f.arrow_syntax = Self::is_simple_json_path(&f.path);
+                f.arrow_syntax |= Self::is_simple_json_path(&f.path);
                 Ok(Expression::JsonExtract(f))
             }
 
             // JSONExtractScalar -> use arrow syntax (->>) in PostgreSQL for simple paths
-            // Complex paths (like negative indices) should use JSON_EXTRACT_PATH_TEXT function
+            // Negative integer operands are supported by PostgreSQL.
             // #>> (hash_arrow_syntax) stays as #>>
             Expression::JsonExtractScalar(mut f) => {
                 if !f.hash_arrow_syntax {
                     // Only use arrow syntax for simple literal paths (string or non-negative number)
                     // Complex expressions like Neg(-1) should use function form
-                    f.arrow_syntax = Self::is_simple_json_path(&f.path);
+                    f.arrow_syntax |= Self::is_simple_json_path(&f.path);
                 }
                 Ok(Expression::JsonExtractScalar(f))
             }
@@ -867,6 +867,7 @@ impl DialectImpl for PostgresDialect {
                     comments: join.comments,
                     nesting_group: 0,
                     directed: false,
+                    nearest: None,
                 })))
             }
 
@@ -886,6 +887,7 @@ impl DialectImpl for PostgresDialect {
                     comments: join.comments,
                     nesting_group: 0,
                     directed: false,
+                    nearest: None,
                 })))
             }
 
@@ -1013,7 +1015,7 @@ impl DialectImpl for PostgresDialect {
 impl PostgresDialect {
     /// Check if a JSON path expression is "simple" (string literal or non-negative integer)
     /// Simple paths can use arrow syntax (->>) in PostgreSQL
-    /// Complex paths (like negative indices) should use JSON_EXTRACT_PATH_TEXT function
+    /// Negative integer operands are supported by PostgreSQL.
     fn is_simple_json_path(path: &Expression) -> bool {
         match path {
             // String literals are always simple
@@ -1301,6 +1303,10 @@ impl PostgresDialect {
 
                     // Helper: CAST(expr AS TIMESTAMP)
                     let cast_ts = |e: Expression| -> Expression {
+                        if matches!(&e, Expression::Function(f) if f.name.eq_ignore_ascii_case("DATE_TRUNC"))
+                        {
+                            return e;
+                        }
                         Expression::Cast(Box::new(Cast {
                             this: e,
                             to: DataType::Timestamp {
@@ -1849,22 +1855,22 @@ mod tests {
 
     #[test]
     fn test_json_extract_with_column_path() {
-        // When the path is a column reference (not a literal), should use function form
+        // Native arrows accept computed key expressions.
         let result = identity_postgres("json_data.data -> field_ids.field_id");
         assert!(
-            result.contains("JSON_EXTRACT_PATH"),
-            "Expected JSON_EXTRACT_PATH for column path, got: {}",
+            result.contains("-> field_ids.field_id"),
+            "Expected native arrow for column path, got: {}",
             result
         );
     }
 
     #[test]
     fn test_json_extract_scalar_with_negative_index() {
-        // When the path is a negative index, should use JSON_EXTRACT_PATH_TEXT function
+        // Negative indexes count from the end of a PostgreSQL JSON array.
         let result = identity_postgres("x::JSON -> 'duration' ->> -1");
         assert!(
-            result.contains("JSON_EXTRACT_PATH_TEXT"),
-            "Expected JSON_EXTRACT_PATH_TEXT for negative index, got: {}",
+            result.contains("->> -1"),
+            "Expected native arrow for negative index, got: {}",
             result
         );
         // The first -> should still be arrow syntax since 'duration' is a string literal
@@ -1885,7 +1891,7 @@ mod tests {
             result
         );
         assert!(
-            !result.contains("JSON_EXTRACT_PATH"),
+            !result.contains("-> field_ids.field_id"),
             "Should NOT use function form for string literal, got: {}",
             result
         );

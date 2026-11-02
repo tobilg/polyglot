@@ -2807,6 +2807,78 @@ mod tests {
     }
 
     #[test]
+    fn test_new_expression_variants_roundtrip() {
+        for (kind, dialect, sql) in [
+            ("pipe_query", "clickhouse", "FROM t |> SELECT a"),
+            (
+                "multi_insert",
+                "hive",
+                "FROM x INSERT OVERWRITE TABLE a SELECT k INSERT INTO b SELECT v",
+            ),
+            ("per", "generic", "AVG(AGG(x) PER (c))"),
+            (
+                "partition_by_excluding",
+                "generic",
+                "LAG(x) OVER (PARTITION BY EXCLUDING c ORDER BY d)",
+            ),
+            (
+                "stream_source",
+                "clickhouse",
+                "SELECT ts FROM t STREAM BOUNDED",
+            ),
+            (
+                "limit_range",
+                "clickhouse",
+                "SELECT x FROM t LIMIT AFTER x = 5 UNTIL x = 8",
+            ),
+            (
+                "aggregate_key_property",
+                "starrocks",
+                "CREATE TABLE t (k INT, v HLL HLL_UNION) AGGREGATE KEY (k)",
+            ),
+            (
+                "oracle_table_property",
+                "oracle",
+                "CREATE TABLE t (id NUMBER) PCTFREE 10",
+            ),
+            ("doris_match", "doris", "SELECT c MATCH_ANY 'x' FROM t"),
+            (
+                "with_function",
+                "trino",
+                "WITH FUNCTION f() RETURNS INTEGER RETURN 1 SELECT F()",
+            ),
+        ] {
+            let parsed: serde_json::Value = serde_json::from_str(&parse(sql, dialect)).unwrap();
+            assert_eq!(parsed["success"], true, "{kind}: {parsed}");
+            let ast = parsed["ast"].as_str().unwrap();
+            let tag = format!("\"{kind}\":");
+            assert!(ast.contains(&tag), "{kind}: {ast}");
+
+            // The structured API uses the same core expressions and serializer.
+            let structured = parse_value_internal(sql, dialect);
+            assert!(structured.success, "{kind}: {:?}", structured.error);
+            assert_eq!(
+                serde_json::to_string(&structured.ast.unwrap()).unwrap(),
+                ast
+            );
+
+            let generated: serde_json::Value =
+                serde_json::from_str(&generate(ast, dialect)).unwrap();
+            assert_eq!(generated["success"], true, "{kind}: {generated}");
+            let generated_sql = generated["sql"][0].as_str().unwrap();
+            let reparsed: serde_json::Value =
+                serde_json::from_str(&parse(generated_sql, dialect)).unwrap();
+            assert_eq!(reparsed["success"], true, "{kind}: {reparsed}");
+            let reparsed_ast = reparsed["ast"].as_str().unwrap();
+            assert!(reparsed_ast.contains(&tag), "{kind}: {reparsed_ast}");
+            let regenerated: serde_json::Value =
+                serde_json::from_str(&generate(reparsed_ast, dialect)).unwrap();
+            assert_eq!(regenerated["success"], true, "{kind}: {regenerated}");
+            assert_eq!(regenerated["sql"], generated["sql"], "{kind}");
+        }
+    }
+
+    #[test]
     fn test_parse_generate_tidb_ddl_roundtrip() {
         let parsed = parse(
             "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))",

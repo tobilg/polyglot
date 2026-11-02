@@ -6,9 +6,9 @@ Pipeline:
   .sql files → split into statements → filter → normalize → deduplicate
   → categorize → write JSON fixtures
 
-The resulting fixtures are identity tests: polyglot parses the SQL as ClickHouse
-and must reproduce it unchanged. Statements that polyglot can't handle yet are
-removed in a second pass via remove-failures.py after running cargo test.
+The resulting fixtures exercise ClickHouse parsing and canonical generation.
+Filter explicit vendor syntax-error probes during extraction; positive examples
+remain in the fixtures even when Polyglot does not yet support their syntax.
 
 Usage:
     uv run python3 tools/clickhouse-extract/extract-clickhouse-tests.py [options]
@@ -35,6 +35,8 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "crates" / "polyglot-sql" / "tests" / "custo
 
 # Files to skip — must match SKIP_FILES in custom_clickhouse_parser.rs
 SKIP_FILES = {
+    # Deliberately malformed lambda parameters; none are positive controls.
+    "02181_sql_user_defined_functions_invalid_lambda.sql",
     # KQL (Kusto Query Language) files — not SQL
     "02366_kql_distinct.sql",
     "02366_kql_extend.sql",
@@ -96,123 +98,81 @@ INSERT_FORMAT_PATTERN = re.compile(r"^\s*INSERT\s+INTO\s+.*?\bFORMAT\b", re.IGNO
 
 # ─── Statement Splitting ────────────────────────────────────────────────────
 
+SQL_TOKENS = re.compile(
+    r"(?P<comment>--[^\n]*|/\*[\s\S]*?\*/)"
+    r"|(?P<dollar>\$(?P<tag>[A-Za-z0-9_]*)\$[\s\S]*?\$(?P=tag)\$)"
+    r"|(?P<quoted>'(?:\\[\s\S]|''|[^'\\])*'"
+    r'|"(?:\\[\s\S]|""|[^"\\])*"'
+    r"|`(?:\\[\s\S]|``|[^`\\])*`|‘[^’]*’|“[^”]*”)"
+    r"|(?P<word>[A-Za-z_][A-Za-z0-9_]*)|(?P<symbol>[^\s])"
+)
+
+
 def split_statements(content: str) -> list[str]:
-    """Split SQL content into individual statements, handling strings and comments."""
+    """Split vendor SQL without interpreting quoted text or losing test annotations."""
     statements = []
-    current = []
-    in_single_quote = False
-    in_double_quote = False
-    in_backtick = False
-    in_line_comment = False
-    in_block_comment = False
-    paren_depth = 0
-    i = 0
-    n = len(content)
-
-    while i < n:
-        c = content[i]
-
-        # Line comment
-        if not in_single_quote and not in_double_quote and not in_backtick and not in_block_comment:
-            if c == '-' and i + 1 < n and content[i + 1] == '-':
-                in_line_comment = True
-                i += 2
-                continue
-
-        if in_line_comment:
-            if c == '\n':
-                in_line_comment = False
-                current.append(' ')
-            i += 1
+    start = 0
+    depth = 0
+    for token in SQL_TOKENS.finditer(content):
+        if token.lastgroup != "symbol":
             continue
-
-        # Block comment
-        if not in_single_quote and not in_double_quote and not in_backtick:
-            if c == '/' and i + 1 < n and content[i + 1] == '*':
-                in_block_comment = True
-                i += 2
-                continue
-
-        if in_block_comment:
-            if c == '*' and i + 1 < n and content[i + 1] == '/':
-                in_block_comment = False
-                i += 2
-                current.append(' ')
-                continue
-            i += 1
-            continue
-
-        # String literals
-        if c == "'" and not in_double_quote and not in_backtick:
-            if in_single_quote:
-                # Check for escaped quote
-                if i + 1 < n and content[i + 1] == "'":
-                    current.append("''")
-                    i += 2
-                    continue
-                in_single_quote = False
-            else:
-                in_single_quote = True
-            current.append(c)
-            i += 1
-            continue
-
-        if c == '"' and not in_single_quote and not in_backtick:
-            in_double_quote = not in_double_quote
-            current.append(c)
-            i += 1
-            continue
-
-        if c == '`' and not in_single_quote and not in_double_quote:
-            in_backtick = not in_backtick
-            current.append(c)
-            i += 1
-            continue
-
-        # Parentheses
-        if not in_single_quote and not in_double_quote and not in_backtick:
-            if c == '(':
-                paren_depth += 1
-            elif c == ')':
-                paren_depth = max(0, paren_depth - 1)
-
-        # Statement separator
-        if c == ';' and paren_depth == 0 and not in_single_quote and not in_double_quote and not in_backtick:
-            stmt = ''.join(current).strip()
-            if stmt:
-                statements.append(stmt)
-            current = []
-            i += 1
-            continue
-
-        # Newlines become spaces
-        if c == '\n':
-            current.append(' ')
-        else:
-            current.append(c)
-        i += 1
-
-    # Last statement (no trailing semicolon)
-    stmt = ''.join(current).strip()
+        text = token.group()
+        if text in "([{":
+            depth += 1
+        elif text in ")]}":
+            depth = max(0, depth - 1)
+        elif text == ";" and depth == 0:
+            suffix = content[token.end():].split("\n", 1)[0]
+            invalid = re.match(r"\s*--.*\b(?:clientError|serverError)\b.*\b(?:SYNTAX_ERROR|NUMBER_OF_ARGUMENTS_DOESNT_MATCH)\b", suffix)
+            if not invalid:
+                stmt = content[start:token.start()].strip()
+                if stmt:
+                    statements.append(stmt)
+            start = token.end()
+    stmt = content[start:].strip()
     if stmt:
         statements.append(stmt)
-
     return statements
 
 
-# ─── Filtering ──────────────────────────────────────────────────────────────
-
 def normalize_statement(sql: str) -> str:
-    """Normalize a SQL statement for consistency."""
-    # Collapse whitespace
-    sql = re.sub(r'\s+', ' ', sql).strip()
-    # Strip trailing semicolons
-    sql = sql.rstrip(';').strip()
-    # Strip SETTINGS clauses
-    sql = SETTINGS_PATTERN.sub('', sql).strip()
-    # Strip FORMAT suffixes
-    sql = FORMAT_PATTERN.sub('', sql).strip()
-    return sql
+    """Normalize whitespace and remove only top-level runtime/output clauses.
+
+    SETTINGS also occurs inside table functions and quoted SQL. Removing it with
+    a regex truncated valid queries and even string literals in extracted fixtures.
+    """
+    depth = 0
+    parts = []
+    previous = 0
+    for token in SQL_TOKENS.finditer(sql):
+        text = token.group()
+        if token.lastgroup == "comment":
+            parts.append(" ")
+            previous = token.end()
+            continue
+        if depth == 0 and token.lastgroup == "word" and text.upper() in {"SETTINGS", "FORMAT"}:
+            suffix = sql[token.start():]
+            pattern = SETTINGS_PATTERN if text.upper() == "SETTINGS" else FORMAT_PATTERN
+            if pattern.fullmatch(" " + suffix):
+                break
+        # Normalize only whitespace between tokens, never within string literals.
+        gap = sql[previous:token.start()]
+        if gap and parts:
+            parts.append(re.sub(r"\s+", " ", gap))
+        parts.append(text)
+        previous = token.end()
+        if token.lastgroup == "symbol":
+            if text in "([{":
+                depth += 1
+            elif text in ")]}":
+                depth = max(0, depth - 1)
+    return "".join(parts).rstrip(';').strip()
+
+
+def uses_alternate_query_language(content: str) -> bool:
+    return bool(re.search(
+        r"(?im)^\s*SET\s+dialect\s*=\s*'(?:kusto|kql|logsql|trino)'", content
+    ))
 
 
 def should_keep(sql: str, max_length: int) -> bool:
@@ -309,6 +269,8 @@ def extract_from_file(filepath: Path, max_length: int) -> list[dict]:
 
     # Test directives are line comments, so the SQL-aware splitter removes them
     # without mistaking documentation such as `-- {1} EXCEPT ...` for a directive.
+    if uses_alternate_query_language(content):
+        return []
     raw_stmts = split_statements(content)
     results = []
 

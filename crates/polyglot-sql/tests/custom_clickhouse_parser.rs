@@ -3,7 +3,7 @@
 //! Parses all .sql files from the ClickHouse test suite and asserts zero failures.
 //! Run with: cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
 
-use polyglot_sql::DialectType;
+use polyglot_sql::{dialects::Dialect, tokens::TokenType, DialectType};
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
@@ -11,6 +11,8 @@ use std::thread;
 /// Files to skip because they contain non-SQL content (KQL, intentionally invalid SQL,
 /// ClickHouse-specific syntax not in scope, special test harness files, etc.)
 const SKIP_FILES: &[&str] = &[
+    // All statements intentionally use invalid lambda definitions.
+    "02181_sql_user_defined_functions_invalid_lambda.sql",
     // KQL (Kusto Query Language) files - not SQL
     "02366_kql_distinct.sql",
     "02366_kql_extend.sql",
@@ -104,6 +106,14 @@ fn test_clickhouse_parser_all() {
                 }
             };
 
+            // ClickHouse's repository also tests its KQL, LogSQL, and Trino
+            // frontends. Their grammar is not ClickHouse SQL.
+            if uses_alternate_query_language(&content) {
+                skipped += 1;
+                continue;
+            }
+            let content = without_expected_syntax_errors(&content);
+
             // Skip empty files
             let trimmed = content.trim();
             if trimmed.is_empty() {
@@ -144,6 +154,76 @@ fn test_clickhouse_parser_all() {
             total - skipped
         );
     });
+}
+
+fn uses_alternate_query_language(sql: &str) -> bool {
+    sql.lines().any(|line| {
+        let line = line.trim().to_ascii_lowercase();
+        let Some(setting) = line.strip_prefix("set ") else {
+            return false;
+        };
+        let Some((name, value)) = setting.split_once('=') else {
+            return false;
+        };
+        name.trim() == "dialect"
+            && ["'kusto'", "'kql'", "'logsql'", "'trino'"]
+                .iter()
+                .any(|dialect| value.trim().starts_with(dialect))
+    })
+}
+
+/// Keep positive controls in negative-test files, excluding only statements
+/// explicitly annotated by the vendor as syntax or argument-count errors. Token offsets avoid
+/// mistaking semicolons inside strings or comments for statement boundaries.
+fn without_expected_syntax_errors(sql: &str) -> String {
+    if !sql.contains("SYNTAX_ERROR") && !sql.contains("NUMBER_OF_ARGUMENTS_DOESNT_MATCH") {
+        return sql.to_string();
+    }
+    let Ok(tokens) = Dialect::get(DialectType::ClickHouse).tokenize(sql) else {
+        return sql.to_string();
+    };
+    let mut chars: Vec<char> = sql.chars().collect();
+    let mut start = 0;
+    for token in tokens
+        .iter()
+        .filter(|token| token.token_type == TokenType::Semicolon)
+    {
+        let end = token.span.end;
+        let suffix: String = chars[end..].iter().take_while(|c| **c != '\n').collect();
+        if suffix.trim_start().starts_with("--")
+            && (suffix.contains("SYNTAX_ERROR")
+                || suffix.contains("NUMBER_OF_ARGUMENTS_DOESNT_MATCH"))
+            && (suffix.contains("clientError") || suffix.contains("serverError"))
+        {
+            for character in &mut chars[start..end] {
+                if *character != '\n' {
+                    *character = ' ';
+                }
+            }
+        }
+        start = end;
+    }
+    chars.into_iter().collect()
+}
+
+#[test]
+fn vendor_negative_statements_preserve_positive_controls() {
+    let sql =
+        "SELECT 'é;';\nCREATE VIEW v COMMENT AS SELECT 1; -- {clientError SYNTAX_ERROR}\nSELECT 2;";
+    let filtered = without_expected_syntax_errors(sql);
+    assert!(filtered.contains("SELECT 'é;';"));
+    assert!(filtered.contains("SELECT 2;"));
+    assert!(!filtered.contains("CREATE VIEW"));
+    assert_eq!(
+        polyglot_sql::parse(&filtered, DialectType::ClickHouse)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(!uses_alternate_query_language(
+        "SELECT 'set dialect = \'kusto\''"
+    ));
+    assert!(uses_alternate_query_language("SET dialect = 'kusto';"));
 }
 
 fn clickhouse_test_stack_bytes() -> usize {

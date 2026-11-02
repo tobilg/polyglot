@@ -108,6 +108,14 @@ pub(super) fn normalize(
             e
         };
 
+        if let Some(rewritten) = scalar::normalize_source_functions(&e, &context)? {
+            return Ok(rewritten);
+        }
+
+        if let Some(rewritten) = temporal::normalize_source_calendar(&e, &context)? {
+            return Ok(rewritten);
+        }
+
         if matches!(source, DialectType::DataFusion) && matches!(target, DialectType::DuckDB) {
             if let Expression::Function(ref function) = e {
                 if function.name.eq_ignore_ascii_case("NOW") && function.args.is_empty() {
@@ -1059,6 +1067,7 @@ pub(super) fn normalize(
                                                 comments: Vec::new(),
                                                 nesting_group: 0,
                                                 directed: false,
+                                                nearest: None,
                                             });
                                         } else {
                                             new_from_exprs.push(expr.clone());
@@ -1095,6 +1104,7 @@ pub(super) fn normalize(
                                                 comments: Vec::new(),
                                                 nesting_group: 0,
                                                 directed: false,
+                                                nearest: None,
                                             });
                                         } else {
                                             new_from_exprs.push(expr.clone());
@@ -1780,21 +1790,7 @@ pub(super) fn normalize(
                         && name == "DATE_TRUNC"
                         && f.args.len() == 2
                     {
-                        // Determine if DuckDB DATE_TRUNC needs CAST wrapping to preserve input type.
-                        // Logic based on Python sqlglot's input_type_preserved flag:
-                        // - DATE + non-date-unit (HOUR, MINUTE, etc.) -> wrap
-                        // - TIMESTAMP + date-unit (YEAR, QUARTER, MONTH, WEEK, DAY) -> wrap
-                        // - TIMESTAMPTZ/TIMESTAMPLTZ/TIME -> always wrap
-                        let unit_str = match &f.args[0] {
-                            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
-                                let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
-                                Some(s.to_ascii_uppercase())
-                            }
-                            _ => None,
-                        };
-                        let is_date_unit = unit_str.as_ref().map_or(false, |u| {
-                            matches!(u.as_str(), "YEAR" | "QUARTER" | "MONTH" | "WEEK" | "DAY")
-                        });
+                        // Preserve the declared source return type.
                         match &f.args[1] {
                             Expression::Cast(c) => match &c.to {
                                 DataType::Time { .. } => Action::Types(types::Action::DateTruncWrapCast),
@@ -1807,10 +1803,10 @@ pub(super) fn normalize(
                                 DataType::Timestamp { timezone: true, .. } => {
                                     Action::Types(types::Action::DateTruncWrapCast)
                                 }
-                                DataType::Date if !is_date_unit => Action::Types(types::Action::DateTruncWrapCast),
+                                DataType::Date => Action::Types(types::Action::DateTruncWrapCast),
                                 DataType::Timestamp {
                                     timezone: false, ..
-                                } if is_date_unit => Action::Types(types::Action::DateTruncWrapCast),
+                                } => Action::Types(types::Action::DateTruncWrapCast),
                                 _ => Action::None,
                             },
                             _ => Action::None,
@@ -3370,6 +3366,11 @@ pub(super) fn normalize(
                 {
                     Action::Collections(collections::Action::ArraySyntaxConvert)
                 }
+                Expression::Variance(_) | Expression::Stddev(_)
+                    if source == DialectType::DuckDB && matches!(target,
+                        DialectType::MySQL | DialectType::Doris | DialectType::StarRocks | DialectType::SingleStore) => {
+                    Action::Aggregates(aggregates::Action::DuckDBSampleAlias)
+                }
                 // VARIANCE expression -> varSamp for ClickHouse
                 Expression::Variance(_) if matches!(target, DialectType::ClickHouse) => {
                     Action::Aggregates(aggregates::Action::VarianceToClickHouse)
@@ -4149,5 +4150,53 @@ pub(super) fn normalize(
         };
 
         Ok(outcome.into_expression())
+    })
+}
+
+/// Convert source format models while quoted literal text is still available.
+/// Source canonicalization can otherwise erase the distinction between a quoted
+/// word and a date-format token before the target sees it.
+pub(super) fn prepare_source_formats(
+    expr: Expression,
+    source: DialectType,
+    target: DialectType,
+) -> Result<Expression> {
+    if target != DialectType::DuckDB
+        || !matches!(
+            source,
+            DialectType::Snowflake | DialectType::PostgreSQL | DialectType::MySQL
+        )
+    {
+        return Ok(expr);
+    }
+    transform_recursive(expr, &|e| {
+        let Expression::Function(mut f) = e else {
+            return Ok(e);
+        };
+        let applicable = f.qualified_name.is_empty()
+            && f.args.len() == 2
+            && ((source == DialectType::MySQL && f.name.eq_ignore_ascii_case("DATE_FORMAT"))
+                || (source != DialectType::MySQL && f.name.eq_ignore_ascii_case("TO_CHAR")));
+        if applicable {
+            if let Expression::Literal(l) = &f.args[1] {
+                if let Literal::String(format) = l.as_ref() {
+                    let format = temporal::source_format_to_strftime(format, source);
+                    if source == DialectType::MySQL
+                        && matches!(&f.args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::String(_)))
+                    {
+                        if let Expression::Literal(l) = &f.args[0] {
+                            if let Literal::String(value) = l.as_ref() {
+                                f.args[0] = Expression::Literal(Box::new(Literal::Timestamp(
+                                    value.clone(),
+                                )));
+                            }
+                        }
+                    }
+                    f.args[1] = Expression::string(format);
+                    f.name = "STRFTIME".into();
+                }
+            }
+        }
+        Ok(Expression::Function(f))
     })
 }

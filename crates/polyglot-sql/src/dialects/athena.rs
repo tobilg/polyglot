@@ -27,6 +27,13 @@ impl DialectImpl for AthenaDialect {
 
     fn tokenizer_config(&self) -> TokenizerConfig {
         let mut config = TokenizerConfig::default();
+        config.athena_statement_quoting = true;
+        config
+            .keywords
+            .insert("MSCK".into(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("REPAIR".into(), crate::tokens::TokenType::Command);
         // Athena uses double quotes for identifiers (Trino-style for DML)
         config.identifiers.insert('"', '"');
         // Also supports backticks (Hive-style for DDL)

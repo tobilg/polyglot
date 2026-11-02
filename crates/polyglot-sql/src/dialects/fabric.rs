@@ -348,9 +348,9 @@ impl FabricDialect {
                 name: Self::decimal_type_name(precision, scale),
             },
 
-            // JSON -> VARCHAR
+            // Use unbounded storage for types without a declared length.
             DataType::Json => DataType::Custom {
-                name: "VARCHAR".to_string(),
+                name: "VARCHAR(MAX)".to_string(),
             },
 
             // Fabric has no native JSONB storage type; use unbounded text.
@@ -440,17 +440,17 @@ impl FabricDialect {
 
                     // IMAGE -> VARBINARY
                     "IMAGE" => DataType::Custom {
-                        name: "VARBINARY".to_string(),
+                        name: "VARBINARY(MAX)".to_string(),
                     },
 
                     // MONEY -> DECIMAL
                     "MONEY" => DataType::Custom {
-                        name: "DECIMAL".to_string(),
+                        name: "DECIMAL(19, 4)".to_string(),
                     },
 
                     // SMALLMONEY -> DECIMAL
                     "SMALLMONEY" => DataType::Custom {
-                        name: "DECIMAL".to_string(),
+                        name: "DECIMAL(10, 4)".to_string(),
                     },
 
                     // NCHAR -> CHAR (with length preserved)
@@ -504,7 +504,7 @@ impl FabricDialect {
 
                     // XML -> VARCHAR
                     "XML" => DataType::Custom {
-                        name: "VARCHAR".to_string(),
+                        name: "VARCHAR(MAX)".to_string(),
                     },
 
                     // NUMERIC -> DECIMAL (override TSQL's conversion)

@@ -161,7 +161,10 @@ fn duckdb_int_div_protects_zero_divisors() {
         ] {
             let sql = format!("SELECT 7 // {divisor} AS v FROM t");
             let out = transpile(&sql, DialectType::DuckDB, target).unwrap();
-            assert!(out[0].contains("NULLIF("), "{sql} -> {target:?}: {out:?}");
+            assert!(
+                out[0].to_ascii_uppercase().contains("NULLIF("),
+                "{sql} -> {target:?}: {out:?}"
+            );
         }
     }
 }
@@ -240,7 +243,10 @@ fn duckdb_fractional_int_div_protects_zero_for_clickhouse() {
     ] {
         let out = transpile_with_by_name(sql, "duckdb", "clickhouse", &TranspileOptions::strict())
             .unwrap();
-        assert!(out[0].contains(" / NULLIF("), "{sql}: {out:?}");
+        assert!(
+            out[0].to_ascii_uppercase().contains(" / NULLIF("),
+            "{sql}: {out:?}"
+        );
         assert!(!out[0].contains("intDiv"), "{sql}: {out:?}");
     }
 }

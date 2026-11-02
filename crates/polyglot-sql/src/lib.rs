@@ -344,7 +344,8 @@ fn parse_with_token_guard(
     dialect: &Dialect,
     options: &FormatGuardOptions,
 ) -> Result<Vec<Expression>> {
-    let tokens = dialect.tokenize(sql)?;
+    let source: std::sync::Arc<str> = std::sync::Arc::from(sql);
+    let (tokens, token_guard_stats) = dialect.tokenize_for_parser(&source)?;
     if let Some(max) = options.max_tokens {
         let token_count = tokens.len();
         if token_count > max {
@@ -355,7 +356,7 @@ fn parse_with_token_guard(
             ));
         }
     }
-    enforce_set_op_chain_guard(&tokens, options)?;
+    enforce_set_op_chain_guard(&tokens, &source, options)?;
 
     let complexity_guard = ComplexityGuardOptions {
         max_input_bytes: options.max_input_bytes,
@@ -368,7 +369,7 @@ fn parse_with_token_guard(
         complexity_guard,
         ..Default::default()
     };
-    let mut parser = Parser::with_source(tokens, config, sql.to_string());
+    let mut parser = Parser::with_parser_tokens(tokens, token_guard_stats, config, source);
     parser.parse()
 }
 
@@ -381,7 +382,10 @@ fn is_trivia_token(token_type: TokenType) -> bool {
 }
 
 #[cfg(feature = "generate")]
-fn next_significant_token(tokens: &[Token], start: usize) -> Option<&Token> {
+fn next_significant_token(
+    tokens: &[crate::tokens::ParserToken],
+    start: usize,
+) -> Option<&crate::tokens::ParserToken> {
     tokens
         .iter()
         .skip(start)
@@ -389,14 +393,14 @@ fn next_significant_token(tokens: &[Token], start: usize) -> Option<&Token> {
 }
 
 #[cfg(feature = "generate")]
-fn is_set_operation_token(tokens: &[Token], idx: usize) -> bool {
+fn is_set_operation_token(tokens: &[crate::tokens::ParserToken], source: &str, idx: usize) -> bool {
     let token = &tokens[idx];
     match token.token_type {
         TokenType::Union | TokenType::Intersect => true,
         TokenType::Except => {
             // MINUS is aliased to EXCEPT in the tokenizer, but in ClickHouse minus(...)
             // is a function call rather than a set operation.
-            if token.text.eq_ignore_ascii_case("minus")
+            if token.text(source).eq_ignore_ascii_case("minus")
                 && matches!(
                     next_significant_token(tokens, idx + 1).map(|t| t.token_type),
                     Some(TokenType::LParen)
@@ -411,7 +415,11 @@ fn is_set_operation_token(tokens: &[Token], idx: usize) -> bool {
 }
 
 #[cfg(feature = "generate")]
-fn enforce_set_op_chain_guard(tokens: &[Token], options: &FormatGuardOptions) -> Result<()> {
+fn enforce_set_op_chain_guard(
+    tokens: &[crate::tokens::ParserToken],
+    source: &str,
+    options: &FormatGuardOptions,
+) -> Result<()> {
     let Some(max) = options.max_set_op_chain else {
         return Ok(());
     };
@@ -423,7 +431,7 @@ fn enforce_set_op_chain_guard(tokens: &[Token], options: &FormatGuardOptions) ->
             continue;
         }
 
-        if is_set_operation_token(tokens, idx) {
+        if is_set_operation_token(tokens, source, idx) {
             set_op_count += 1;
             if set_op_count > max {
                 return Err(format_guard_error(

@@ -1808,6 +1808,15 @@ pub fn eliminate_distinct_on_for_dialect(
         return Ok(expr);
     }
 
+    use crate::traversal::ExpressionWalk;
+    // A read-only scan avoids rebuilding the entire tree for the usual case.
+    // Check at the point of use: preceding passes can introduce DISTINCT ON.
+    if !expr
+        .contains(|node| matches!(node, Expression::Select(select) if select.distinct_on.is_some()))
+    {
+        return Ok(expr);
+    }
+
     // Determine NULL ordering mode based on target dialect
     // Oracle/Redshift/Snowflake: NULLS FIRST is default for DESC -> no change needed
     // BigQuery/Spark/Presto/Hive/etc: need explicit NULLS FIRST
@@ -2802,6 +2811,7 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
                                     comments: Vec::new(),
                                     nesting_group: 0,
                                     directed: false,
+                                    nearest: None,
                                 });
                             }
                         }
@@ -3056,6 +3066,22 @@ fn is_temporal_type(dt: &DataType) -> bool {
 ///
 /// Reference: `transforms.py:703-721`
 pub fn ensure_bools(expr: Expression) -> Result<Expression> {
+    use crate::traversal::ExpressionWalk;
+    // Only predicate contexts can change. Avoid rebuilding scalar-only trees,
+    // including deep FROM/subquery chains, through the recursive implementation.
+    let join_has_predicate = |join: &Join| join.on.is_some() || join.match_condition.is_some();
+    if !expr.contains(|node| match node {
+        Expression::And(_) | Expression::Or(_) | Expression::Not(_) | Expression::Case(_) => true,
+        Expression::Select(select) => {
+            select.where_clause.is_some()
+                || select.having.is_some()
+                || select.joins.iter().any(join_has_predicate)
+        }
+        Expression::JoinedTable(table) => table.joins.iter().any(join_has_predicate),
+        _ => false,
+    }) {
+        return Ok(expr);
+    }
     let expr = ensure_bools_in_value_context(expr);
 
     Ok(match expr {
@@ -4667,6 +4693,7 @@ fn unnest_from_to_cross_join_single_select(expr: Expression) -> Result<Expressio
                                 comments: Vec::new(),
                                 nesting_group: 0,
                                 directed: false,
+                                nearest: None,
                             });
                         } else {
                             new_from_exprs.push(from_item);
@@ -4779,6 +4806,7 @@ fn unnest_alias_transform_single_select(expr: Expression) -> Result<Expression> 
                                 comments: Vec::new(),
                                 nesting_group: 0,
                                 directed: false,
+                                nearest: None,
                             });
                         } else {
                             // Keep non-UNNEST items in FROM
@@ -5171,10 +5199,10 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
 /// - Queries with or without FROM clause
 /// - Presto (index_offset=1) and BigQuery (index_offset=0) variants
 pub fn explode_projection_to_unnest(expr: Expression, target: DialectType) -> Result<Expression> {
-    match expr {
+    transform_recursive(expr, &|expr| match expr {
         Expression::Select(select) => explode_projection_to_unnest_impl(*select, target),
         other => Ok(other),
-    }
+    })
 }
 
 /// Snowflake-specific rewrite to mirror Python sqlglot's explode_projection_to_unnest behavior
@@ -5334,6 +5362,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             comments: Vec::new(),
             nesting_group: 0,
             directed: false,
+            nearest: None,
         });
 
         let entity_flatten = Expression::Function(Box::new(Function::new(
@@ -5382,6 +5411,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             comments: Vec::new(),
             nesting_group: 0,
             directed: false,
+            nearest: None,
         });
 
         let pos_col =
@@ -5535,6 +5565,7 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
     // Process each SELECT expression, collecting explode info
     let mut explode_infos: Vec<ExplodeInfo> = Vec::new();
     let mut new_projections: Vec<String> = Vec::new();
+    let mut preserved_projections = Vec::new();
 
     for (_idx, sel_expr) in select.expressions.iter().enumerate() {
         let explode_data = extract_explode_data(sel_expr);
@@ -5621,11 +5652,12 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
                 unnest_source_alias,
             });
         } else {
-            // Not an EXPLODE expression, generate as-is
-            let sel_sql = target_dialect
-                .generate(sel_expr)
-                .unwrap_or_else(|_| "*".to_string());
-            new_projections.push(sel_sql);
+            // Keep nested query ASTs intact. Rendering target syntax and then
+            // reparsing it as Generic can reject WITH OFFSET or reinterpret
+            // functions in a different query scope.
+            let marker = new_name(&mut taken_select_names, "__polyglot_projection");
+            new_projections.push(marker.clone());
+            preserved_projections.push((marker, sel_expr.clone()));
         }
     }
 
@@ -5777,6 +5809,19 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
     match parsed {
         Ok(mut stmts) if !stmts.is_empty() => {
             let mut result = stmts.remove(0);
+            if let Expression::Select(select) = &mut result {
+                for projection in &mut select.expressions {
+                    if let Expression::Column(column) = projection {
+                        if let Some((_, original)) =
+                            preserved_projections.iter().find(|(marker, _)| {
+                                column.table.is_none() && column.name.name == *marker
+                            })
+                        {
+                            *projection = original.clone();
+                        }
+                    }
+                }
+            }
 
             // For BigQuery, convert Presto-style UNNEST AST to BigQuery-style
             // Presto: Alias(Unnest(with_ordinality=true), alias=_u_N, column_aliases=[col, pos])
@@ -6155,27 +6200,10 @@ fn make_unnest_subquery(unnest: UnnestFunc, alias: Option<Identifier>) -> Expres
 /// the Union (unlike Python sqlglot). This function handles both cases by checking
 /// the right-hand SELECT for trailing ORDER BY/LIMIT and moving them to the Union.
 pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
-    use crate::expressions::{split_set_limit, Limit, Offset as OffsetClause, OrderBy, Star};
+    use crate::expressions::{split_set_limit, Offset as OffsetClause, OrderBy, Star};
 
     match expr {
         Expression::Union(mut u) => {
-            // Check if ORDER BY/LIMIT are on the rightmost Select instead of the Union
-            // (our parser may attach them to the right SELECT)
-            if u.order_by.is_none() && u.limit.is_none() && u.offset.is_none() {
-                // Find the rightmost Select and check for ORDER BY/LIMIT
-                if let Expression::Select(ref mut right_select) = u.right {
-                    if right_select.order_by.is_some()
-                        || right_select.limit.is_some()
-                        || right_select.offset.is_some()
-                    {
-                        // Move ORDER BY/LIMIT from right Select to Union
-                        u.order_by = right_select.order_by.take();
-                        u.limit = right_select.limit.take().map(Limit::into_set_limit);
-                        u.offset = right_select.offset.take().map(|o| Box::new(o.this));
-                    }
-                }
-            }
-
             let has_order_or_limit =
                 u.order_by.is_some() || u.limit.is_some() || u.offset.is_some();
             if has_order_or_limit {
@@ -7019,6 +7047,7 @@ mod tests {
                 comments: Vec::new(),
                 nesting_group: 0,
                 directed: false,
+                nearest: None,
             }],
             ..Select::new()
         }));

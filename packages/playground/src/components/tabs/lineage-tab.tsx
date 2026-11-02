@@ -1,7 +1,6 @@
+import { useSqlTask } from "@/hooks/use-sql-task";
 import { useState, useCallback, useRef } from "react";
 import {
-  lineage,
-  getSourceTables,
   type Dialect,
   type LineageNode,
 } from "@polyglot-sql/sdk";
@@ -31,7 +30,9 @@ export function LineageTab({ dialects }: LineageTabProps) {
   const [error, setError] = useState<string | null>(null);
   const runCountRef = useRef(0);
 
-  const handleTrace = useCallback(() => {
+  const { run, pending } = useSqlTask([sql, dialect, column, trimSelects]);
+
+  const handleTrace = useCallback(async () => {
     setError(null);
     setLineageResult(null);
     setSourceTables(null);
@@ -43,27 +44,21 @@ export function LineageTab({ dialects }: LineageTabProps) {
     }
 
     try {
-      const lr = lineage(col, sql, dialect as Dialect, trimSelects);
+      const lr = await run("lineageWithTables", col, sql, dialect as Dialect, trimSelects);
+      if (!lr) return;
       if (!lr.success || !lr.lineage) {
         setError(lr.error ?? "Lineage analysis failed.");
         return;
       }
       runCountRef.current += 1;
       setLineageResult({ data: lr.lineage, key: runCountRef.current });
+      setSourceTables(lr.tables);
     } catch (e) {
       setError(String(e));
       return;
     }
 
-    try {
-      const st = getSourceTables(col, sql, dialect as Dialect);
-      if (st.success && st.tables) {
-        setSourceTables(st.tables);
-      }
-    } catch {
-      // source tables are supplementary — don't block on failure
-    }
-  }, [sql, dialect, column, trimSelects]);
+  }, [sql, dialect, column, trimSelects, run]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4">
@@ -93,7 +88,7 @@ export function LineageTab({ dialects }: LineageTabProps) {
           />
           Trim selects
         </label>
-        <Button onClick={handleTrace} size="sm" className="ml-auto">
+        <Button onClick={handleTrace} disabled={pending} size="sm" className="ml-auto">
           <Play className="size-3.5" />
           Trace Lineage
         </Button>

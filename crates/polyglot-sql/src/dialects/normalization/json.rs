@@ -167,19 +167,13 @@ pub(super) fn rewrite(
                 };
                 match target {
                     DialectType::TSQL | DialectType::Fabric => {
-                        // ISNULL(JSON_QUERY(...), JSON_VALUE(...))
-                        let json_query = Expression::Function(Box::new(Function::new(
-                            "JSON_QUERY".to_string(),
-                            vec![f.this.clone(), f.path.clone()],
-                        )));
-                        let json_value = Expression::Function(Box::new(Function::new(
-                            "JSON_VALUE".to_string(),
-                            vec![f.this, f.path],
-                        )));
-                        Ok(Expression::Function(Box::new(Function::new(
-                            "ISNULL".to_string(),
-                            vec![json_query, json_value],
-                        ))))
+                        // JSON_QUERY and JSON_VALUE have different scalar/container semantics.
+                        // Retain the native operation and its RETURNING/error options.
+                        Ok(if is_query {
+                            Expression::JsonQuery(f)
+                        } else {
+                            Expression::JsonValue(f)
+                        })
                     }
                     DialectType::Spark | DialectType::Databricks | DialectType::Hive => {
                         Ok(Expression::Function(Box::new(Function::new(
@@ -651,34 +645,44 @@ pub(super) fn rewrite(
 
             Action::JsonExtractToClickHouse => {
                 // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> JSONExtractString(x, 'key1', idx, 'key2') for ClickHouse
+                let raw = matches!(&e, Expression::JsonExtract(_));
                 let (this, path) = match e {
                     Expression::JsonExtract(f) => (f.this, f.path),
                     Expression::JsonExtractScalar(f) => (f.this, f.path),
                     _ => return Ok(e),
                 };
-                let args: Vec<Expression> = if let Expression::Literal(lit) = path {
-                    if let Literal::String(ref s) = lit.as_ref() {
-                        let parts = decompose_json_path(s);
-                        let mut result = vec![this];
-                        for part in parts {
-                            // ClickHouse uses 1-based integer indices for array access
-                            if let Ok(idx) = part.parse::<i64>() {
-                                result.push(Expression::number(idx + 1));
-                            } else {
-                                result.push(Expression::string(&part));
-                            }
-                        }
-                        result
+                let mut args = vec![this];
+                if let Expression::Literal(lit) = &path {
+                    if let Literal::String(path) = lit.as_ref() {
+                        args.extend(clickhouse_json_path_arguments(path)?);
                     } else {
-                        vec![]
+                        return Err(crate::error::Error::unsupported(
+                            "ClickHouse JSON path must be a string literal",
+                            "ClickHouse",
+                        ));
                     }
                 } else {
-                    vec![this, path]
-                };
-                Ok(Expression::Function(Box::new(Function::new(
-                    "JSONExtractString".to_string(),
+                    return Err(crate::error::Error::unsupported(
+                        "Dynamic JSON paths require parsing before ClickHouse extraction",
+                        "ClickHouse",
+                    ));
+                }
+                let extracted = Expression::Function(Box::new(Function::new(
+                    if raw {
+                        "JSONExtractRaw"
+                    } else {
+                        "JSONExtractString"
+                    },
                     args,
-                ))))
+                )));
+                if raw {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "nullIf",
+                        vec![extracted, Expression::string("")],
+                    ))))
+                } else {
+                    Ok(extracted)
+                }
             }
 
             Action::PostgresJsonExtractTextToClickHouse => match e {
@@ -1448,4 +1452,95 @@ pub(super) fn build_json_object_from_pairs(
         encoding: None,
         star: false,
     }))
+}
+
+/// Keep object keys and array indexes distinct; a quoted numeric key is not an index.
+fn clickhouse_json_path_arguments(path: &str) -> Result<Vec<Expression>> {
+    let error = || {
+        crate::error::Error::unsupported(
+            "JSON path wildcard cannot be dropped; unsupported ClickHouse JSON path",
+            "ClickHouse",
+        )
+    };
+    let chars: Vec<char> = path.chars().collect();
+    if chars.first() != Some(&'$') {
+        return Err(error());
+    }
+    let mut i = 1;
+    let mut result = Vec::new();
+    while i < chars.len() {
+        let bracket = match chars[i] {
+            '.' => false,
+            '[' => true,
+            _ => return Err(error()),
+        };
+        i += 1;
+        if i == chars.len() {
+            return Err(error());
+        }
+        if matches!(chars[i], '\'' | '"') {
+            let start = i;
+            let quote = chars[i];
+            i += 1;
+            let mut key = String::new();
+            while i < chars.len() && chars[i] != quote {
+                if chars[i] == '\\' {
+                    if quote == '\'' {
+                        return Err(error());
+                    }
+                    i += 1;
+                    if i == chars.len() {
+                        return Err(error());
+                    }
+                }
+                key.push(chars[i]);
+                i += 1;
+            }
+            if i == chars.len() {
+                return Err(error());
+            }
+            i += 1;
+            if quote == '"' {
+                key = serde_json::from_str(&chars[start..i].iter().collect::<String>())
+                    .map_err(|_| error())?;
+            }
+            result.push(Expression::string(key));
+        } else if bracket {
+            let start = i;
+            while i < chars.len() && chars[i] != ']' {
+                i += 1;
+            }
+            let index: i64 = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .map_err(|_| error())?;
+            result.push(Expression::number(if index >= 0 {
+                index.checked_add(1).ok_or_else(error)?
+            } else {
+                index
+            }));
+        } else {
+            let start = i;
+            while i < chars.len() && !matches!(chars[i], '.' | '[') {
+                if !(chars[i].is_alphanumeric() || chars[i] == '_') {
+                    return Err(error());
+                }
+                i += 1;
+            }
+            if start == i {
+                return Err(error());
+            }
+            result.push(Expression::string(
+                chars[start..i].iter().collect::<String>(),
+            ));
+        }
+        if bracket {
+            if chars.get(i) != Some(&']') {
+                return Err(error());
+            }
+            i += 1;
+        }
+    }
+    Ok(result)
 }
