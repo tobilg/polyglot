@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [0.13.4] - Unreleased
 
+### Added
+
+- Oracle flashback queries on a table reference: `AS OF SCN <expr>` and
+  `AS OF TIMESTAMP <expr>` now parse into `TableRef::version` and regenerate
+  in Oracle's word order, which puts `AS OF` before the keyword and has no
+  `FOR` prefix (`AS OF SCN 12345`, not `FOR SCN AS OF 12345`). The clause is
+  parsed before the table alias, since Oracle allows an alias after it and the
+  shared alias parser would otherwise read `AS OF` as the alias `OF`. An `AS`
+  followed by anything other than `SCN` or `TIMESTAMP` is still an alias, so
+  `FROM t AS OFFICE` is unaffected. `VERSIONS BETWEEN` is not covered.
+
 ### Changed
 
 - Public Rust AST types now include `Lateral.column_aliases_quoted` and
@@ -22,6 +33,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- Oracle partition selection (`FROM t PARTITION (P1)`) now populates
+  `TableRef::partitions` instead of falling through to the alias parser, which
+  returned a table aliased `PARTITION` carrying a column alias list of `(P1)`.
+  That regenerated as `PARTITION(P1)`, so the round trip looked correct while
+  every AST consumer saw an alias rather than a partition selection.
 - Query analysis includes every base table in parenthesized join groups,
   including nested joins, CTE-backed members, and subqueries in join predicates.
   Aliased and re-aliased groups retain their scope boundaries and column aliases,

@@ -43785,6 +43785,27 @@ impl Generator {
             }
             return Ok(());
         }
+        // Oracle has its own word order: the AS OF comes first and names what
+        // follows, and there is no FOR prefix.
+        //
+        //   Trino      FROM t FOR VERSION AS OF 12345
+        //   Oracle     FROM t AS OF SCN 12345
+        //
+        // So Oracle cannot share the `FOR {this} {kind}` shape below, which
+        // would emit `FOR SCN AS OF 12345`.
+        if matches!(self.config.dialect, Some(DialectType::Oracle)) {
+            self.write_keyword(&e.kind);
+            self.write_space();
+            match e.this.as_ref() {
+                Expression::Identifier(ident) => self.write_keyword(&ident.name),
+                other => self.generate_expression(other)?,
+            }
+            if let Some(expression) = &e.expression {
+                self.write_space();
+                self.generate_expression(expression)?;
+            }
+            return Ok(());
+        }
         let skip_for = matches!(
             self.config.dialect,
             Some(DialectType::Hive) | Some(DialectType::Spark) | Some(DialectType::Databricks)
