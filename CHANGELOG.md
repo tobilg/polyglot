@@ -119,7 +119,19 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   parsed before the table alias, since Oracle allows an alias after it and the
   shared alias parser would otherwise read `AS OF` as the alias `OF`. An `AS`
   followed by anything other than `SCN` or `TIMESTAMP` is still an alias, so
-  `FROM t AS OFFICE` is unaffected. `VERSIONS BETWEEN` is not covered.
+  `FROM t AS OFFICE` is unaffected. Oracle's grammar order is honoured, so the
+  clause follows both `PARTITION (p)` and a sample clause and precedes the
+  alias; verified against Oracle Free 23ai, which rejects the reverse sample
+  order with ORA-03048. Flashback on a subquery or table function is refused
+  rather than parsed and discarded, so an explicitly requested snapshot can
+  never be silently dropped. `VERSIONS BETWEEN` is not covered.
+- An Oracle `AS OF SCN` reaching a dialect that has no equivalent is now
+  reported through the unsupported-construct policy, so strict mode fails
+  instead of emitting invalid SQL (`FOR SCN AS OF 12345` for PostgreSQL and
+  Trino) or, worse, valid SQL with a different meaning (Dremio reinterpreted
+  the change number as a timestamp). A system change number is not a timestamp
+  and not another system's snapshot identifier. `AS OF TIMESTAMP` is
+  unaffected, since that does have equivalents.
 
 ### Changed
 

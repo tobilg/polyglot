@@ -45045,6 +45045,27 @@ impl Generator {
             self.write(")");
             return Ok(());
         }
+        // An Oracle SCN is a database change number, not a timestamp and not
+        // another system's snapshot identifier, so there is nothing to convert
+        // it into. Left to the paths below it produced invalid SQL for
+        // PostgreSQL and Trino (`FOR SCN AS OF 12345`) and, worse, valid SQL
+        // with a different meaning for Dremio, whose branch treats every kind
+        // other than VERSION as a timestamp and so reinterpreted the change
+        // number as one.
+        //
+        // Reported through the unsupported-construct policy, so strict mode
+        // fails rather than emitting either, and the clause is replaced by a
+        // comment rather than by fabricated target syntax.
+        if !matches!(self.config.dialect, Some(DialectType::Oracle))
+            && self.config.dialect.is_some()
+            && version_kind_is_scn(e)
+        {
+            return self.write_unsupported_comment(
+                "Oracle AS OF SCN has no equivalent in this dialect: a system change number is \
+                 not a timestamp or a snapshot identifier",
+            );
+        }
+
         if matches!(self.config.dialect, Some(DialectType::Dremio)) {
             self.write_keyword("AT");
             self.write_space();
@@ -47899,5 +47920,16 @@ mod tests {
         let sql = format!("SELECT {}", String::from_utf8_lossy(recorded));
         let ast = Parser::parse_sql(&sql).expect("the recorded input parses");
         Generator::sql(&ast[0]).expect("and generates without panicking");
+    }
+}
+
+/// version_kind_is_scn reports whether a time travel clause names an Oracle
+/// system change number, which is the one kind that cannot be converted into
+/// another system's time travel syntax.
+fn version_kind_is_scn(e: &Version) -> bool {
+    match e.this.as_ref() {
+        Expression::Identifier(ident) => ident.name.eq_ignore_ascii_case("SCN"),
+        Expression::Var(var) => var.this.eq_ignore_ascii_case("SCN"),
+        _ => false,
     }
 }
