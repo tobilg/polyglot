@@ -159,6 +159,39 @@ jobs:
       - name: Build Python API documentation
         run: make python-docs-build
 
+  wasi-module:
+    needs: rust-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-wasi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: tools/wasi-smoke/go.sum
+
+      # Builds the release artifact and runs the protocol tests against it in
+      # wazero. The host-target tests in test-rust-ci-bindings cannot cover
+      # this: the WASM stack is sized by the linker, and overflowing it reaches
+      # the host as an opaque trap rather than an error response.
+      - name: WASI protocol tests in a WebAssembly runtime
+        run: make test-wasi-runtime
+
+      - name: Upload WASI module
+        uses: actions/upload-artifact@v7
+        with:
+          name: polyglot-sql-wasi
+          path: target/wasm32-wasip1/release/polyglot_sql_wasi.wasm
+          if-no-files-found: error
+
   go-sdk:
     needs: rust-test
     runs-on: ubuntu-latest

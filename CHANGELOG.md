@@ -18,7 +18,10 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   install. `generate` is what makes it useful for rewriting rather than only
   inspecting a query. The module carries every dialect, because selecting
   fewer saves little (29.3 MB against 25.9 MB for one) and a dialect whose
-  feature is off silently falls through to the generic dialect.
+  feature is off silently falls through to the generic dialect. A request may
+  nest up to 1536 JSON levels, which clears the deepest AST the parser emits
+  and stays below the depth at which decoding would exhaust the module's
+  stack.
 
 ### Changed
 

@@ -26,6 +26,7 @@
 *.mod
 *.smod
 !packages/go/go.mod
+!tools/wasi-smoke/go.mod
 
 # Compiled Static libraries
 *.lai

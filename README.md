@@ -192,6 +192,13 @@ install. Requires wazero 1.11 or newer.
 `generate` is what makes the module useful for rewriting rather than only
 inspecting: a host parses to an AST, modifies it, and asks for SQL back.
 
+A request may nest up to 1536 JSON levels. That clears the deepest AST the
+parser will emit (about 1006 levels, past which its own `max_ast_depth` guard
+refuses the query) and stays below the depth at which decoding would exhaust
+the module's stack, so any AST this module produces can be sent back to it and
+nothing it accepts can trap. A deeper request is refused with an error naming
+the limit.
+
 The module carries every dialect. Selecting fewer saves little, because the
 parser and generator switch on the dialect at run time rather than being
 per-dialect code that can be left out (29.3 MB with all dialects against

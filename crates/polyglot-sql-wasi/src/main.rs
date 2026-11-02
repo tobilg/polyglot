@@ -102,11 +102,98 @@ fn main() {
         return;
     }
 
-    let response = match serde_json::from_str::<Request>(&input) {
+    write(&decode_and_dispatch(&input));
+}
+
+/// Decodes a request and runs it.
+///
+/// serde_json's default nesting limit is 128, which is below what this
+/// module's own parser produces: the AST for `SELECT a + a + ... + a FROM t`
+/// with 61 terms is more than 128 JSON levels deep, so `generate` rejected an
+/// AST that `parse` had just returned. The limit is therefore disabled and
+/// replaced by an explicit depth check, which keeps a bound on recursion while
+/// making the protocol able to carry whatever the parser emits.
+///
+/// The bound is checked before any AST is built, so an input beyond it gets a
+/// JSON error naming the limit rather than exhausting the stack. Overflowing
+/// the stack in WASM reaches the host as an opaque trap with no message, which
+/// is the one outcome worth engineering away.
+fn decode_and_dispatch(input: &str) -> Response {
+    if let Some(depth) = json_depth_exceeding(input, MAX_REQUEST_JSON_DEPTH) {
+        return Response::err(format!(
+            "Request nests {depth} levels deep, past the supported limit of \
+             {MAX_REQUEST_JSON_DEPTH}"
+        ));
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_str(input);
+    // Bounded above by the depth check just made, so disabling serde's own
+    // limit does not make unbounded recursion reachable.
+    deserializer.disable_recursion_limit();
+    match Request::deserialize(&mut deserializer) {
         Ok(request) => dispatch(request),
         Err(e) => Response::err(format!("Request is not valid JSON: {e}")),
-    };
-    write(&response);
+    }
+}
+
+/// MAX_REQUEST_JSON_DEPTH bounds how deeply a request may nest.
+///
+/// Expressed in JSON levels rather than AST levels, because that is what the
+/// decoder recurses over: one AST level costs roughly two JSON levels.
+///
+/// The value sits between two measured numbers, both taken on the release
+/// WASI module under wazero with the 64 MiB stack this target now links with:
+///
+///   - The deepest AST the parser will emit is about 1006 JSON levels. Past
+///     that its own `max_ast_depth` guard of 512 refuses the query, so no
+///     deeper AST can come out of `parse`.
+///   - Deserializing a hand built AST stays safe to about 2206 JSON levels and
+///     overflows the stack from about 2406.
+///
+/// 1536 therefore clears everything `parse` can produce by half again, while
+/// staying roughly a third below the overflow floor. That is what makes the
+/// contract consistent in both directions: any AST this module emits can be
+/// sent back to it, and nothing it accepts can exhaust the stack.
+///
+/// Raising this means re-measuring the floor. An overflow inside WASM reaches
+/// the host as an opaque trap with no message, which is the outcome this bound
+/// exists to prevent.
+const MAX_REQUEST_JSON_DEPTH: usize = 1536;
+
+/// json_depth_exceeding returns the depth reached if it passes `limit`, and
+/// None when the whole input stays within it.
+///
+/// Counting brackets outside string literals is enough here and needs no
+/// allocation: a malformed request is rejected by the deserializer afterwards,
+/// so this only has to be right about nesting, not about validity.
+fn json_depth_exceeding(input: &str, limit: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in input.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > limit {
+                    return Some(depth);
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Writes the response and nothing else. A malformed response would leave the
@@ -223,6 +310,13 @@ fn transpile(request: Request) -> Response {
     }
 }
 
+/// Formats SQL with the library's formatter.
+///
+/// Not `transpile(sql, dialect, dialect)`, which was the first implementation:
+/// that round trips through the generator in compact mode and applies
+/// normalisation, so it returned single line SQL and dropped clauses the
+/// formatter keeps, such as an explicit NULLS LAST. It also bypasses the
+/// formatter's own guard path.
 fn format(request: Request) -> Response {
     let dialect = match dialect_of(request.dialect.as_ref()) {
         Ok(d) => d,
@@ -233,7 +327,7 @@ fn format(request: Request) -> Response {
         Err(e) => return Response::err(e),
     };
 
-    match polyglot_sql::transpile(sql, dialect, dialect) {
+    match polyglot_sql::format(sql, dialect) {
         Ok(results) => Response::ok(serde_json::Value::from(results)),
         Err(e) => Response::err(e.to_string()),
     }
@@ -243,13 +337,20 @@ fn format(request: Request) -> Response {
 mod tests {
     use super::*;
 
-    /// Runs one request through the dispatcher, which is the whole protocol
-    /// minus stdin and stdout. These run on the host target, so the protocol
-    /// is covered by `cargo test` without a wasm runtime.
+    /// Runs one request through the real decoder, not through `dispatch`
+    /// directly.
+    ///
+    /// The earlier helper built requests with `serde_json::from_value` and
+    /// called `dispatch`, which skipped the request reader. That is why a
+    /// round trip that failed over stdin passed in these tests: the reader is
+    /// where serde_json's nesting limit lives. Everything below now goes
+    /// through the same path a host does, bar the stdin read itself.
     fn call(body: serde_json::Value) -> Response {
-        let request: Request =
-            serde_json::from_value(body).expect("the test request should deserialise");
-        dispatch(request)
+        decode_and_dispatch(&body.to_string())
+    }
+
+    fn raw(input: &str) -> Response {
+        decode_and_dispatch(input)
     }
 
     fn result_of(response: &Response) -> &serde_json::Value {
@@ -257,6 +358,21 @@ mod tests {
             .result
             .as_ref()
             .unwrap_or_else(|| panic!("expected a result, got error {:?}", response.error))
+    }
+
+    /// An expression long enough to nest past serde_json's default limit of
+    /// 128 JSON levels. `SELECT a + a + ... + a FROM t` parses into a
+    /// left-leaning chain, so the term count sets the depth.
+    fn long_expression(terms: usize) -> String {
+        let mut sql = String::from("SELECT ");
+        for i in 0..terms {
+            if i > 0 {
+                sql.push_str(" + ");
+            }
+            sql.push('a');
+        }
+        sql.push_str(" FROM t");
+        sql
     }
 
     #[test]
@@ -267,8 +383,6 @@ mod tests {
         }));
         assert!(parsed.ok, "parse failed: {:?}", parsed.error);
 
-        // The AST goes back exactly as it came out, which is what a host that
-        // modified it would be handing over.
         let generated = call(serde_json::json!({
             "action": "generate", "ast": result_of(&parsed), "dialect": "oracle"
         }));
@@ -302,6 +416,80 @@ mod tests {
         );
     }
 
+    /// The protocol has to be able to carry whatever its own parser produced.
+    /// At 61 terms the AST passes serde_json's default nesting limit of 128
+    /// levels, and `generate` rejected an AST that `parse` had just returned
+    /// with "recursion limit exceeded".
+    /// Deep cases run on a thread with an explicit stack, the way the rest of
+    /// the repository tests deep nesting. The WASI target links a 64 MiB stack
+    /// for this, but a native test thread gets whatever the process gives it,
+    /// which is not enough to deserialize an AST of this depth.
+    fn with_large_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the deep round trip must not overflow");
+    }
+
+    #[test]
+    fn an_ast_the_parser_produced_can_be_sent_back() {
+        with_large_stack(|| deep_round_trips());
+    }
+
+    fn deep_round_trips() {
+        for terms in [40, 61, 120, 250, 500] {
+            let sql = long_expression(terms);
+            let parsed = call(serde_json::json!({
+                "action": "parse", "sql": sql, "dialect": "oracle"
+            }));
+            assert!(parsed.ok, "{terms} terms: parse failed: {:?}", parsed.error);
+
+            let generated = call(serde_json::json!({
+                "action": "generate", "ast": result_of(&parsed), "dialect": "oracle"
+            }));
+            assert!(
+                generated.ok,
+                "{terms} terms: generate rejected an AST this module produced: {:?}",
+                generated.error
+            );
+            let rendered = result_of(&generated).as_array().expect("array")[0]
+                .as_str()
+                .expect("string");
+            assert_eq!(rendered, sql, "{terms} terms did not round trip");
+        }
+    }
+
+    /// Past the supported depth the answer has to be a reported error, not a
+    /// stack overflow. In WASM an overflow reaches the host as an opaque trap
+    /// with no message, so the bound is enforced before any AST is built.
+    #[test]
+    fn a_request_past_the_depth_limit_is_reported() {
+        let deep = format!(
+            "{{\"action\":\"generate\",\"ast\":{}}}",
+            "[".repeat(MAX_REQUEST_JSON_DEPTH + 10) + &"]".repeat(MAX_REQUEST_JSON_DEPTH + 10)
+        );
+        let response = raw(&deep);
+        assert!(!response.ok, "a request past the depth limit was accepted");
+        let error = response.error.unwrap_or_default();
+        assert!(
+            error.contains("levels deep") && error.contains(&MAX_REQUEST_JSON_DEPTH.to_string()),
+            "the error does not name the limit: {error}"
+        );
+    }
+
+    #[test]
+    fn json_depth_is_measured_outside_string_literals() {
+        // Brackets inside a literal are data, not nesting.
+        assert_eq!(json_depth_exceeding(r#"{"sql":"[[[[[["}"#, 2), None);
+        // An escaped quote does not end the literal.
+        assert_eq!(json_depth_exceeding(r#"{"sql":"a\"[[["}"#, 2), None);
+        // Real nesting is counted.
+        assert_eq!(json_depth_exceeding("[[[]]]", 2), Some(3));
+        assert_eq!(json_depth_exceeding("[[]]", 2), None);
+    }
+
     /// `parse` returns a list, so `generate` has to accept one. Accepting a
     /// bare expression too means a host that pulled one statement out of the
     /// list does not have to re-wrap it.
@@ -325,21 +513,67 @@ mod tests {
         }
     }
 
+    /// Several statements in one request round trip as several results.
     #[test]
-    fn transpile_and_format_work() {
+    fn multiple_statements_round_trip() {
+        let parsed = call(serde_json::json!({
+            "action": "parse", "sql": "SELECT 1 FROM DUAL; SELECT 2 FROM DUAL", "dialect": "oracle"
+        }));
+        assert!(parsed.ok, "parse failed: {:?}", parsed.error);
+        assert_eq!(
+            result_of(&parsed).as_array().map(Vec::len),
+            Some(2),
+            "expected two statements"
+        );
+
+        let generated = call(serde_json::json!({
+            "action": "generate", "ast": result_of(&parsed), "dialect": "oracle"
+        }));
+        assert!(generated.ok, "generate failed: {:?}", generated.error);
+        assert_eq!(
+            result_of(&generated),
+            &serde_json::json!(["SELECT 1 FROM DUAL", "SELECT 2 FROM DUAL"])
+        );
+    }
+
+    #[test]
+    fn transpile_works() {
         let transpiled = call(serde_json::json!({
             "action": "transpile", "sql": "SELECT a FROM t",
             "read_dialect": "oracle", "write_dialect": "duckdb"
         }));
         assert!(transpiled.ok, "transpile failed: {:?}", transpiled.error);
+        assert_eq!(
+            result_of(&transpiled),
+            &serde_json::json!(["SELECT a FROM t"])
+        );
+    }
 
+    /// `format` is the library's formatter, not a same-dialect transpile.
+    ///
+    /// The difference is visible two ways: the formatter pretty-prints over
+    /// several lines, and it keeps clauses that a normalising round trip drops,
+    /// such as an explicit NULLS LAST.
+    #[test]
+    fn format_pretty_prints_and_preserves_null_ordering() {
         let formatted = call(serde_json::json!({
-            "action": "format", "sql": "select   a from t", "dialect": "oracle"
+            "action": "format",
+            "sql": "SELECT a,b FROM t ORDER BY a NULLS LAST",
+            "dialect": "postgres"
         }));
         assert!(formatted.ok, "format failed: {:?}", formatted.error);
-        assert_eq!(
-            result_of(&formatted),
-            &serde_json::json!(["SELECT a FROM t"])
+        let rendered = result_of(&formatted).as_array().expect("array")[0]
+            .as_str()
+            .expect("string")
+            .to_string();
+
+        assert!(
+            rendered.contains('\n'),
+            "format returned single line output, so it is not using the formatter: {rendered:?}"
+        );
+        assert!(
+            rendered.to_uppercase().contains("NULLS LAST"),
+            "format dropped the explicit null ordering: {rendered:?}"
         );
     }
 
@@ -378,6 +612,27 @@ mod tests {
             assert!(
                 error.to_lowercase().contains(&expected.to_lowercase()),
                 "{body} reported {error:?}, which does not mention {expected:?}"
+            );
+        }
+    }
+
+    /// Raw input that is not JSON at all, which the decoder sees before any
+    /// field exists.
+    #[test]
+    fn malformed_raw_json_is_reported() {
+        for input in [
+            "",
+            "not json",
+            "{",
+            "[1, 2, 3]",
+            "{\"action\": }",
+            "{\"action\": \"parse\", \"sql\": 7}",
+        ] {
+            let response = raw(input);
+            assert!(!response.ok, "{input:?} was accepted");
+            assert!(
+                response.error.is_some(),
+                "{input:?} failed with no reason given"
             );
         }
     }

@@ -339,6 +339,7 @@ test-rust-ci-release-fixtures:
 
 test-rust-ci-bindings:
 	cargo test -p polyglot-sql-wasm --lib -- --nocapture
+	@$(MAKE) test-rust-wasi
 	@$(MAKE) test-ffi
 	@$(MAKE) build-ffi
 
@@ -551,17 +552,30 @@ build-wasm:
 # with no message, so build with WASI_PROFILE=dev when diagnosing one.
 WASI_TARGET ?= wasm32-wasip1
 WASI_PROFILE ?= release
+# Cargo writes the dev profile to target/<triple>/debug, not .../dev, so the
+# artifact directory is not always the profile name.
+WASI_OUT_DIR = target/$(WASI_TARGET)/$(if $(filter dev,$(WASI_PROFILE)),debug,$(WASI_PROFILE))
+WASI_ARTIFACT = $(WASI_OUT_DIR)/polyglot_sql_wasi.wasm
 build-wasi:
 	@rustup target list --installed | grep -q '^$(WASI_TARGET)$$' || \
 		{ echo "Missing target $(WASI_TARGET). Run: rustup target add $(WASI_TARGET)"; exit 1; }
 	cargo build -p polyglot-sql-wasi --target $(WASI_TARGET) \
 		$(if $(filter release,$(WASI_PROFILE)),--release,--profile $(WASI_PROFILE))
-	@ls -lh target/$(WASI_TARGET)/$(WASI_PROFILE)/polyglot_sql_wasi.wasm
+	@ls -lh $(WASI_ARTIFACT)
 
 # Protocol tests for the WASI module, run on the host target so no WebAssembly
 # runtime is needed.
 test-rust-wasi:
 	cargo test -p polyglot-sql-wasi
+
+# Protocol tests against the built WASI module in a real WebAssembly runtime.
+#
+# Separate from test-rust-wasi because the host tests cannot catch
+# target-specific behaviour: the stack is sized by the linker, and overflowing
+# it reaches the host as an opaque trap rather than an error. Both of the
+# depth regressions here were invisible to the host tests.
+test-wasi-runtime: build-wasi
+	cd tools/wasi-smoke && POLYGLOT_WASI_MODULE=$(CURDIR)/$(WASI_ARTIFACT) go test ./...
 
 # Build everything (release-safe order)
 build-all:

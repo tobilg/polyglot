@@ -31,5 +31,11 @@ polyglot-sql = { path = "../polyglot-sql", default-features = false, features = 
     "transpile",
 ] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+# unbounded_depth only exposes Deserializer::disable_recursion_limit; it does
+# not change serde_json's default behaviour for anything else in the
+# workspace. The limit is needed because its default of 128 JSON levels is
+# below what this library's own parser emits for a moderately long expression,
+# so generate rejected an AST parse had just produced. See
+# MAX_REQUEST_JSON_DEPTH in src/main.rs for the bound that replaces it.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 
