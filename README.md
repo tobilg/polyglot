@@ -7,6 +7,8 @@ Polyglot parses, generates, transpiles, and formats SQL across more than 30 SQL 
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
 - a Go SDK (`github.com/tobilg/polyglot/packages/go`) backed by the native FFI library
+- a WASI command module (`polyglot-sql-wasi`) for hosts that would rather embed
+  one portable artifact than locate a native library at run time
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/), [TypeScript API Docs](https://polyglot.gh.tobilg.com/), and [Python API Docs](https://polyglot-python.gh.tobilg.com/).
 
@@ -164,6 +166,41 @@ The Go SDK uses PureGo over `polyglot-sql-ffi`; it does not download native
 libraries or bundle release artifacts in the Go module. Build/download the FFI
 shared library and set `POLYGLOT_SQL_FFI_PATH` or pass its path to
 `polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
+
+### WASI module
+
+`make build-wasi` builds `polyglot-sql-wasi`, a WASI command that reads a JSON
+request on stdin and writes a JSON response on stdout:
+
+```json
+{"action": "parse",     "sql": "SELECT 1", "dialect": "oracle"}
+{"action": "generate",  "ast": [ ... ],    "dialect": "oracle"}
+{"action": "transpile", "sql": "SELECT 1", "read_dialect": "oracle", "write_dialect": "duckdb"}
+{"action": "format",    "sql": "SELECT 1", "dialect": "oracle"}
+```
+
+It answers `{"ok": true, "result": ...}` or `{"ok": false, "error": "..."}`,
+one request per run.
+
+This suits a host that ships as a single binary. The FFI route needs a
+platform-specific shared library present and findable at run time; a WASI
+module is one artifact for every platform, embedded in the host and run by a
+WebAssembly runtime. In Go that means `wazero`, which needs no cgo, so a
+caller can keep `CGO_ENABLED=0` and still have no runtime dependency to
+install. Requires wazero 1.11 or newer.
+
+`generate` is what makes the module useful for rewriting rather than only
+inspecting: a host parses to an AST, modifies it, and asks for SQL back.
+
+The module carries every dialect. Selecting fewer saves little, because the
+parser and generator switch on the dialect at run time rather than being
+per-dialect code that can be left out (29.3 MB with all dialects against
+25.9 MB with one), and a dialect whose feature is off silently falls through
+to the generic dialect instead of failing.
+
+Compiling a module of that size takes several seconds, so a host should
+compile once and cache it, then instantiate per request.
+
 
 ## Lineage and OpenLineage Output
 

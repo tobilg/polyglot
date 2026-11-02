@@ -656,6 +656,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "polyglot-sql-wasi"
+version = "0.13.5"
+dependencies = [
+ "polyglot-sql",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "polyglot-sql-wasm"
 version = "0.13.5"
 dependencies = [

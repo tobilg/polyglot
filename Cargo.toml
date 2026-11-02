@@ -5,6 +5,7 @@ members = [
     "crates/polyglot-sql-ast-derive",
     "crates/polyglot-sql-function-catalogs",
     "crates/polyglot-sql-wasm",
+    "crates/polyglot-sql-wasi",
     "crates/polyglot-sql-ffi",
     "crates/polyglot-sql-python",
 ]
