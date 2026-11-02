@@ -205,8 +205,50 @@ per-dialect code that can be left out (29.3 MB with all dialects against
 25.9 MB with one), and a dialect whose feature is off silently falls through
 to the generic dialect instead of failing.
 
-Compiling a module of that size takes several seconds, so a host should
-compile once and cache it, then instantiate per request.
+#### Embedding it from Go
+
+The four operations above are the whole scope for now, and the integration
+should be treated as experimental: the protocol may change.
+
+```go
+//go:embed polyglot_sql_wasi.wasm
+var moduleWasm []byte
+
+// Compiling is the expensive part, so do it once per process and keep the
+// result. A disk cache carries it between processes, which is what makes this
+// usable from a short-lived CLI.
+cache, _ := wazero.NewCompilationCacheWithDir(cacheDir) // fail soft: it is an optimisation
+runtime := wazero.NewRuntimeWithConfig(ctx,
+    wazero.NewRuntimeConfig().WithCompilationCache(cache))
+wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
+compiled, err := runtime.CompileModule(ctx, moduleWasm)
+
+// Then one instance per request. An empty name lets instances run
+// concurrently; a named module can only be instantiated once at a time.
+config := wazero.NewModuleConfig().
+    WithStdin(bytes.NewReader(requestJSON)).WithStdout(&out).WithName("")
+if _, err := runtime.InstantiateModule(ctx, compiled, config); err != nil {
+    // A WASI command exits when main returns, which wazero reports as an
+    // ExitError. Exit code 0 is the normal path, not a failure.
+    var exitErr *sys.ExitError
+    if !errors.As(err, &exitErr) || exitErr.ExitCode() != 0 {
+        return err
+    }
+}
+```
+
+Measured on an arm64 laptop, embedding the release module this way:
+
+| | init | per call |
+| --- | --- | --- |
+| compiled, cold | 10.6s | 534 µs |
+| compiled, with a warm disk cache | 207 ms | 288 µs |
+| interpreted (`NewRuntimeConfigInterpreter`) | 739 ms | 7.7 ms |
+
+Two things are worth knowing before measuring your own numbers. Under Go's
+race detector a cold compile takes about 2m32s and a cached one 3.1s, which is
+easy to mistake for a hang. And wazero below 1.11 cannot run the module at
+all, failing with `invalid table access`.
 
 
 ## Lineage and OpenLineage Output
