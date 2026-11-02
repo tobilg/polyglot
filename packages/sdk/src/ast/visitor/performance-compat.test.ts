@@ -29,7 +29,8 @@ const queries = {
   nodeCount,
 };
 
-// Captured from the unmodified 5a25f655 SDK, including compatibility shapes.
+// Captured from the 5a25f655 SDK, including compatibility shapes, and updated
+// for the TableRef.subpartition default added in 0.14.0.
 const cases = baseline as Array<{
   label: string;
   sql?: string;
