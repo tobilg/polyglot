@@ -130,10 +130,28 @@ fn decode_and_dispatch(input: &str) -> Response {
     // Bounded above by the depth check just made, so disabling serde's own
     // limit does not make unbounded recursion reachable.
     deserializer.disable_recursion_limit();
-    match Request::deserialize(&mut deserializer) {
-        Ok(request) => dispatch(request),
-        Err(e) => Response::err(format!("Request is not valid JSON: {e}")),
+
+    let request = match Request::deserialize(&mut deserializer) {
+        Ok(request) => request,
+        Err(e) => return Response::err(format!("Request is not valid JSON: {e}")),
+    };
+
+    // The protocol is one request per run, so anything after the first JSON
+    // value means the caller sent something other than what it intended.
+    // Deserialize alone stops at the end of the first value and reports
+    // success, so `{"action":"format","sql":"SELECT 1"}garbage` ran the format
+    // and two concatenated requests ran the first and silently dropped the
+    // second. end() is what makes a complete request distinguishable from a
+    // truncated or accidentally concatenated one. It permits trailing
+    // whitespace, which is why a newline terminated request still works.
+    if let Err(e) = deserializer.end() {
+        return Response::err(format!(
+            "Request has trailing content after the first JSON value, and this protocol \
+             carries one request per run: {e}"
+        ));
     }
+
+    dispatch(request)
 }
 
 /// MAX_REQUEST_JSON_DEPTH bounds how deeply a request may nest.
@@ -435,7 +453,7 @@ mod tests {
 
     #[test]
     fn an_ast_the_parser_produced_can_be_sent_back() {
-        with_large_stack(|| deep_round_trips());
+        with_large_stack(deep_round_trips);
     }
 
     fn deep_round_trips() {
@@ -634,6 +652,49 @@ mod tests {
                 response.error.is_some(),
                 "{input:?} failed with no reason given"
             );
+        }
+    }
+
+    /// The protocol carries one request per run, so anything after the first
+    /// JSON value means the caller sent something other than what it meant to.
+    ///
+    /// Deserialize alone stops at the end of the first value and reports
+    /// success, so a request with trailing garbage ran and returned a result,
+    /// and two concatenated requests ran the first and silently dropped the
+    /// second. A caller had no way to tell a complete request from a truncated
+    /// or accidentally joined one.
+    #[test]
+    fn trailing_content_after_a_request_is_refused() {
+        let cases = [
+            r#"{"action":"format","sql":"SELECT 1","dialect":"oracle"}garbage"#,
+            // Two complete requests: the second would be discarded in silence.
+            r#"{"action":"format","sql":"SELECT 1","dialect":"oracle"}{"action":"format","sql":"SELECT 2","dialect":"oracle"}"#,
+            r#"{"action":"format","sql":"SELECT 1","dialect":"oracle"}{}"#,
+            r#"{"action":"format","sql":"SELECT 1","dialect":"oracle"}]"#,
+            r#"{"action":"format","sql":"SELECT 1","dialect":"oracle"} null"#,
+        ];
+        for input in cases {
+            let response = raw(input);
+            assert!(!response.ok, "{input:?} was accepted");
+            let error = response.error.unwrap_or_default();
+            assert!(
+                error.contains("trailing content"),
+                "{input:?} was refused for the wrong reason: {error}"
+            );
+        }
+    }
+
+    /// Whitespace around a request is not trailing content. A host writing a
+    /// newline terminated request is doing nothing wrong.
+    #[test]
+    fn whitespace_around_a_request_is_allowed() {
+        for input in [
+            "{\"action\":\"format\",\"sql\":\"SELECT 1\",\"dialect\":\"oracle\"}\n",
+            "  {\"action\":\"format\",\"sql\":\"SELECT 1\",\"dialect\":\"oracle\"}  ",
+            "\n\t{\"action\":\"format\",\"sql\":\"SELECT 1\",\"dialect\":\"oracle\"}\r\n",
+        ] {
+            let response = raw(input);
+            assert!(response.ok, "{input:?} was refused: {:?}", response.error);
         }
     }
 

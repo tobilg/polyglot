@@ -321,6 +321,59 @@ func TestDepthBoundary(t *testing.T) {
 	}
 }
 
+// The protocol carries one request per run, so anything after the first JSON
+// value has to be refused. Deserializing alone stops at the end of the first
+// value and reports success, so trailing garbage ran and returned a result,
+// and two concatenated requests ran the first and dropped the second in
+// silence.
+func TestTrailingContentRefused(t *testing.T) {
+	r := newRunner(t)
+
+	const one = `{"action":"format","sql":"SELECT 1","dialect":"oracle"}`
+	for _, body := range []string{
+		one + "garbage",
+		one + one, // two complete requests
+		one + "{}",
+		one + "]",
+		one + " null",
+	} {
+		resp, trapped := r.raw(t, body)
+		if trapped {
+			t.Errorf("%q trapped instead of being refused", body)
+			continue
+		}
+		if resp.OK {
+			t.Errorf("%q was accepted, so a concatenated or truncated payload is "+
+				"indistinguishable from a complete one", body)
+			continue
+		}
+		if !strings.Contains(resp.reason(), "trailing content") {
+			t.Errorf("%q was refused for the wrong reason: %s", body, resp.reason())
+		}
+	}
+}
+
+// Whitespace around a request is not trailing content: a host writing a
+// newline terminated request is doing nothing wrong.
+func TestWhitespaceAroundRequestAllowed(t *testing.T) {
+	r := newRunner(t)
+
+	const one = `{"action":"format","sql":"SELECT 1","dialect":"oracle"}`
+	for _, body := range []string{
+		one + "\n",
+		"  " + one + "  ",
+		"\n\t" + one + "\r\n",
+	} {
+		resp, trapped := r.raw(t, body)
+		if trapped {
+			t.Fatalf("%q trapped", body)
+		}
+		if !resp.OK {
+			t.Errorf("%q was refused: %s", body, resp.reason())
+		}
+	}
+}
+
 // Malformed input has to be reported, never trap.
 func TestMalformedRequests(t *testing.T) {
 	r := newRunner(t)

@@ -647,6 +647,7 @@ lint-rust:
 	cargo clippy -p polyglot-sql-ffi --all-targets --no-deps -- -D warnings
 	cargo clippy -p polyglot-sql-wasm --lib --no-deps -- -D warnings
 	cargo clippy -p polyglot-sql-python --lib --no-deps -- -D warnings
+	cargo clippy -p polyglot-sql-wasi --all-targets --no-deps -- -D warnings
 
 lint-sdk:
 	cd packages/sdk && pnpm run lint
