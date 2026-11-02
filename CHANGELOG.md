@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Oracle flashback queries now reject unsupported relation shapes before consuming
+  the snapshot clause. Oracle SCNs reaching other dialects are reported through
+  the unsupported-construct policy.
+- Timestamp time travel generation now reports unsupported target syntax instead
+  of emitting invalid `FOR TIMESTAMP AS OF` clauses, including for BigQuery and
+  Snowflake. The generator raises in strict mode and emits a diagnostic comment
+  in lenient modes. Existing source-time-zone checks, supported conversions, and
+  native target time travel remain intact.
+- Core verification includes Oracle flashback regressions for partition and
+  subpartition selection, sampling order, aliases, and target-dialect policies.
+
 ## [0.14.0] - 2026-11-02
 
 ### Added
@@ -110,29 +125,6 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [0.13.4] - Unreleased
 
-### Added
-
-- Oracle flashback queries on a table reference: `AS OF SCN <expr>` and
-  `AS OF TIMESTAMP <expr>` now parse into `TableRef::version` and regenerate
-  in Oracle's word order, which puts `AS OF` before the keyword and has no
-  `FOR` prefix (`AS OF SCN 12345`, not `FOR SCN AS OF 12345`). The clause is
-  parsed before the table alias, since Oracle allows an alias after it and the
-  shared alias parser would otherwise read `AS OF` as the alias `OF`. An `AS`
-  followed by anything other than `SCN` or `TIMESTAMP` is still an alias, so
-  `FROM t AS OFFICE` is unaffected. Oracle's grammar order is honoured, so the
-  clause follows both `PARTITION (p)` and a sample clause and precedes the
-  alias; verified against Oracle Free 23ai, which rejects the reverse sample
-  order with ORA-03048. Flashback on a subquery or table function is refused
-  rather than parsed and discarded, so an explicitly requested snapshot can
-  never be silently dropped. `VERSIONS BETWEEN` is not covered.
-- An Oracle `AS OF SCN` reaching a dialect that has no equivalent is now
-  reported through the unsupported-construct policy, so strict mode fails
-  instead of emitting invalid SQL (`FOR SCN AS OF 12345` for PostgreSQL and
-  Trino) or, worse, valid SQL with a different meaning (Dremio reinterpreted
-  the change number as a timestamp). A system change number is not a timestamp
-  and not another system's snapshot identifier. `AS OF TIMESTAMP` is
-  unaffected, since that does have equivalents.
-
 ### Changed
 
 - Public Rust AST types now include `Lateral.column_aliases_quoted` and
@@ -149,11 +141,6 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
-- Oracle partition selection (`FROM t PARTITION (P1)`) now populates
-  `TableRef::partitions` instead of falling through to the alias parser, which
-  returned a table aliased `PARTITION` carrying a column alias list of `(P1)`.
-  That regenerated as `PARTITION(P1)`, so the round trip looked correct while
-  every AST consumer saw an alias rather than a partition selection.
 - Query analysis includes every base table in parenthesized join groups,
   including nested joins, CTE-backed members, and subqueries in join predicates.
   Aliased and re-aliased groups retain their scope boundaries and column aliases,

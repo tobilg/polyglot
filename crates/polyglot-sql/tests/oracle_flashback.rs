@@ -8,7 +8,7 @@
 
 use polyglot_sql::dialects::{Dialect, TranspileOptions};
 use polyglot_sql::expressions::Expression;
-use polyglot_sql::{generate, parse, parse_one, DialectType};
+use polyglot_sql::{generate, parse, parse_one, DialectType, UnsupportedLevel};
 
 /// Returns the single table reference of a one-table SELECT.
 fn table_of(sql: &str) -> polyglot_sql::expressions::TableRef {
@@ -68,8 +68,8 @@ fn flashback_populates_the_version_field() {
 
     assert_eq!(version.kind, "AS OF");
     match version.this.as_ref() {
-        Expression::Identifier(ident) => assert_eq!(ident.name, "SCN"),
-        other => panic!("expected the identifier SCN, got {other:?}"),
+        Expression::Var(var) => assert_eq!(var.this, "SCN"),
+        other => panic!("expected the SCN keyword, got {other:?}"),
     }
     assert!(
         version.expression.is_some(),
@@ -380,18 +380,161 @@ fn scn_survives_an_oracle_to_oracle_transpile() {
     assert_eq!(out, vec![sql.to_string()]);
 }
 
-/// AS OF TIMESTAMP is a timestamp on both sides, so unlike SCN it has a real
-/// equivalent and must not be caught by the SCN guard.
 #[test]
 fn timestamp_flashback_still_converts() {
-    let out = Dialect::get(DialectType::Oracle).transpile_with(
-        "SELECT a FROM t AS OF TIMESTAMP SYSTIMESTAMP",
-        DialectType::Trino,
-        TranspileOptions::default(),
+    let sql = "SELECT a FROM t AS OF TIMESTAMP TIMESTAMP '2026-01-01 00:00:00'";
+    let timestamp = "CAST('2026-01-01 00:00:00' AS TIMESTAMP)";
+    for (target, clause, value) in [
+        (
+            DialectType::Trino,
+            "FOR TIMESTAMP AS OF",
+            "CAST('2026-01-01 00:00:00' AS TIMESTAMP(0))",
+        ),
+        (DialectType::Presto, "FOR TIMESTAMP AS OF", timestamp),
+        (DialectType::Athena, "FOR TIMESTAMP AS OF", timestamp),
+        (
+            DialectType::Dune,
+            "FOR TIMESTAMP AS OF",
+            "TIMESTAMP '2026-01-01 00:00:00'",
+        ),
+        (DialectType::Spark, "TIMESTAMP AS OF", timestamp),
+        (
+            DialectType::Databricks,
+            "TIMESTAMP AS OF",
+            "CAST('2026-01-01 00:00:00' AS TIMESTAMP_NTZ)",
+        ),
+        (DialectType::Hive, "TIMESTAMP AS OF", timestamp),
+        (DialectType::Dremio, "AT TIMESTAMP", timestamp),
+    ] {
+        let out = Dialect::get(DialectType::Oracle)
+            .transpile_with(sql, target, TranspileOptions::strict())
+            .unwrap_or_else(|error| panic!("{target:?} timestamp conversion failed: {error}"));
+        assert_eq!(
+            out,
+            vec![format!("SELECT a FROM t {clause} {value}")],
+            "{target:?} must preserve the timestamp and use its own clause syntax"
+        );
+    }
+}
+
+#[test]
+fn unsupported_timestamp_targets_follow_the_unsupported_policy() {
+    let sql = "SELECT a FROM t AS OF TIMESTAMP TIMESTAMP '2026-01-01 00:00:00'";
+    let diagnostic = "AS OF TIMESTAMP conversion is not supported for this target dialect";
+    for target in [
+        DialectType::Snowflake,
+        DialectType::PostgreSQL,
+        DialectType::MySQL,
+        DialectType::SQLite,
+        DialectType::TSQL,
+        DialectType::Fabric,
+        DialectType::DuckDB,
+    ] {
+        for policy in [UnsupportedLevel::Raise, UnsupportedLevel::Immediate] {
+            let error = Dialect::get(DialectType::Oracle)
+                .transpile_with(
+                    sql,
+                    target,
+                    TranspileOptions::default().with_unsupported_level(policy),
+                )
+                .expect_err("unimplemented timestamp conversion must fail in strict mode");
+            assert!(
+                error.to_string().contains(diagnostic),
+                "{target:?}: {error}"
+            );
+        }
+        for policy in [UnsupportedLevel::Warn, UnsupportedLevel::Ignore] {
+            let out = Dialect::get(DialectType::Oracle)
+                .transpile_with(
+                    sql,
+                    target,
+                    TranspileOptions::default().with_unsupported_level(policy),
+                )
+                .expect("lenient conversion should emit an unsupported comment");
+            assert_eq!(out, vec![format!("SELECT a FROM t /* {diagnostic} */")]);
+        }
+    }
+}
+
+#[test]
+fn identifier_timestamp_versions_also_use_the_unsupported_policy() {
+    // Oracle stores the keyword as Var; Trino stores it as Identifier.
+    let sql = "SELECT a FROM t FOR TIMESTAMP AS OF TIMESTAMP '2026-01-01 00:00:00'";
+    for policy in [UnsupportedLevel::Raise, UnsupportedLevel::Immediate] {
+        let error = Dialect::get(DialectType::Trino)
+            .transpile_with(
+                sql,
+                DialectType::BigQuery,
+                TranspileOptions::default().with_unsupported_level(policy),
+            )
+            .expect_err("Identifier timestamps must not bypass the target check");
+        assert!(error.to_string().contains("AS OF TIMESTAMP conversion"));
+    }
+    for policy in [UnsupportedLevel::Warn, UnsupportedLevel::Ignore] {
+        let out = Dialect::get(DialectType::Trino)
+            .transpile_with(
+                sql,
+                DialectType::BigQuery,
+                TranspileOptions::default().with_unsupported_level(policy),
+            )
+            .expect("lenient conversion should emit an unsupported comment");
+        assert_eq!(
+            out,
+            vec!["SELECT a FROM t /* AS OF TIMESTAMP conversion is not supported for this target dialect */"]
+        );
+    }
+}
+
+#[test]
+fn oracle_to_bigquery_retains_the_source_time_zone_rejection() {
+    for policy in [
+        UnsupportedLevel::Raise,
+        UnsupportedLevel::Immediate,
+        UnsupportedLevel::Warn,
+        UnsupportedLevel::Ignore,
+    ] {
+        let error = Dialect::get(DialectType::Oracle)
+            .transpile_with(
+                "SELECT a FROM t AS OF TIMESTAMP TIMESTAMP '2026-01-01 00:00:00'",
+                DialectType::BigQuery,
+                TranspileOptions::default().with_unsupported_level(policy),
+            )
+            .expect_err("source time-zone semantics must not be silently changed");
+        assert!(error.to_string().contains("explicit source time zone"));
+    }
+}
+
+#[test]
+fn native_bigquery_and_snowflake_time_travel_remains_supported() {
+    for (dialect, sql) in [
+        (
+            DialectType::BigQuery,
+            "SELECT a FROM t FOR SYSTEM_TIME AS OF '2026-01-01 00:00:00'",
+        ),
+        (
+            DialectType::Snowflake,
+            "SELECT a FROM t AT (TIMESTAMP => '2026-01-01 00:00:00')",
+        ),
+    ] {
+        let out = Dialect::get(dialect)
+            .transpile_with(sql, dialect, TranspileOptions::strict())
+            .expect("native time travel should still be supported");
+        assert_eq!(out, vec![sql.to_string()]);
+    }
+}
+
+#[test]
+fn subpartition_sample_flashback_and_alias_survive_the_rebase() {
+    let sql = "SELECT x.a FROM s.t SUBPARTITION(P1) SAMPLE (10) AS OF SCN 12345 x";
+    let table = table_of(sql);
+    assert!(table.subpartition);
+    assert_eq!(table.partitions.len(), 1);
+    assert_eq!(table.partitions[0].name, "P1");
+    assert!(table.table_sample.is_some());
+    assert!(table.version.is_some());
+    assert_eq!(
+        table.alias.as_ref().map(|alias| alias.name.as_str()),
+        Some("x")
     );
-    let rendered = out.unwrap_or_default().join("");
-    assert!(
-        !rendered.contains("no equivalent"),
-        "AS OF TIMESTAMP was treated as unconvertible: {rendered}"
-    );
+    assert_eq!(roundtrip(sql), sql);
 }

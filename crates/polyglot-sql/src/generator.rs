@@ -45058,11 +45058,38 @@ impl Generator {
         // comment rather than by fabricated target syntax.
         if !matches!(self.config.dialect, Some(DialectType::Oracle))
             && self.config.dialect.is_some()
-            && version_kind_is_scn(e)
+            && version_kind_is(e, "SCN")
         {
             return self.write_unsupported_comment(
                 "Oracle AS OF SCN has no equivalent in this dialect: a system change number is \
                  not a timestamp or a snapshot identifier",
+            );
+        }
+
+        // A timestamp value alone does not make the target's time travel syntax
+        // compatible. BigQuery and Snowflake use other AST fields and clause
+        // forms; until Version is translated into those forms, report the
+        // unsupported conversion instead of falling back to Trino syntax.
+        if e.kind.eq_ignore_ascii_case("AS OF")
+            && version_kind_is(e, "TIMESTAMP")
+            && !matches!(
+                self.config.dialect,
+                None | Some(
+                    DialectType::Generic
+                        | DialectType::Oracle
+                        | DialectType::Presto
+                        | DialectType::Trino
+                        | DialectType::Athena
+                        | DialectType::Dune
+                        | DialectType::Hive
+                        | DialectType::Spark
+                        | DialectType::Databricks
+                        | DialectType::Dremio
+                )
+            )
+        {
+            return self.write_unsupported_comment(
+                "AS OF TIMESTAMP conversion is not supported for this target dialect",
             );
         }
 
@@ -47923,13 +47950,11 @@ mod tests {
     }
 }
 
-/// version_kind_is_scn reports whether a time travel clause names an Oracle
-/// system change number, which is the one kind that cannot be converted into
-/// another system's time travel syntax.
-fn version_kind_is_scn(e: &Version) -> bool {
+/// Time travel keywords use Var in Oracle and Identifier in other parsers.
+fn version_kind_is(e: &Version, kind: &str) -> bool {
     match e.this.as_ref() {
-        Expression::Identifier(ident) => ident.name.eq_ignore_ascii_case("SCN"),
-        Expression::Var(var) => var.this.eq_ignore_ascii_case("SCN"),
+        Expression::Identifier(ident) => ident.name.eq_ignore_ascii_case(kind),
+        Expression::Var(var) => var.this.eq_ignore_ascii_case(kind),
         _ => false,
     }
 }

@@ -67150,7 +67150,11 @@ impl Parser {
         }
         match self
             .peek_nth(2)
-            .map(|token| token.text(self.source.as_deref().unwrap_or_default()).to_ascii_uppercase())
+            .map(|token| {
+                token
+                    .text(self.source.as_deref().unwrap_or_default())
+                    .to_ascii_uppercase()
+            })
             .as_deref()
         {
             Some("SCN") => Some("SCN"),
@@ -67192,7 +67196,9 @@ impl Parser {
         })?;
 
         Ok(Some(Version {
-            this: Box::new(Expression::Identifier(Identifier::new(kind))),
+            this: Box::new(Expression::Var(Box::new(Var {
+                this: kind.to_string(),
+            }))),
             kind: "AS OF".to_string(),
             expression: Some(Box::new(expression)),
         }))
