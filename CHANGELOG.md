@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [0.13.4] - Unreleased
 
+### Added
+
+- `polyglot-sql-wasi`, a WASI command module exposing parse, generate,
+  transpile and format over a JSON stdin/stdout protocol, built with
+  `make build-wasi`. It suits a host that ships as a single binary: the FFI
+  route needs a platform-specific shared library present and findable at run
+  time, where a WASI module is one artifact for every platform, embedded in
+  the host and run by a WebAssembly runtime. In Go that means wazero (1.11 or
+  newer), so a caller keeps `CGO_ENABLED=0` with no runtime dependency to
+  install. `generate` is what makes it useful for rewriting rather than only
+  inspecting a query. The module carries every dialect, because selecting
+  fewer saves little (29.3 MB against 25.9 MB for one) and a dialect whose
+  feature is off silently falls through to the generic dialect.
+
 ### Changed
 
 - Public Rust AST types now include `Lateral.column_aliases_quoted` and

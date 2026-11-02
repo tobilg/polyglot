@@ -539,6 +539,30 @@ build-wasm:
 	cd packages/sdk && pnpm run build:wasm
 	cd packages/sdk && pnpm run build
 
+# Build the WASI command module.
+#
+# This is a different artifact from build-wasm: that one is a wasm-bindgen
+# module for a JavaScript host, this one is a WASI command that speaks JSON on
+# stdin and stdout. A host embeds the .wasm and runs it in a WebAssembly
+# runtime, so there is nothing to install and nothing to locate at run time.
+# Go hosts can use wazero, which needs no cgo.
+#
+# panic = "abort" from the release profile turns a Rust panic into a bare trap
+# with no message, so build with WASI_PROFILE=dev when diagnosing one.
+WASI_TARGET ?= wasm32-wasip1
+WASI_PROFILE ?= release
+build-wasi:
+	@rustup target list --installed | grep -q '^$(WASI_TARGET)$$' || \
+		{ echo "Missing target $(WASI_TARGET). Run: rustup target add $(WASI_TARGET)"; exit 1; }
+	cargo build -p polyglot-sql-wasi --target $(WASI_TARGET) \
+		$(if $(filter release,$(WASI_PROFILE)),--release,--profile $(WASI_PROFILE))
+	@ls -lh target/$(WASI_TARGET)/$(WASI_PROFILE)/polyglot_sql_wasi.wasm
+
+# Protocol tests for the WASI module, run on the host target so no WebAssembly
+# runtime is needed.
+test-rust-wasi:
+	cargo test -p polyglot-sql-wasi
+
 # Build everything (release-safe order)
 build-all:
 	@$(MAKE) cargo-build-release
