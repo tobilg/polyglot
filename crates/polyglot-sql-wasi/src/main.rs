@@ -158,11 +158,10 @@ fn decode_and_dispatch(input: &str) -> Response {
 /// This is separate from the core's AST depth guards: dialects have different
 /// limits, and an AST level can contain several JSON containers.
 ///
-/// Release-WASI measurements with a 64 MiB stack found decoding overflow from
-/// about 2406 JSON levels for an addition chain. Keep the lower bound here and
-/// check parse output against it as well, rather than assuming every dialect
-/// emits shallower ASTs. Raising this requires runtime tests of multiple AST
-/// shapes, not just changing the constant.
+/// Keep input and parse output within the same bound. Runtimes impose their
+/// own call stack budgets in addition to the module's 64 MiB linear stack.
+/// Raising this requires release-WASI runtime tests on both amd64 and arm64
+/// with multiple AST shapes, not just changing the constant.
 const MAX_REQUEST_JSON_DEPTH: usize = 1536;
 
 /// json_depth_exceeding returns the depth reached if it passes `limit`, and

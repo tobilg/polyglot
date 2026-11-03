@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt, clippy
 
@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -127,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -165,7 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: wasm32-wasip1
 
@@ -254,7 +254,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: wasm32-unknown-unknown
 
@@ -356,6 +356,7 @@ jobs:
       - name: Build Python wheels (Linux ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
         with:
+          rust-toolchain: '1.99.1'
           target: ${{ matrix.target }}
           manylinux: '2014'
           args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
@@ -389,7 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       # Cache failures must not interrupt the multi-interpreter wheel build.
       - name: Cache macOS Rust build artifacts
@@ -402,6 +403,7 @@ jobs:
       - name: Build Python wheels (macOS ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
         with:
+          rust-toolchain: '1.99.1'
           target: ${{ matrix.target }}
           args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
           # sccache's remote-cache startup errors do not fall back to rustc.
@@ -431,6 +433,7 @@ jobs:
         env:
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         with:
+          rust-toolchain: '1.99.1'
           target: x86_64-pc-windows-msvc
           args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
           sccache: true
@@ -458,6 +461,7 @@ jobs:
       - name: Build Python source distribution
         uses: PyO3/maturin-action@v1
         with:
+          rust-toolchain: '1.99.1'
           command: sdist
           args: --out dist --manifest-path crates/polyglot-sql-python/Cargo.toml
 
@@ -562,7 +566,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Publish dependency crates to crates.io
         run: |
@@ -710,7 +714,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.target }}
 

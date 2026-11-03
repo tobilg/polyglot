@@ -1,0 +1,3 @@
+[toolchain]
+# Keep the Rust toolchain selectors in .github/workflows/ci.yml in sync.
+channel = "1.99.1"

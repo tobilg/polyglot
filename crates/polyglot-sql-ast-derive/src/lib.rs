@@ -10,6 +10,36 @@ use syn::{
     parse_macro_input, Data, DeriveInput, Field, Fields, GenericArgument, PathArguments, Type,
 };
 
+/// Route each newtype enum payload through a shared deserialization helper.
+/// This lets callers prevent payload readers from being inlined into a large
+/// recursive enum visitor, without duplicating the enum or its serde mapping.
+#[proc_macro_attribute]
+pub fn deserialize_payloads_with(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    let helper = parse_macro_input!(attribute as syn::LitStr);
+    let mut input = parse_macro_input!(item as DeriveInput);
+    let Data::Enum(data) = &mut input.data else {
+        return syn::Error::new_spanned(&input, "expected a newtype enum")
+            .to_compile_error()
+            .into();
+    };
+    for variant in &mut data.variants {
+        let Fields::Unnamed(fields) = &mut variant.fields else {
+            return syn::Error::new_spanned(variant, "expected a single-field variant")
+                .to_compile_error()
+                .into();
+        };
+        if fields.unnamed.len() != 1 {
+            return syn::Error::new_spanned(fields, "expected a single-field variant")
+                .to_compile_error()
+                .into();
+        }
+        fields.unnamed[0]
+            .attrs
+            .push(syn::parse_quote!(#[serde(deserialize_with = #helper)]));
+    }
+    quote!(#input).into()
+}
+
 #[proc_macro_derive(AstNode, attributes(ast))]
 /// Derive immutable and mutable expression-child visitors for an AST payload.
 pub fn derive_ast_node(input: TokenStream) -> TokenStream {

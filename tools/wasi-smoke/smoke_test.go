@@ -2,10 +2,10 @@
 // against a real WebAssembly runtime.
 //
 // These exist because the crate's own host-target tests cannot catch
-// target-specific behaviour. The WASM stack is sized by the linker, and
-// overflowing it surfaces to the host as an opaque trap with no message rather
-// than as an error response, so the only way to know the module is safe at a
-// given input depth is to run it where that stack applies.
+// target-specific behaviour. Both the linker's linear-memory stack and the
+// runtime's call stack constrain recursion. The latter also depends on the
+// host architecture: a module that passes on arm64 can still trap on amd64.
+// Run these tests on both before changing the supported depth.
 //
 // Set POLYGLOT_WASI_MODULE to the built artifact, or run `make
 // test-wasi-runtime`, which builds it first.
@@ -74,8 +74,8 @@ func newRunner(t *testing.T) *runner {
 }
 
 // raw sends one request and reports the response, or trapped=true when the
-// guest died instead of answering. A trap is the failure mode worth
-// distinguishing: it carries no message a caller could act on.
+// guest died instead of answering. A trap bypasses the JSON error response
+// promised by the protocol; log the runtime's diagnostic when it happens.
 func (r *runner) raw(t *testing.T, body string) (response, bool) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -87,6 +87,7 @@ func (r *runner) raw(t *testing.T, body string) (response, bool) {
 
 	if _, err := r.runtime.InstantiateModule(r.ctx, r.compiled, config); err != nil {
 		if exitErr, ok := err.(*sys.ExitError); !ok || exitErr.ExitCode() != 0 {
+			t.Logf("WASI execution failed: %v; stderr: %s", err, stderr.String())
 			return response{}, true
 		}
 	}
@@ -296,20 +297,36 @@ func TestClickHouseParseOutputDepth(t *testing.T) {
 			if !parsed.OK {
 				t.Fatalf("parse: %s", parsed.reason())
 			}
-			request := `{"action":"generate","dialect":"clickhouse","ast":` + string(parsed.Result) + `}`
-			if depth := jsonDepth(request); depth > maxRequestJSONDepth {
-				t.Fatalf("parse output makes a %d-level request", depth)
-			}
-			generated, trapped := r.raw(t, request)
-			if trapped || !generated.OK {
-				t.Fatalf("generate: trapped=%v error=%s", trapped, generated.reason())
-			}
-			var out []string
-			if err := json.Unmarshal(generated.Result, &out); err != nil {
+			var statements []json.RawMessage
+			if err := json.Unmarshal(parsed.Result, &statements); err != nil {
 				t.Fatal(err)
 			}
-			if len(out) != 1 || out[0] != sql {
-				t.Fatalf("unchanged AST did not round trip")
+			if len(statements) != 1 {
+				t.Fatalf("expected one parsed statement, got %d", len(statements))
+			}
+			// Value decoding overflowed wazero's amd64 call stack for
+			// these inputs, while passing on arm64. Keep both forms covered.
+			for _, form := range []struct {
+				name string
+				ast  json.RawMessage
+			}{{"list", parsed.Result}, {"single", statements[0]}} {
+				t.Run(form.name, func(t *testing.T) {
+					request := `{"action":"generate","dialect":"clickhouse","ast":` + string(form.ast) + `}`
+					if depth := jsonDepth(request); depth > maxRequestJSONDepth {
+						t.Fatalf("parse output makes a %d-level request", depth)
+					}
+					generated, trapped := r.raw(t, request)
+					if trapped || !generated.OK {
+						t.Fatalf("generate: trapped=%v error=%s", trapped, generated.reason())
+					}
+					var out []string
+					if err := json.Unmarshal(generated.Result, &out); err != nil {
+						t.Fatal(err)
+					}
+					if len(out) != 1 || out[0] != sql {
+						t.Fatalf("unchanged AST did not round trip")
+					}
+				})
 			}
 		})
 	}

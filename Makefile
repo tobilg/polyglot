@@ -290,6 +290,7 @@ test-rust-verify-core:
 	@echo ""
 	@echo "=== Lib unit tests ==="
 	@cargo test --lib -p polyglot-sql
+	@cargo test -p polyglot-sql --test deserialize_payloads
 	@cargo test -p polyglot-sql --test deep_nesting_regression
 	@cargo test -p polyglot-sql --test transform_regression
 	@cargo test -p polyglot-sql --test fixture_update_regression
@@ -578,10 +579,10 @@ test-rust-wasi:
 
 # Protocol tests against the built WASI module in a real WebAssembly runtime.
 #
-# Separate from test-rust-wasi because the host tests cannot catch
-# target-specific behaviour: the stack is sized by the linker, and overflowing
-# it reaches the host as an opaque trap rather than an error. Both of the
-# depth regressions here were invisible to the host tests.
+# Native tests cannot catch target-specific stack limits. The linker controls
+# the module's linear-memory stack, while runtime call stack usage also depends
+# on the host architecture. Run on amd64 and arm64: a passing runtime test on
+# one architecture does not cover the other.
 test-wasi-runtime: build-wasi
 	cd tools/wasi-smoke && POLYGLOT_WASI_MODULE="$(abspath $(WASI_ARTIFACT))" go test ./...
 

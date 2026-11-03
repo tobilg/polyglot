@@ -45,6 +45,19 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 
+// Keep payload readers out of Expression's recursive serde visitor on WASI.
+// Inlining them into one enormous function creates large spill frames in
+// wazero's amd64 backend and exhausts its call stack on supported deep ASTs.
+#[cfg(target_os = "wasi")]
+#[inline(never)]
+fn deserialize_expression_payload<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer)
+}
+
 /// Represent any SQL expression or statement as a single, recursive AST node.
 ///
 /// `Expression` is the root type of the polyglot AST. Every parsed SQL
@@ -73,6 +86,10 @@ fn is_true(v: &bool) -> bool {
 /// let expr = Expression::column("name");
 /// assert_eq!(expr.sql(), "name");
 /// ```
+#[cfg_attr(
+    target_os = "wasi",
+    polyglot_sql_ast_derive::deserialize_payloads_with("deserialize_expression_payload")
+)]
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(rename_all = "snake_case")]

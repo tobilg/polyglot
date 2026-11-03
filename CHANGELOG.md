@@ -46,6 +46,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- WASI generation no longer overflows wazero's x86-64 call stack for deeply
+  nested ASTs within the supported JSON depth limit.
 - DuckDB 2.0 direct AST generation now emits `REGEXP_MATCHES` for partial
   regular expression predicates, preserving flags, negation, NULL behavior,
   and dynamic patterns.
