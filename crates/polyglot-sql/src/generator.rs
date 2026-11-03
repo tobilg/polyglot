@@ -45045,6 +45045,54 @@ impl Generator {
             self.write(")");
             return Ok(());
         }
+        // An Oracle SCN is a database change number, not a timestamp and not
+        // another system's snapshot identifier, so there is nothing to convert
+        // it into. Left to the paths below it produced invalid SQL for
+        // PostgreSQL and Trino (`FOR SCN AS OF 12345`) and, worse, valid SQL
+        // with a different meaning for Dremio, whose branch treats every kind
+        // other than VERSION as a timestamp and so reinterpreted the change
+        // number as one.
+        //
+        // Reported through the unsupported-construct policy, so strict mode
+        // fails rather than emitting either, and the clause is replaced by a
+        // comment rather than by fabricated target syntax.
+        if !matches!(self.config.dialect, Some(DialectType::Oracle))
+            && self.config.dialect.is_some()
+            && version_kind_is(e, "SCN")
+        {
+            return self.write_unsupported_comment(
+                "Oracle AS OF SCN has no equivalent in this dialect: a system change number is \
+                 not a timestamp or a snapshot identifier",
+            );
+        }
+
+        // A timestamp value alone does not make the target's time travel syntax
+        // compatible. BigQuery and Snowflake use other AST fields and clause
+        // forms; until Version is translated into those forms, report the
+        // unsupported conversion instead of falling back to Trino syntax.
+        if e.kind.eq_ignore_ascii_case("AS OF")
+            && version_kind_is(e, "TIMESTAMP")
+            && !matches!(
+                self.config.dialect,
+                None | Some(
+                    DialectType::Generic
+                        | DialectType::Oracle
+                        | DialectType::Presto
+                        | DialectType::Trino
+                        | DialectType::Athena
+                        | DialectType::Dune
+                        | DialectType::Hive
+                        | DialectType::Spark
+                        | DialectType::Databricks
+                        | DialectType::Dremio
+                )
+            )
+        {
+            return self.write_unsupported_comment(
+                "AS OF TIMESTAMP conversion is not supported for this target dialect",
+            );
+        }
+
         if matches!(self.config.dialect, Some(DialectType::Dremio)) {
             self.write_keyword("AT");
             self.write_space();
@@ -45061,12 +45109,24 @@ impl Generator {
             }
             return Ok(());
         }
-        if self.config.dialect == Some(DialectType::Oracle) {
-            self.write_keyword("AS OF ");
-            self.generate_expression(&e.this)?;
-            if let Some(value) = &e.expression {
+        // Oracle has its own word order: the AS OF comes first and names what
+        // follows, and there is no FOR prefix.
+        //
+        //   Trino      FROM t FOR VERSION AS OF 12345
+        //   Oracle     FROM t AS OF SCN 12345
+        //
+        // So Oracle cannot share the `FOR {this} {kind}` shape below, which
+        // would emit `FOR SCN AS OF 12345`.
+        if matches!(self.config.dialect, Some(DialectType::Oracle)) {
+            self.write_keyword(&e.kind);
+            self.write_space();
+            match e.this.as_ref() {
+                Expression::Identifier(ident) => self.write_keyword(&ident.name),
+                other => self.generate_expression(other)?,
+            }
+            if let Some(expression) = &e.expression {
                 self.write_space();
-                self.generate_expression(value)?;
+                self.generate_expression(expression)?;
             }
             return Ok(());
         }
@@ -47887,5 +47947,14 @@ mod tests {
         let sql = format!("SELECT {}", String::from_utf8_lossy(recorded));
         let ast = Parser::parse_sql(&sql).expect("the recorded input parses");
         Generator::sql(&ast[0]).expect("and generates without panicking");
+    }
+}
+
+/// Time travel keywords use Var in Oracle and Identifier in other parsers.
+fn version_kind_is(e: &Version, kind: &str) -> bool {
+    match e.this.as_ref() {
+        Expression::Identifier(ident) => ident.name.eq_ignore_ascii_case(kind),
+        Expression::Var(var) => var.this.eq_ignore_ascii_case(kind),
+        _ => false,
     }
 }

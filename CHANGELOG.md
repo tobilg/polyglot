@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Oracle flashback queries now reject unsupported relation shapes before consuming
+  the snapshot clause. Oracle SCNs reaching other dialects are reported through
+  the unsupported-construct policy.
+- Timestamp time travel generation now reports unsupported target syntax instead
+  of emitting invalid `FOR TIMESTAMP AS OF` clauses, including for BigQuery and
+  Snowflake. The generator raises in strict mode and emits a diagnostic comment
+  in lenient modes. Existing source-time-zone checks, supported conversions, and
+  native target time travel remain intact.
+- Core verification includes Oracle flashback regressions for partition and
+  subpartition selection, sampling order, aliases, and target-dialect policies.
+
 ## [0.14.0] - 2026-11-02
 
 ### Added
