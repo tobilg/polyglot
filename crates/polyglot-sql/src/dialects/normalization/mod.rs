@@ -1999,7 +1999,7 @@ pub(super) fn normalize(
                                 Action::Scalar(scalar::Action::PostgresConcatToTsql)
                             }
                             "ARBITRARY" | "AGGREGATE"
-                            | "REGEXP_MATCHES" | "REGEXP_FULL_MATCH"
+                            | "REGEXP_MATCHES"
                             | "STRUCT_EXTRACT"
                             | "LIST_FILTER" | "LIST_TRANSFORM" | "LIST_SORT" | "LIST_REVERSE_SORT"
                             | "STRING_TO_ARRAY" | "STR_SPLIT" | "STR_SPLIT_REGEX" | "SPLIT_TO_ARRAY"

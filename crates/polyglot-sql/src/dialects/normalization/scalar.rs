@@ -382,30 +382,6 @@ pub(super) fn rewrite(
                                 )))
                             }
                         }
-                        // REGEXP_FULL_MATCH (Hive REGEXP) -> RegexpLike
-                        "REGEXP_FULL_MATCH" if f.args.len() >= 2 => {
-                            if matches!(target, DialectType::DuckDB) {
-                                Ok(Expression::Function(f))
-                            } else {
-                                let mut args = f.args;
-                                let this = args.remove(0);
-                                let pattern = args.remove(0);
-                                let flags = if args.is_empty() {
-                                    None
-                                } else {
-                                    Some(args.remove(0))
-                                };
-                                Ok(Expression::RegexpLike(Box::new(
-                                    crate::expressions::RegexpFunc {
-                                        options: None,
-
-                                        this,
-                                        pattern,
-                                        flags,
-                                    },
-                                )))
-                            }
-                        }
                         // STRUCT_EXTRACT(x, 'field') -> x.field (StructExtract expression)
                         "STRUCT_EXTRACT" if f.args.len() == 2 => {
                             let mut args = f.args;

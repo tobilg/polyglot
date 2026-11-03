@@ -6291,7 +6291,15 @@ impl Dialect {
     fn node_is_regex_predicate(expr: &Expression) -> bool {
         matches!(
             expr,
-            Expression::SimilarTo(_) | Expression::RegexpLike(_) | Expression::RegexpILike(_)
+            Expression::SimilarTo(_)
+                | Expression::RegexpLike(_)
+                | Expression::RegexpILike(_)
+                | Expression::RegexpFullMatch(_)
+        ) || matches!(
+            expr,
+            Expression::Function(function)
+                if function.qualified_name.len() <= 1
+                    && function.name.eq_ignore_ascii_case("REGEXP_FULL_MATCH")
         ) || Self::node_is_function_named(expr, "REGEXP_LIKE")
             || Self::node_is_function_named(expr, "REGEXP_I_LIKE")
             || Self::node_is_function_named(expr, "REGEXP_ILIKE")

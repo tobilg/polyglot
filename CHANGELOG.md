@@ -46,6 +46,16 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- DuckDB 2.0 direct AST generation now emits `REGEXP_MATCHES` for partial
+  regular expression predicates, preserving flags, negation, NULL behavior,
+  and dynamic patterns.
+  ([#521](https://github.com/tobilg/polyglot/pull/521))
+- Explicit full-match regular expressions preserve options and lineage
+  dependencies. Foreign targets without a verified mapping report unsupported
+  instead of silently converting full matching to partial matching. Strict
+  diagnostics recognize these predicates while qualified user-defined function
+  calls retain their names.
+  ([#521](https://github.com/tobilg/polyglot/pull/521))
 - Oracle flashback queries now reject unsupported relation shapes before consuming
   the snapshot clause. Oracle SCNs reaching other dialects are reported through
   the unsupported-construct policy.

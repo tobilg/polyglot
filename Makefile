@@ -298,6 +298,7 @@ test-rust-verify-core:
 	@cargo test -p polyglot-sql --test duckdb_integer_division
 	@cargo test -p polyglot-sql --test mod_precedence
 	@cargo test -p polyglot-sql --test duckdb_unreserved_relation_aliases
+	@cargo test -p polyglot-sql --test duckdb_regex_operators
 	@cargo test -p polyglot-sql --test numeric_exponent_boundaries
 	@cargo test -p polyglot-sql --test duckdb_decimal_precision
 	@cargo test -p polyglot-sql --test query_analysis
