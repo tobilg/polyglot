@@ -23438,7 +23438,12 @@ impl Generator {
             }
             self.write(")");
         } else {
-            self.write_keyword("REGEXP_LIKE");
+            let name = if self.config.dialect == Some(DialectType::DuckDB) {
+                "REGEXP_MATCHES"
+            } else {
+                "REGEXP_LIKE"
+            };
+            self.write_keyword(name);
             self.write("(");
             self.generate_expression(&f.this)?;
             self.write(", ");

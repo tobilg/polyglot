@@ -1,7 +1,7 @@
 use polyglot_sql::{generate, parse_one, DialectType, Expression, ExpressionWalk};
 
 #[test]
-fn duckdb_tilde_parses_as_full_match_for_direct_generation() {
+fn duckdb_tilde_preserves_partial_match_for_direct_generation() {
     for sql in [
         "SELECT 'abc' ~ 'b' AS matched",
         "SELECT 'abc' ~ 'abc' AS matched",
@@ -15,25 +15,25 @@ fn duckdb_tilde_parses_as_full_match_for_direct_generation() {
         let expression = parse_one(sql, DialectType::DuckDB).unwrap();
         assert_eq!(
             expression.count(|node| matches!(node, Expression::RegexpFullMatch(_))),
-            1,
+            0,
             "{sql}"
         );
         assert_eq!(
             expression.count(|node| matches!(node, Expression::RegexpLike(_))),
-            0,
+            1,
             "{sql}"
         );
         let generated = generate(&expression, DialectType::DuckDB).unwrap();
         let upper = generated.to_uppercase();
-        assert!(upper.contains("REGEXP_FULL_MATCH("), "{generated}");
+        assert!(upper.contains("REGEXP_MATCHES("), "{generated}");
         assert!(!upper.contains("REGEXP_LIKE("), "{generated}");
-        assert!(!upper.contains("REGEXP_MATCHES("), "{generated}");
+        assert!(!upper.contains("REGEXP_FULL_MATCH("), "{generated}");
         parse_one(&generated, DialectType::DuckDB).unwrap();
     }
 }
 
 #[test]
-fn duckdb_negation_wraps_the_full_match_expression() {
+fn duckdb_negation_wraps_the_partial_match_expression() {
     for sql in [
         "SELECT 'abc' !~ 'b'",
         "SELECT NOT ('abc' ~ 'b')",
@@ -41,7 +41,7 @@ fn duckdb_negation_wraps_the_full_match_expression() {
     ] {
         let expression = parse_one(sql, DialectType::DuckDB).unwrap();
         assert_eq!(
-            expression.count(|node| matches!(node, Expression::RegexpFullMatch(_))),
+            expression.count(|node| matches!(node, Expression::RegexpLike(_))),
             1
         );
         assert_eq!(
@@ -51,7 +51,7 @@ fn duckdb_negation_wraps_the_full_match_expression() {
         let output = generate(&expression, DialectType::DuckDB).unwrap();
         assert!(output.to_uppercase().contains("NOT"), "{output}");
         assert!(
-            output.to_uppercase().contains("REGEXP_FULL_MATCH("),
+            output.to_uppercase().contains("REGEXP_MATCHES("),
             "{output}"
         );
     }
@@ -118,19 +118,19 @@ fn explicit_full_regex_function_stays_full() {
 }
 
 #[test]
-fn identity_transpile_preserves_full_match_semantics() {
+fn identity_transpile_preserves_partial_match_semantics() {
     for sql in ["SELECT 'abc' ~ 'b'", "SELECT 'abc' !~ 'b'"] {
         let output = polyglot_sql::transpile(sql, DialectType::DuckDB, DialectType::DuckDB)
             .unwrap()
             .remove(0)
             .to_uppercase();
-        assert!(output.contains("REGEXP_FULL_MATCH("), "{output}");
-        assert!(!output.contains("REGEXP_MATCHES("), "{output}");
+        assert!(output.contains("REGEXP_MATCHES("), "{output}");
+        assert!(!output.contains("REGEXP_FULL_MATCH("), "{output}");
     }
 }
 
 #[test]
-fn full_match_lineage_keeps_both_operands() {
+fn partial_match_lineage_keeps_both_operands() {
     for sql in [
         "SELECT value ~ pattern AS matched FROM samples",
         "SELECT value !~ pattern AS matched FROM samples",
@@ -155,34 +155,27 @@ fn full_match_lineage_keeps_both_operands() {
 
 #[test]
 fn full_match_has_no_unverified_foreign_dialect_lowering() {
-    for sql in [
-        "SELECT 'abc' ~ '^abc$'",
-        "SELECT value ~ pattern FROM samples",
-        "SELECT value !~ pattern FROM samples",
+    use polyglot_sql::expressions::RegexpFullMatch;
+    let expression = Expression::RegexpFullMatch(Box::new(RegexpFullMatch {
+        this: Box::new(Expression::column("value")),
+        expression: Box::new(Expression::column("pattern")),
+        options: Vec::new(),
+    }));
+    for target in [
+        DialectType::PostgreSQL,
+        DialectType::MySQL,
+        DialectType::ClickHouse,
+        DialectType::Snowflake,
+        DialectType::BigQuery,
+        DialectType::TSQL,
+        DialectType::Fabric,
     ] {
-        let expression = parse_one(sql, DialectType::DuckDB).unwrap();
-        for target in [
-            DialectType::PostgreSQL,
-            DialectType::MySQL,
-            DialectType::ClickHouse,
-            DialectType::Snowflake,
-            DialectType::BigQuery,
-            DialectType::TSQL,
-            DialectType::Fabric,
-        ] {
-            let error = generate(&expression, target)
-                .expect_err("unverified full-match lowering must be explicit");
-            assert!(
-                error.to_string().contains("full-match regular expression"),
-                "{target:?}: {error}"
-            );
-            let error = polyglot_sql::transpile(sql, DialectType::DuckDB, target)
-                .expect_err("transpilation must not emit an unverified full-match function");
-            assert!(
-                error.to_string().contains("full-match regular expression"),
-                "{target:?}: {error}"
-            );
-        }
+        let error = generate(&expression, target)
+            .expect_err("unverified full-match lowering must be explicit");
+        assert!(
+            error.to_string().contains("full-match regular expression"),
+            "{target:?}: {error}"
+        );
     }
 }
 
@@ -192,12 +185,12 @@ fn strict_transpile_recognizes_full_match_as_a_regex_predicate() {
     use polyglot_sql::TranspileOptions;
     for target in [DialectType::TSQL, DialectType::Fabric] {
         for sql in [
-            "SELECT value ~ pattern FROM samples",
-            "SELECT value !~ pattern FROM samples",
+            "SELECT regexp_full_match(value, pattern) FROM samples",
+            "SELECT NOT regexp_full_match(value, pattern) FROM samples",
         ] {
             let error = Dialect::get(DialectType::DuckDB)
                 .transpile_with(sql, target, TranspileOptions::strict())
-                .expect_err("strict mode must recognize the full-match AST");
+                .expect_err("strict mode must recognize the full-match predicate");
             assert!(
                 error.to_string().contains("regular expression predicates"),
                 "{target:?}: {error}"
@@ -249,5 +242,20 @@ fn full_match_lineage_visits_expression_options() {
             "samples.pattern",
             "samples.value"
         ]
+    );
+}
+
+#[test]
+fn direct_partial_match_generation_preserves_flags() {
+    use polyglot_sql::expressions::RegexpFunc;
+    let expression = Expression::RegexpLike(Box::new(RegexpFunc {
+        this: Expression::column("value"),
+        pattern: Expression::column("pattern"),
+        options: None,
+        flags: Some(Expression::column("options")),
+    }));
+    assert_eq!(
+        generate(&expression, DialectType::DuckDB).unwrap(),
+        "REGEXP_MATCHES(value, pattern, options)"
     );
 }

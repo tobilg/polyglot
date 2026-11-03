@@ -31943,26 +31943,6 @@ impl Parser {
         Ok(expr)
     }
 
-    fn regexp_operator(&self, left: Expression, right: Expression) -> Expression {
-        if matches!(
-            self.config.dialect,
-            Some(crate::dialects::DialectType::DuckDB)
-        ) {
-            Expression::RegexpFullMatch(Box::new(RegexpFullMatch {
-                this: Box::new(left),
-                expression: Box::new(right),
-                options: Vec::new(),
-            }))
-        } else {
-            Expression::RegexpLike(Box::new(RegexpFunc {
-                options: None,
-                this: left,
-                pattern: right,
-                flags: None,
-            }))
-        }
-    }
-
     /// Parse comparison expressions
     #[inline(always)]
     fn parse_comparison(&mut self) -> Result<Expression> {
@@ -32458,11 +32438,8 @@ impl Parser {
                 // SQLite MATCH operator (FTS full-text search)
                 let right = self.parse_bitwise_or()?;
                 Expression::Match(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_token(TokenType::Tilde) {
-                let right = self.parse_bitwise_or()?;
-                self.regexp_operator(left, right)
-            } else if self.match_token(TokenType::RLike) {
-                // RLIKE / REGEXP
+            } else if self.match_token(TokenType::RLike) || self.match_token(TokenType::Tilde) {
+                // PostgreSQL ~ (regexp match) operator / RLIKE / REGEXP
                 let right = self.parse_bitwise_or()?;
                 Expression::RegexpLike(Box::new(RegexpFunc {
                     options: None,
@@ -32527,8 +32504,15 @@ impl Parser {
                 }));
                 Expression::Not(Box::new(UnaryOp::new(ilike_expr)))
             } else if self.match_token(TokenType::NotRLike) {
+                // PostgreSQL !~ (NOT regexp match) operator
                 let right = self.parse_bitwise_or()?;
-                let regexp_expr = self.regexp_operator(left, right);
+                let regexp_expr = Expression::RegexpLike(Box::new(RegexpFunc {
+                    options: None,
+
+                    this: left,
+                    pattern: right,
+                    flags: None,
+                }));
                 Expression::Not(Box::new(UnaryOp::new(regexp_expr)))
             } else if self.match_token(TokenType::NotIRLike) {
                 // PostgreSQL !~* (NOT case-insensitive regexp match) operator
