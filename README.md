@@ -172,9 +172,10 @@ matching and generate `REGEXP_MATCHES` calls, including when generating directly
 from an AST. Explicit `regexp_full_match` calls retain full-match semantics.
 See DuckDB's [regular expression documentation](https://duckdb.org/docs/2.0/sql/functions/pattern_matching#regular-expressions).
 
-Full-match AST generation rejects foreign target dialects without a verified
-mapping rather than emitting a function unavailable on those targets. This
-includes dynamic patterns and negation; adding anchors alone is not a verified
+Full-match AST nodes and unqualified `regexp_full_match` calls reject foreign
+target dialects without a verified mapping. This applies to direct generation
+and transpilation, including dynamic patterns, flags, and negation. Qualified
+user-defined functions keep their names. Adding anchors alone is not a verified
 translation across regular expression engines.
 
 ## Lineage and OpenLineage Output

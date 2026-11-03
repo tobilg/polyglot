@@ -21021,6 +21021,9 @@ impl Generator {
     }
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
+        if func.qualified_name.len() <= 1 && func.name.eq_ignore_ascii_case("REGEXP_FULL_MATCH") {
+            self.validate_regexp_full_match_target()?;
+        }
         if func.source_dialect == Some(DialectType::SQLite)
             && func.name.eq_ignore_ascii_case("CONCAT")
         {
@@ -40369,7 +40372,7 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_regexp_full_match(&mut self, e: &RegexpFullMatch) -> Result<()> {
+    fn validate_regexp_full_match_target(&self) -> Result<()> {
         if let Some(dialect) = self.config.dialect {
             if !matches!(dialect, DialectType::DuckDB | DialectType::Generic) {
                 return Err(crate::error::Error::unsupported(
@@ -40378,6 +40381,11 @@ impl Generator {
                 ));
             }
         }
+        Ok(())
+    }
+
+    fn generate_regexp_full_match(&mut self, e: &RegexpFullMatch) -> Result<()> {
+        self.validate_regexp_full_match_target()?;
         self.write_keyword("REGEXP_FULL_MATCH");
         self.write("(");
         self.generate_expression(&e.this)?;

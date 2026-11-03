@@ -6295,8 +6295,12 @@ impl Dialect {
                 | Expression::RegexpLike(_)
                 | Expression::RegexpILike(_)
                 | Expression::RegexpFullMatch(_)
-        ) || Self::node_is_function_named(expr, "REGEXP_FULL_MATCH")
-            || Self::node_is_function_named(expr, "REGEXP_LIKE")
+        ) || matches!(
+            expr,
+            Expression::Function(function)
+                if function.qualified_name.len() <= 1
+                    && function.name.eq_ignore_ascii_case("REGEXP_FULL_MATCH")
+        ) || Self::node_is_function_named(expr, "REGEXP_LIKE")
             || Self::node_is_function_named(expr, "REGEXP_I_LIKE")
             || Self::node_is_function_named(expr, "REGEXP_ILIKE")
     }
