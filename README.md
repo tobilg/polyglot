@@ -165,6 +165,19 @@ libraries or bundle release artifacts in the Go module. Build/download the FFI
 shared library and set `POLYGLOT_SQL_FFI_PATH` or pass its path to
 `polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
 
+## DuckDB regular expression compatibility
+
+The DuckDB dialect targets DuckDB 2.0. The `~` and `!~` operators use partial
+matching and generate `REGEXP_MATCHES` calls, including when generating directly
+from an AST. Explicit `regexp_full_match` calls retain full-match semantics.
+See DuckDB's [regular expression documentation](https://duckdb.org/docs/2.0/sql/functions/pattern_matching#regular-expressions).
+
+Full-match AST nodes and unqualified `regexp_full_match` calls reject foreign
+target dialects without a verified mapping. This applies to direct generation
+and transpilation, including dynamic patterns, flags, and negation. Qualified
+user-defined functions keep their names. Adding anchors alone is not a verified
+translation across regular expression engines.
+
 ## Lineage and OpenLineage Output
 
 Polyglot can trace column lineage through SQL queries and can generate

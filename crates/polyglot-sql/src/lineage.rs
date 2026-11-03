@@ -4487,6 +4487,11 @@ fn collect_column_refs(
                 stack.push(&f.this);
                 stack.push(&f.delimiter);
             }
+            Expression::RegexpFullMatch(f) => {
+                stack.push(&f.this);
+                stack.push(&f.expression);
+                stack.extend(f.options.iter());
+            }
             Expression::RegexpLike(f) => {
                 stack.push(&f.this);
                 stack.push(&f.pattern);
