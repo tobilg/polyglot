@@ -40365,12 +40365,23 @@ impl Generator {
     }
 
     fn generate_regexp_full_match(&mut self, e: &RegexpFullMatch) -> Result<()> {
-        // REGEXP_FULL_MATCH(this, expression)
+        if let Some(dialect) = self.config.dialect {
+            if !matches!(dialect, DialectType::DuckDB | DialectType::Generic) {
+                return Err(crate::error::Error::unsupported(
+                    "full-match regular expression without a verified target mapping",
+                    format!("{dialect:?}"),
+                ));
+            }
+        }
         self.write_keyword("REGEXP_FULL_MATCH");
         self.write("(");
         self.generate_expression(&e.this)?;
         self.write(", ");
         self.generate_expression(&e.expression)?;
+        for option in &e.options {
+            self.write(", ");
+            self.generate_expression(option)?;
+        }
         self.write(")");
         Ok(())
     }
