@@ -7,6 +7,11 @@ The SDK uses [PureGo](https://github.com/ebitengine/purego) to call the
 native libraries at runtime. Build or download the matching FFI library yourself
 and point the SDK at it.
 
+For a portable module embedded directly in a Go binary, see the
+[WASI guide](../../docs/wasi.md) and [runnable Go + wazero example](../../examples/wasi-go/).
+That experimental integration supports parse, generate, transpile, and format;
+use this native SDK for the broader APIs below. Both integrations work without cgo.
+
 Important: `go get github.com/tobilg/polyglot/packages/go` installs only the Go
 module. Runtime calls such as `Transpile`, `Parse`, `ParseDataType`,
 `Validate`, lineage, and OpenLineage generation require a separate

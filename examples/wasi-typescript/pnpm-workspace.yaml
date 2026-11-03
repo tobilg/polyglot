@@ -1,0 +1,2 @@
+# Install independently of the repository's SDK workspace.
+packages: []

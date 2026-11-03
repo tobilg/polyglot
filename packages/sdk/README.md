@@ -4,6 +4,11 @@ Rust/Wasm-powered SQL transpiler for TypeScript. Parse, generate, transpile, for
 
 Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
+This SDK supports Node.js and browsers using a wasm-bindgen module. To consume
+the separate experimental WASI command from Node.js, see the
+[WASI guide](../../docs/wasi.md) and [runnable TypeScript WASI example](../../examples/wasi-typescript/).
+WASI exposes parse, generate, transpile, and format; the full SDK API is documented below.
+
 ## Installation
 
 ```bash

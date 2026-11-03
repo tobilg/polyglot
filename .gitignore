@@ -26,6 +26,8 @@
 *.mod
 *.smod
 !packages/go/go.mod
+!tools/wasi-smoke/go.mod
+!examples/wasi-go/go.mod
 
 # Compiled Static libraries
 *.lai
@@ -85,6 +87,9 @@ packages/sdk/wasm-web/
 crates/polyglot-sql-wasm/pkg/
 crates/polyglot-sql-wasm/pkg-bundler/
 crates/polyglot-sql-wasm/pkg-node/
+examples/wasi-go/polyglot_sql_wasi.wasm
+examples/wasi-go/wasi-go
+examples/wasi-typescript/polyglot_sql_wasi.wasm
 
 # Node.js
 node_modules/

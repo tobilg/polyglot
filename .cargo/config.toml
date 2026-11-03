@@ -3,3 +3,12 @@ RUST_MIN_STACK = "8388608"
 
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=-zstack-size=67108864"]
+
+# The WASI target needs the same stack as the other WASM target, and for the
+# same reason: WASM has no stacker support, so recursion over a deep AST has to
+# fit in the linker's stack. The default is 1 MiB, which is not enough to
+# deserialize and generate an AST the parser itself produces, and overflowing
+# it in WASM surfaces to the host as an opaque trap ("out of bounds memory
+# access") rather than an error.
+[target.wasm32-wasip1]
+rustflags = ["-C", "link-arg=-zstack-size=67108864"]

@@ -7,6 +7,8 @@ Polyglot parses, generates, transpiles, and formats SQL across more than 30 SQL 
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
 - a Go SDK (`github.com/tobilg/polyglot/packages/go`) backed by the native FFI library
+- a WASI command module (`polyglot-sql-wasi`) for hosts that would rather embed
+  one portable artifact than locate a native library at run time
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/), [TypeScript API Docs](https://polyglot.gh.tobilg.com/), and [Python API Docs](https://polyglot-python.gh.tobilg.com/).
 
@@ -165,6 +167,39 @@ libraries or bundle release artifacts in the Go module. Build/download the FFI
 shared library and set `POLYGLOT_SQL_FFI_PATH` or pass its path to
 `polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
 
+### WASI module
+
+The experimental WASI command supports parse, generate, transpile, and format
+through JSON stdin/stdout. It includes every dialect and can be embedded in a
+Go binary with wazero or loaded from TypeScript with Node.js `node:wasi`.
+
+Start with the [WASI guide](docs/wasi.md) for artifact downloads, the complete
+protocol, runtime lifecycle, and troubleshooting. Runnable examples include
+transpilation and parse → AST edit → generate:
+
+- [Go + wazero](examples/wasi-go/): embed the module with `go:embed`, without cgo.
+- [TypeScript + Node.js](examples/wasi-typescript/): typed requests, captured
+  stdio, response validation, and cleanup.
+
+From the repository root:
+
+```sh
+rustup target add wasm32-wasip1
+make prepare-wasi-examples
+```
+
+This builds `target/wasm32-wasip1/release/polyglot_sql_wasi.wasm` and copies it
+into both example directories. Their READMEs contain the exact run commands
+and expected output. CI verifies both examples and publishes the tested module
+with a SHA-256 checksum as an Actions artifact and, on release tags, a release
+asset.
+
+For the full API in Node.js or browsers, use the [TypeScript SDK](packages/sdk/README.md).
+The [native Go SDK](packages/go/README.md) provides broader APIs through a
+platform-specific shared library and also works without cgo. See the
+[integration comparison](docs/wasi.md#choose-an-integration) to choose a route.
+The WASI module and the SDK's wasm-bindgen module are separate artifacts.
+
 ## Lineage and OpenLineage Output
 
 Polyglot can trace column lineage through SQL queries and can generate
@@ -319,6 +354,7 @@ polyglot/
 ├── crates/
 │   ├── polyglot-sql/           # Core Rust library (parser, generator, builder)
 │   ├── polyglot-sql-function-catalogs/ # Optional dialect function catalogs (feature-gated data)
+│   ├── polyglot-sql-wasi/      # Portable WASI command (JSON stdin/stdout)
 │   ├── polyglot-sql-wasm/      # WASM bindings
 │   ├── polyglot-sql-ffi/       # C ABI bindings (.so/.dylib/.dll + .a/.lib + header)
 │   └── polyglot-sql-python/    # Python bindings (PyO3 + maturin, published on PyPI)
@@ -331,6 +367,8 @@ polyglot/
 ├── examples/
 │   ├── rust/                   # Rust example
 │   ├── typescript/             # TypeScript SDK example
+│   ├── wasi-go/                # Go + wazero embedding example
+│   ├── wasi-typescript/        # TypeScript + Node.js WASI example
 │   └── c/                      # C FFI example
 └── tools/
     ├── sqlglot-compare/        # Test extraction & comparison tool
@@ -339,7 +377,7 @@ polyglot/
 
 ## Examples
 
-Standalone example projects are available in the [`examples/`](examples/) directory. Each one pulls the latest published package and can be run independently.
+Standalone example projects are available in the [`examples/`](examples/) directory. The Rust and TypeScript SDK examples use published packages. The WASI examples use a module built from source or downloaded from CI/releases.
 
 ### Rust
 

@@ -9,7 +9,7 @@
         test-rust-transpile-generic test-rust-parser test-rust-check \
         test-rust-clickhouse-parser test-rust-clickhouse-coverage \
         test-ffi build-go test-go test-go-integration \
-        test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
+        test-compare build-wasm build-wasi test-rust-wasi test-wasi-runtime prepare-wasi-examples test-wasi-examples clean-fixtures clean-clickhouse-fixtures clean-external clean \
         generate-bindings copy-bindings cargo-build-release \
         build-all build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi build-go \
         develop-python test-python build-python typecheck-python \
@@ -78,6 +78,9 @@ help:
 	@echo "  make test-ffi           - Run C FFI crate tests"
 	@echo "  make test-go            - Run Go SDK unit tests"
 	@echo "  make test-go-integration - Build FFI and run Go SDK integration tests"
+	@echo "  make test-rust-wasi      - Run WASI protocol tests on the host"
+	@echo "  make test-wasi-runtime   - Build WASI and test in wazero"
+	@echo "  make test-wasi-examples  - Build WASI and check Go/Node.js examples (see docs/wasi.md)"
 	@echo ""
 	@echo "  ClickHouse Tests:"
 	@echo "  make test-rust-clickhouse-parser   - ClickHouse parser tests"
@@ -109,6 +112,8 @@ help:
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
 	@echo "  make copy-bindings       - Copy bindings from Rust crate to TypeScript SDK"
 	@echo "  make build-wasm          - Build WASM package"
+	@echo "  make build-wasi          - Build the portable WASI command module"
+	@echo "  make prepare-wasi-examples - Build and copy the module into both WASI examples"
 	@echo "  make cargo-build-release - Build core Rust crate with the native performance profile"
 	@echo "  make build-ffi           - Build C FFI shared/static library"
 	@echo "  make build-ffi-static    - Build C FFI static library"
@@ -341,6 +346,7 @@ test-rust-ci-release-fixtures:
 
 test-rust-ci-bindings:
 	cargo test -p polyglot-sql-wasm --lib -- --nocapture
+	@$(MAKE) test-rust-wasi
 	@$(MAKE) test-ffi
 	@$(MAKE) build-ffi
 
@@ -541,6 +547,55 @@ build-wasm:
 	cd packages/sdk && pnpm run build:wasm
 	cd packages/sdk && pnpm run build
 
+# Build the WASI command module.
+#
+# This is a different artifact from build-wasm: that one is a wasm-bindgen
+# module for a JavaScript host, this one is a WASI command that speaks JSON on
+# stdin and stdout. A host embeds the .wasm and runs it in a WebAssembly
+# runtime, so there is nothing to install and nothing to locate at run time.
+# Go hosts can use wazero, which needs no cgo.
+#
+# panic = "abort" from the release profile turns a Rust panic into a bare trap
+# with no message, so build with WASI_PROFILE=dev when diagnosing one.
+WASI_TARGET ?= wasm32-wasip1
+WASI_PROFILE ?= release
+# Cargo writes the dev profile to target/<triple>/debug, not .../dev, so the
+# artifact directory is not always the profile name.
+WASI_OUT_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/$(WASI_TARGET)/$(if $(filter dev,$(WASI_PROFILE)),debug,$(WASI_PROFILE))
+WASI_ARTIFACT = $(WASI_OUT_DIR)/polyglot_sql_wasi.wasm
+build-wasi:
+	@rustup target list --installed | grep -q '^$(WASI_TARGET)$$' || \
+		{ echo "Missing target $(WASI_TARGET). Run: rustup target add $(WASI_TARGET)"; exit 1; }
+	cargo build -p polyglot-sql-wasi --target $(WASI_TARGET) \
+		$(if $(filter release,$(WASI_PROFILE)),--release,--profile $(WASI_PROFILE))
+	@ls -lh "$(WASI_ARTIFACT)"
+
+# Protocol tests for the WASI module, run on the host target so no WebAssembly
+# runtime is needed.
+test-rust-wasi:
+	cargo test -p polyglot-sql-wasi
+
+# Protocol tests against the built WASI module in a real WebAssembly runtime.
+#
+# Separate from test-rust-wasi because the host tests cannot catch
+# target-specific behaviour: the stack is sized by the linker, and overflowing
+# it reaches the host as an opaque trap rather than an error. Both of the
+# depth regressions here were invisible to the host tests.
+test-wasi-runtime: build-wasi
+	cd tools/wasi-smoke && POLYGLOT_WASI_MODULE="$(abspath $(WASI_ARTIFACT))" go test ./...
+
+prepare-wasi-examples: build-wasi
+	cp "$(WASI_ARTIFACT)" examples/wasi-go/polyglot_sql_wasi.wasm
+	cp "$(WASI_ARTIFACT)" examples/wasi-typescript/polyglot_sql_wasi.wasm
+
+# Install the standalone TypeScript example's locked dependencies first:
+# pnpm --dir examples/wasi-typescript install --frozen-lockfile
+test-wasi-examples: prepare-wasi-examples
+	cd examples/wasi-go && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go run .
+	pnpm --dir examples/wasi-typescript typecheck
+	pnpm --dir examples/wasi-typescript test
+	pnpm --dir examples/wasi-typescript start
+
 # Build everything (release-safe order)
 build-all:
 	@$(MAKE) cargo-build-release
@@ -610,6 +665,7 @@ lint-rust:
 	cargo clippy -p polyglot-sql-ffi --all-targets --no-deps -- -D warnings
 	cargo clippy -p polyglot-sql-wasm --lib --no-deps -- -D warnings
 	cargo clippy -p polyglot-sql-python --lib --no-deps -- -D warnings
+	cargo clippy -p polyglot-sql-wasi --all-targets --no-deps -- -D warnings
 
 lint-sdk:
 	cd packages/sdk && pnpm run lint

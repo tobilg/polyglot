@@ -1,0 +1,41 @@
+[package]
+name = "polyglot-sql-wasi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "WASI command module exposing polyglot-sql over a JSON stdin/stdout protocol"
+
+# A WASI command, so a host runs it and reads stdout. There is no shared
+# library and no FFI: hosts such as Go's wazero can embed the module and call
+# it without cgo and without locating a platform-specific native library.
+[[bin]]
+name = "polyglot_sql_wasi"
+path = "src/main.rs"
+
+[dependencies]
+# default-features = false drops `stacker`, which probes the native stack and
+# does not build for wasm. Everything else is re-enabled explicitly.
+#
+# Every dialect is included on purpose, rather than letting a host pick. A
+# dialect whose feature is off does not fail: `Dialect::get` falls through to
+# `GenericDialect`, so the module would quietly parse and generate generic SQL
+# while reporting success. Measured, the saving is not worth that: all
+# dialects build to 29.3 MB and Oracle alone to 25.9 MB, because the parser
+# and generator are one body of code that switches on the dialect at run time
+# rather than per-dialect code that can be left out.
+polyglot-sql = { path = "../polyglot-sql", default-features = false, features = [
+    "all-dialects",
+    "generate",
+    "transpile",
+] }
+serde = { workspace = true, features = ["derive"] }
+# unbounded_depth only exposes Deserializer::disable_recursion_limit; it does
+# not change serde_json's default behaviour for anything else in the
+# workspace. The limit is needed because its default of 128 JSON levels is
+# below what this library's own parser emits for a moderately long expression,
+# so generate rejected an AST parse had just produced. See
+# MAX_REQUEST_JSON_DEPTH in src/main.rs for the bound that replaces it.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
+

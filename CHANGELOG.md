@@ -4,25 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
-
-### Fixed
-
-- Oracle flashback queries now reject unsupported relation shapes before consuming
-  the snapshot clause. Oracle SCNs reaching other dialects are reported through
-  the unsupported-construct policy.
-- Timestamp time travel generation now reports unsupported target syntax instead
-  of emitting invalid `FOR TIMESTAMP AS OF` clauses, including for BigQuery and
-  Snowflake. The generator raises in strict mode and emits a diagnostic comment
-  in lenient modes. Existing source-time-zone checks, supported conversions, and
-  native target time travel remain intact.
-- Core verification includes Oracle flashback regressions for partition and
-  subpartition selection, sampling order, aliases, and target-dialect policies.
-
-## [0.14.0] - 2026-11-02
+## [0.14.0] - 2026-11-03
 
 ### Added
 
+- `polyglot-sql-wasi`, an experimental WASI command exposing parse, generate,
+  transpile, and format over JSON stdin/stdout. Build with `make build-wasi`
+  and embed the portable module in a host such as Go with wazero 1.11 or newer.
+  All dialects are included. Requests support up to 1536 JSON nesting levels;
+  parsing rejects ASTs that would exceed that limit when sent back to generate,
+  including deeper queries accepted by the core ClickHouse parser.
+- Runnable Go/wazero and TypeScript/Node.js WASI examples with CI checks,
+  a protocol and integration guide, and tested WASI release assets with SHA-256
+  checksums.
 - Parsing and generation for ClickHouse pipe queries, stream watermarks, and
   `LIMIT AFTER`/`UNTIL` boundaries; Trino query-local SQL routines; DuckDB
   nearest joins; Hive/Spark multiple inserts; and Doris match predicates with
@@ -52,6 +46,16 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- Oracle flashback queries now reject unsupported relation shapes before consuming
+  the snapshot clause. Oracle SCNs reaching other dialects are reported through
+  the unsupported-construct policy.
+- Timestamp time travel generation now reports unsupported target syntax instead
+  of emitting invalid `FOR TIMESTAMP AS OF` clauses, including for BigQuery and
+  Snowflake. The generator raises in strict mode and emits a diagnostic comment
+  in lenient modes. Existing source-time-zone checks, supported conversions, and
+  native target time travel remain intact.
+- Core verification includes Oracle flashback regressions for partition and
+  subpartition selection, sampling order, aliases, and target-dialect policies.
 - Dialect round trips retain additional table and column options, constraints,
   view properties, materialized-view refresh schedules, replacement keys, and
   structured update targets across MySQL, PostgreSQL, Oracle, ClickHouse,

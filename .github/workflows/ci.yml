@@ -159,6 +159,64 @@ jobs:
       - name: Build Python API documentation
         run: make python-docs-build
 
+  wasi-module:
+    needs: rust-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-wasi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: |
+            tools/wasi-smoke/go.sum
+            examples/wasi-go/go.sum
+
+      - uses: pnpm/setup@v3
+        with:
+          version: 12.4.2
+          install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: examples/wasi-typescript/pnpm-lock.yaml
+
+      - name: Install WASI TypeScript example dependencies
+        run: pnpm --dir examples/wasi-typescript install --frozen-lockfile
+
+      # Builds the release artifact and runs the protocol tests against it in
+      # wazero. The host-target tests in test-rust-ci-bindings cannot cover
+      # this: the WASM stack is sized by the linker, and overflowing it reaches
+      # the host as an opaque trap rather than an error response.
+      - name: WASI protocol tests in a WebAssembly runtime
+        run: make test-wasi-runtime
+
+      - name: Run and verify the documented Go and TypeScript examples
+        run: make test-wasi-examples
+
+      - name: Checksum the tested WASI module
+        working-directory: target/wasm32-wasip1/release
+        run: sha256sum polyglot_sql_wasi.wasm > polyglot_sql_wasi.wasm.sha256
+
+      - name: Upload WASI module
+        uses: actions/upload-artifact@v7
+        with:
+          name: polyglot-sql-wasi
+          path: |
+            target/wasm32-wasip1/release/polyglot_sql_wasi.wasm
+            target/wasm32-wasip1/release/polyglot_sql_wasi.wasm.sha256
+          if-no-files-found: error
+
   go-sdk:
     needs: rust-test
     runs-on: ubuntu-latest
@@ -705,8 +763,9 @@ jobs:
           path: polyglot-sql-ffi-${{ matrix.archive_name }}.${{ matrix.archive_ext }}
 
   publish-ffi-assets:
+    name: Publish FFI and WASI release assets
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ffi-build-artifacts, go-sdk-release-artifact]
+    needs: [ffi-build-artifacts, go-sdk-release-artifact, wasi-module]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -717,6 +776,16 @@ jobs:
           pattern: ffi-*
           path: dist
           merge-multiple: true
+
+      - name: Download tested WASI module and checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: polyglot-sql-wasi
+          path: dist
+
+      - name: Verify WASI checksum
+        working-directory: dist
+        run: sha256sum -c polyglot_sql_wasi.wasm.sha256
 
       - name: Generate checksums
         run: |
@@ -732,10 +801,13 @@ jobs:
       - name: Attach assets to GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.sha256
+            dist/polyglot_sql_wasi.wasm
+            dist/polyglot_sql_wasi.wasm.sha256
 
   go-sdk-release-artifact:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -1,0 +1,17 @@
+{
+  "name": "@polyglot-sql/example-wasi-typescript",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node main.ts",
+    "test": "node --test main.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}
