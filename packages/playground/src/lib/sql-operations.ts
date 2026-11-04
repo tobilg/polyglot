@@ -2,7 +2,9 @@ import {
   format, getDialects, getVersion, lineage, parse, transpile,
   validate, validateWithSchema,
   type Dialect, type LineageNode,
-} from "@polyglot-sql/sdk";
+} from "@polyglot-sql/sdk/manual";
+
+export { initializeSql } from "./sql-wasm";
 
 // Matches the core's collect_source_tables: use Table sources, deduplicate,
 // and sort. Trimming intermediate SELECTs does not change Table sources.

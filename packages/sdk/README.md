@@ -1141,7 +1141,10 @@ The SDK publishes separate browser, Node, CommonJS, CDN, and manual-loader entry
 
 ### Vite
 
-Vite works with the default SDK import and `vite-plugin-wasm`. This is the setup used by the [Polyglot Playground](https://github.com/tobilg/polyglot):
+Vite works with the default SDK import and `vite-plugin-wasm`. The
+[Polyglot Playground](https://github.com/tobilg/polyglot/tree/main/packages/playground#production) uses the manual loader with a
+version-pinned CDN URL for production instead, keeping WASM out of its Pages
+deployment. For a bundled WASM asset, use:
 
 ```typescript
 // vite.config.ts
