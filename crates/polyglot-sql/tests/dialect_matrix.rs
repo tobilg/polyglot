@@ -25,6 +25,226 @@ fn transpile_succeeds(sql: &str, from: DialectType, to: DialectType) -> bool {
     source_dialect.transpile(sql, to).is_ok()
 }
 
+mod duckdb_bigquery {
+    use super::*;
+    use DialectType::{BigQuery, DuckDB};
+
+    fn check(sql: &str, expected: &str) {
+        let output = transpile(sql, DuckDB, BigQuery);
+        assert_eq!(output, expected, "{sql}");
+        polyglot_sql::parse(&output, BigQuery).expect("generated BigQuery must parse");
+        assert_eq!(
+            polyglot_sql::transpile_by_name(sql, "duckdb", "bigquery").unwrap(),
+            vec![expected],
+            "the API used by native bindings must preserve the same semantics"
+        );
+    }
+
+    #[test]
+    fn numbered_parameters_preserve_identity() {
+        for (sql, expected) in [
+            (
+                r#"SELECT "t0"."id" FROM "orders" AS "t0" WHERE ("t0"."status" = $1) LIMIT 1000"#,
+                "SELECT `t0`.`id` FROM `orders` AS `t0` WHERE (`t0`.`status` = @p1) LIMIT 1000",
+            ),
+            (
+                r#"SELECT "t0"."id" FROM "orders" AS "t0" WHERE ("t0"."status" IN ($1, $2)) LIMIT 1000"#,
+                "SELECT `t0`.`id` FROM `orders` AS `t0` WHERE (`t0`.`status` IN (@p1, @p2)) LIMIT 1000",
+            ),
+            ("SELECT $2, $1, $2, $12", "SELECT @p2, @p1, @p2, @p12"),
+            ("SELECT $01, $1", "SELECT @p1, @p1"),
+            (
+                "SELECT COALESCE(NULLIF($2, $1), $2)",
+                "SELECT COALESCE(NULLIF(@p2, @p1), @p2)",
+            ),
+            (
+                "SELECT $1 WHERE EXISTS (SELECT 1 WHERE $2 = $1)",
+                "SELECT @p1 WHERE EXISTS(SELECT 1 WHERE @p2 = @p1)",
+            ),
+        ] {
+            check(sql, expected);
+        }
+    }
+
+    #[test]
+    fn other_parameter_forms_keep_their_binding_contract() {
+        for (sql, expected) in [
+            ("SELECT $foo, $bar, $foo", "SELECT @foo, @bar, @foo"),
+            (r#"SELECT $"my var", $"1""#, "SELECT @`my var`, @`1`"),
+            ("SELECT ?, ?", "SELECT ?, ?"),
+        ] {
+            check(sql, expected);
+        }
+        assert_eq!(
+            transpile("SELECT $2, $1, $2", DuckDB, DuckDB),
+            "SELECT $2, $1, $2"
+        );
+        assert_eq!(
+            transpile("SELECT $2, $1, $2", DuckDB, DialectType::PostgreSQL),
+            "SELECT $2, $1, $2"
+        );
+        assert_eq!(transpile("SELECT @p1", BigQuery, BigQuery), "SELECT @p1");
+        assert_eq!(transpile("SELECT @p1", BigQuery, DuckDB), "SELECT $p1");
+    }
+
+    #[test]
+    fn mixed_parameters_are_rejected_before_rewriting() {
+        for sql in [
+            "SELECT $1, ?",
+            "SELECT ?, $1",
+            "SELECT $3 WHERE EXISTS (SELECT ?)",
+            "SELECT $foo, ?",
+            "SELECT $1, $p1",
+        ] {
+            let error = Dialect::get(DuckDB).transpile(sql, BigQuery).unwrap_err();
+            assert!(error.to_string().contains("mixing"), "{sql}: {error}");
+        }
+        // Each statement has its own binding namespace.
+        assert_eq!(
+            polyglot_sql::transpile("SELECT $1; SELECT ?", DuckDB, BigQuery).unwrap(),
+            ["SELECT @p1", "SELECT ?"]
+        );
+    }
+
+    #[test]
+    fn truncation_uses_value_first_and_monday_weeks() {
+        for (sql, expected) in [
+            (
+                r#"SELECT date_trunc('month', "t0"."created_at") AS "bucket" FROM "orders" AS "t0" LIMIT 1000"#,
+                "SELECT DATE_TRUNC(`t0`.`created_at`, MONTH) AS `bucket` FROM `orders` AS `t0` LIMIT 1000",
+            ),
+            (
+                r#"SELECT date_trunc('week', "t0"."created_at") AS "bucket" FROM "orders" AS "t0" LIMIT 1000"#,
+                "SELECT DATE_TRUNC(`t0`.`created_at`, WEEK(MONDAY)) AS `bucket` FROM `orders` AS `t0` LIMIT 1000",
+            ),
+            (
+                "SELECT DATE_TRUNC('week', DATE_TRUNC('month', created_at)) FROM orders WHERE status = $1",
+                "SELECT DATE_TRUNC(DATE_TRUNC(created_at, MONTH), WEEK(MONDAY)) FROM orders WHERE status = @p1",
+            ),
+        ] {
+            check(sql, expected);
+        }
+        for (unit, canonical) in [
+            ("years", "YEAR"),
+            ("isoyear", "ISOYEAR"),
+            ("quarters", "QUARTER"),
+            ("months", "MONTH"),
+            ("weeks", "WEEK(MONDAY)"),
+            ("w", "WEEK(MONDAY)"),
+            ("dayofmonth", "DAY"),
+            ("hrs", "HOUR"),
+            ("m", "MINUTE"),
+            ("secs", "SECOND"),
+            ("msecs", "MILLISECOND"),
+            ("useconds", "MICROSECOND"),
+        ] {
+            check(
+                &format!("SELECT DATETRUNC('{unit}', created_at)"),
+                &format!("SELECT DATE_TRUNC(created_at, {canonical})"),
+            );
+        }
+    }
+
+    #[test]
+    fn truncation_preserves_known_temporal_types() {
+        for (sql, expected) in [
+            (
+                "SELECT DATE_TRUNC('week', DATE '2024-03-13')",
+                "SELECT DATE_TRUNC(CAST(CAST('2024-03-13' AS DATE) AS DATETIME), WEEK(MONDAY))",
+            ),
+            (
+                "SELECT DATE_TRUNC('hour', CAST('2024-03-13' AS DATE))",
+                "SELECT DATE_TRUNC(CAST(CAST('2024-03-13' AS DATE) AS DATETIME), HOUR)",
+            ),
+            (
+                "SELECT DATE_TRUNC('month', TIMESTAMP '2024-03-13 12:34:56')",
+                "SELECT DATE_TRUNC(CAST('2024-03-13 12:34:56' AS DATETIME), MONTH)",
+            ),
+            (
+                "SELECT DATE_TRUNC('month', CURRENT_DATE)",
+                "SELECT DATE_TRUNC(CAST(CURRENT_DATE AS DATETIME), MONTH)",
+            ),
+        ] {
+            check(sql, expected);
+            assert_eq!(
+                Dialect::get(DuckDB)
+                    .transpile_with(sql, BigQuery, TranspileOptions::strict())
+                    .unwrap(),
+                [expected]
+            );
+        }
+        check(
+            "SELECT DATE_TRUNC('month', CAST('2024-03-13 12:34:56+00' AS TIMESTAMPTZ))",
+            "SELECT DATE_TRUNC(CAST('2024-03-13 12:34:56+00' AS TIMESTAMP), MONTH)",
+        );
+    }
+
+    #[test]
+    fn truncation_reports_unsupported_semantics() {
+        for (sql, diagnostic) in [
+            ("SELECT DATE_TRUNC(unit, created_at)", "dynamic granularity"),
+            ("SELECT DATE_TRUNC($1, created_at)", "dynamic granularity"),
+            ("SELECT DATE_TRUNC('century', created_at)", "granularity"),
+            (
+                "SELECT DATE_TRUNC('day', CAST('1 day' AS INTERVAL))",
+                "operand type",
+            ),
+            (
+                "SELECT DATE_TRUNC('day', INTERVAL '25 hours')",
+                "operand type",
+            ),
+        ] {
+            let error = Dialect::get(DuckDB).transpile(sql, BigQuery).unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{sql}: {error}");
+        }
+        for (sql, diagnostic) in [
+            (
+                "SELECT DATE_TRUNC('month', created_at)",
+                "unresolved operand type",
+            ),
+            (
+                "SELECT DATE_TRUNC('week', CURRENT_TIMESTAMP)",
+                "session TimeZone",
+            ),
+            (
+                "SELECT DATE_TRUNC('day', CAST('2024-03-13 12:34:56+00' AS TIMESTAMPTZ))",
+                "session TimeZone",
+            ),
+        ] {
+            for level in [UnsupportedLevel::Raise, UnsupportedLevel::Immediate] {
+                let error = Dialect::get(DuckDB)
+                    .transpile_with(
+                        sql,
+                        BigQuery,
+                        TranspileOptions::default().with_unsupported_level(level),
+                    )
+                    .unwrap_err();
+                assert!(error.to_string().contains(diagnostic), "{sql}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn truncation_preserves_other_dialects_and_qualified_functions() {
+        assert_eq!(
+            transpile("SELECT DATE_TRUNC('month', created_at)", DuckDB, DuckDB),
+            "SELECT DATE_TRUNC('month', created_at)"
+        );
+        assert_eq!(
+            transpile("SELECT DATE_TRUNC(created_at, WEEK)", BigQuery, BigQuery),
+            "SELECT DATE_TRUNC(created_at, WEEK)"
+        );
+        check(
+            "SELECT custom.DATE_TRUNC('month', created_at)",
+            "SELECT custom.DATE_TRUNC('month', created_at)",
+        );
+        check(
+            r#"SELECT "DATE_TRUNC"('month', created_at)"#,
+            "SELECT DATE_TRUNC(created_at, MONTH)",
+        );
+    }
+}
+
 mod concat_precedence {
     use super::*;
     use DialectType::{DuckDB, MySQL, PostgreSQL, SQLite};
@@ -6555,4 +6775,433 @@ fn by_name_preserves_anonymous_parameter_binding_order() {
     let sql = "SELECT ? AS a, ? AS b UNION ALL BY NAME SELECT ? AS b, ? AS a";
     assert_eq!(transpile(sql, DialectType::DuckDB, DialectType::MySQL),
         "SELECT a, b FROM (SELECT ? AS a, ? AS b) AS _by_name UNION ALL SELECT a, b FROM (SELECT ? AS b, ? AS a) AS _by_name");
+}
+
+mod explain_statements {
+    use super::*;
+    use polyglot_sql::expressions::{
+        ExplainExecution, ExplainOptionKind, ExplainTarget, Expression,
+    };
+    use DialectType::*;
+
+    fn check(dialect: DialectType, sql: &str) -> polyglot_sql::expressions::Explain {
+        let engine = Dialect::get(dialect);
+        let ast = engine
+            .parse(sql)
+            .unwrap_or_else(|e| panic!("{dialect:?}: {sql}: {e}"));
+        let Expression::Explain(node) = &ast[0] else {
+            panic!("{dialect:?}: {sql}: expected Explain, got {:?}", ast[0])
+        };
+        assert_eq!(ast.len(), 1, "{sql}");
+        let output = engine
+            .transpile(sql, dialect)
+            .unwrap_or_else(|e| panic!("{dialect:?}: {sql}: {e}"));
+        let reparsed = engine
+            .parse(&output[0])
+            .unwrap_or_else(|e| panic!("{dialect:?}: {}: {e}", output[0]));
+        let Expression::Explain(reparsed) = &reparsed[0] else {
+            panic!("Explain changed node type: {}", output[0])
+        };
+        assert_eq!(node.execution_mode(), reparsed.execution_mode(), "{sql}");
+        assert_eq!(
+            node.options.len(),
+            reparsed.options.len(),
+            "{sql} -> {}",
+            output[0]
+        );
+        assert_eq!(
+            output,
+            engine.transpile(&output[0], dialect).unwrap(),
+            "unstable roundtrip: {sql}"
+        );
+        (**node).clone()
+    }
+
+    #[test]
+    fn every_supported_dialect_uses_explain() {
+        for dialect in [
+            Generic,
+            PostgreSQL,
+            MySQL,
+            Snowflake,
+            DuckDB,
+            SQLite,
+            Hive,
+            Spark,
+            Trino,
+            Presto,
+            Redshift,
+            TSQL,
+            ClickHouse,
+            Databricks,
+            Athena,
+            Teradata,
+            Doris,
+            StarRocks,
+            Materialize,
+            RisingWave,
+            SingleStore,
+            CockroachDB,
+            TiDB,
+            Dune,
+            DataFusion,
+            Vertica,
+        ] {
+            let node = check(dialect, "EXPLAIN SELECT 1");
+            assert!(
+                matches!(node.statement(), Some(Expression::Select(_))),
+                "{dialect:?}"
+            );
+            assert_eq!(
+                node.execution_mode(),
+                ExplainExecution::PlanOnly,
+                "{dialect:?}"
+            );
+        }
+        for dialect in [Oracle, HANA, Drill, Dremio, Druid] {
+            check(dialect, "EXPLAIN PLAN FOR SELECT 1");
+        }
+        check(Exasol, "EXPLAIN VIRTUAL SELECT * FROM virtual_table");
+        for dialect in [BigQuery, Fabric, Solr, Tableau] {
+            assert!(Dialect::get(dialect).parse("EXPLAIN SELECT 1").is_err());
+        }
+    }
+
+    #[test]
+    fn distinct_native_option_forms_are_preserved() {
+        let cases: &[(DialectType, &[&str])] = &[
+            (
+                DuckDB,
+                &[
+                    "ANALYZE",
+                    "(FORMAT JSON)",
+                    "(ANALYZE, FORMAT JSON)",
+                    "ANALYZE (FORMAT JSON)",
+                    "(SQL)",
+                ],
+            ),
+            (SQLite, &["QUERY PLAN"]),
+            (
+                Trino,
+                &[
+                    "(TYPE LOGICAL, FORMAT TEXT)",
+                    "(TYPE DISTRIBUTED, FORMAT GRAPHVIZ)",
+                    "(TYPE VALIDATE)",
+                    "(TYPE IO, FORMAT JSON)",
+                    "ANALYZE",
+                    "ANALYZE VERBOSE",
+                ],
+            ),
+            (
+                Presto,
+                &["(TYPE DISTRIBUTED, FORMAT JSON)", "ANALYZE VERBOSE"],
+            ),
+            (Dune, &["(TYPE LOGICAL, FORMAT JSON)", "ANALYZE"]),
+            (
+                Athena,
+                &["(TYPE DISTRIBUTED, FORMAT JSON)", "ANALYZE (FORMAT JSON)"],
+            ),
+            (Spark, &["EXTENDED", "FORMATTED", "COST", "CODEGEN"]),
+            (Databricks, &["EXTENDED", "FORMATTED", "COST", "CODEGEN"]),
+            (
+                Hive,
+                &[
+                    "EXTENDED",
+                    "CBO",
+                    "AST",
+                    "DEPENDENCY",
+                    "AUTHORIZATION",
+                    "LOCKS",
+                    "VECTORIZATION",
+                    "VECTORIZATION ONLY",
+                    "VECTORIZATION SUMMARY",
+                    "VECTORIZATION OPERATOR",
+                    "VECTORIZATION EXPRESSION",
+                    "VECTORIZATION ONLY DETAIL",
+                    "ANALYZE",
+                ],
+            ),
+            (Snowflake, &["USING TABULAR", "USING JSON", "USING TEXT"]),
+            (
+                ClickHouse,
+                &[
+                    "AST",
+                    "SYNTAX",
+                    "QUERY TREE",
+                    "PLAN",
+                    "PIPELINE",
+                    "ANALYZE",
+                    "ESTIMATE",
+                    "WHATIF",
+                    "PLAN actions=1, description=0",
+                    "PIPELINE graph=1, compact=0",
+                ],
+            ),
+            (
+                MySQL,
+                &[
+                    "EXTENDED",
+                    "PARTITIONS",
+                    "ANALYZE",
+                    "ANALYZE FORMAT=TREE",
+                    "FORMAT=JSON",
+                    "FORMAT=TRADITIONAL",
+                    "FORMAT=TREE",
+                ],
+            ),
+            (
+                TiDB,
+                &[
+                    "ANALYZE",
+                    "FORMAT='brief'",
+                    "FORMAT='verbose'",
+                    "FORMAT='dot'",
+                    "ANALYZE FORMAT='tidb_json'",
+                ],
+            ),
+            (
+                Doris,
+                &[
+                    "VERBOSE",
+                    "SHAPE PLAN",
+                    "ALL PLAN",
+                    "MEMO PLAN",
+                    "PARSED PLAN",
+                    "ANALYZED PLAN",
+                    "REWRITTEN PLAN",
+                    "OPTIMIZED PLAN",
+                ],
+            ),
+            (StarRocks, &["LOGICAL", "VERBOSE", "COSTS", "ANALYZE"]),
+            (
+                SingleStore,
+                &[
+                    "EXTENDED",
+                    "JSON",
+                    "JSON INTO OUTFILE 'plan.json'",
+                    "DUPLICATE",
+                    "MBC",
+                    "MPL",
+                    "REPRO",
+                    "UI",
+                ],
+            ),
+            (
+                CockroachDB,
+                &[
+                    "(OPT, VERBOSE, TYPES)",
+                    "(ENV, MEMO, REDACT)",
+                    "(VEC)",
+                    "(DISTSQL)",
+                    "(FINGERPRINT)",
+                    "ANALYZE",
+                    "ANALYZE (DEBUG)",
+                    "ANALYZE (DISTSQL)",
+                ],
+            ),
+            (
+                RisingWave,
+                &[
+                    "(TYPE PHYSICAL, VERBOSE TRUE, TRACE FALSE, FORMAT JSON)",
+                    "(TYPE LOGICAL)",
+                    "(TYPE DISTSQL)",
+                    "ANALYZE",
+                ],
+            ),
+            (
+                Materialize,
+                &[
+                    "PLAN FOR",
+                    "RAW PLAN FOR",
+                    "DECORRELATED PLAN FOR",
+                    "OPTIMIZED PLAN FOR",
+                    "LOCALLY OPTIMIZED PLAN FOR",
+                    "PHYSICAL PLAN FOR",
+                    "PLAN WITH (arity, node identifiers, types) AS JSON FOR",
+                    "PLAN AS TEXT FOR",
+                    "TIMESTAMP FOR",
+                    "FILTER PUSHDOWN FOR",
+                ],
+            ),
+            (Redshift, &["VERBOSE"]),
+            (DataFusion, &["ANALYZE", "VERBOSE", "ANALYZE VERBOSE"]),
+            (
+                Oracle,
+                &["PLAN SET STATEMENT_ID='probe' INTO plan_table FOR"],
+            ),
+            (HANA, &["PLAN SET STATEMENT_NAME='probe' FOR"]),
+            (
+                Drill,
+                &[
+                    "PLAN INCLUDING ALL ATTRIBUTES FOR",
+                    "PLAN WITH IMPLEMENTATION FOR",
+                    "PLAN WITHOUT IMPLEMENTATION FOR",
+                    "PLAN INCLUDING ALL ATTRIBUTES WITHOUT IMPLEMENTATION FOR",
+                ],
+            ),
+            (
+                Teradata,
+                &["IN XML", "IN XML NODDLTEXT", "STATIC", "DYNAMIC"],
+            ),
+            (
+                Vertica,
+                &[
+                    "LOCAL",
+                    "VERBOSE",
+                    "JSON",
+                    "ANNOTATED",
+                    "LOCAL VERBOSE JSON ANNOTATED",
+                ],
+            ),
+            (TSQL, &["WITH_RECOMMENDATIONS"]),
+        ];
+        for &(dialect, forms) in cases {
+            for form in forms {
+                let sql = format!("EXPLAIN {form} SELECT 1");
+                let node = check(dialect, &sql);
+                assert!(!node.options.is_empty(), "{sql}");
+                assert!(
+                    matches!(node.statement(), Some(Expression::Select(_))),
+                    "{dialect:?}: {sql}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn existing_plan_and_object_targets_are_explicit() {
+        for dialect in [MySQL, TiDB] {
+            let node = check(dialect, "EXPLAIN FORMAT=JSON FOR CONNECTION 42");
+            assert!(matches!(node.target, ExplainTarget::Connection(_)));
+            assert_eq!(node.execution_mode(), ExplainExecution::InspectExisting);
+        }
+        for sql in [
+            "EXPLAIN PLAN FOR SQL PLAN CACHE ENTRY 42",
+            "EXPLAIN PLAN SET STATEMENT_NAME='probe' FOR SQL PLAN CACHE ENTRY 42 VARIANT 3",
+        ] {
+            let node = check(HANA, sql);
+            assert!(matches!(node.target, ExplainTarget::PlanCache { .. }));
+            assert_eq!(node.execution_mode(), ExplainExecution::InspectExisting);
+        }
+        for target in ["VIEW v", "MATERIALIZED VIEW v", "INDEX i"] {
+            let node = check(Materialize, &format!("EXPLAIN OPTIMIZED PLAN FOR {target}"));
+            assert!(matches!(node.target, ExplainTarget::Object { .. }));
+        }
+        let node = check(ClickHouse, "EXPLAIN CURRENT TRANSACTION");
+        assert_eq!(node.target, ExplainTarget::CurrentTransaction);
+        let node = check(ClickHouse, "EXPLAIN TABLE OVERRIDE mysql('host', 'db', 't', 'u', 'p') COLUMNS (id UInt64) ORDER BY id");
+        assert!(matches!(node.target, ExplainTarget::TableOverride { .. }));
+    }
+
+    #[test]
+    fn materialize_analysis_inspects_existing_dataflows() {
+        for sql in [
+            "EXPLAIN ANALYZE CPU FOR INDEX i",
+            "EXPLAIN ANALYZE MEMORY FOR MATERIALIZED VIEW v",
+            "EXPLAIN ANALYZE CPU, MEMORY WITH SKEW FOR INDEX i AS SQL",
+            "EXPLAIN ANALYZE MEMORY, CPU FOR INDEX i",
+            "EXPLAIN ANALYZE HINTS FOR MATERIALIZED VIEW v",
+            "EXPLAIN ANALYZE CLUSTER CPU, MEMORY WITH SKEW",
+            "EXPLAIN ANALYZE CLUSTER MEMORY AS SQL",
+            "EXPLAIN INDEX i",
+            "EXPLAIN MATERIALIZED VIEW v",
+            "EXPLAIN PHYSICAL PLAN AS VERBOSE TEXT FOR INDEX i",
+        ] {
+            let node = check(Materialize, sql);
+            assert_eq!(
+                node.execution_mode(),
+                ExplainExecution::InspectExisting,
+                "{sql}"
+            );
+            assert_eq!(node.as_sql, sql.ends_with("AS SQL"), "{sql}");
+            assert!(polyglot_sql::transpile(sql, Materialize, PostgreSQL).is_err());
+        }
+    }
+
+    #[test]
+    fn mysql_aliases_do_not_conflate_table_and_query_descriptions() {
+        for dialect in [MySQL, TiDB, Doris, StarRocks, SingleStore] {
+            for verb in ["EXPLAIN", "DESCRIBE", "DESC"] {
+                check(dialect, &format!("{verb} SELECT * FROM t"));
+                let ast = Dialect::get(dialect).parse(&format!("{verb} t")).unwrap();
+                assert!(
+                    matches!(&ast[0], Expression::Describe(_)),
+                    "{dialect:?}: {verb} t"
+                );
+                for table in ["`analyze`", "format.t"] {
+                    let ast = Dialect::get(dialect)
+                        .parse(&format!("{verb} {table}"))
+                        .unwrap();
+                    assert!(matches!(&ast[0], Expression::Describe(_)));
+                }
+            }
+        }
+        for dialect in [DuckDB, Snowflake, Spark, Databricks] {
+            let ast = Dialect::get(dialect).parse("DESCRIBE SELECT 1").unwrap();
+            assert!(matches!(&ast[0], Expression::Describe(_)));
+        }
+    }
+
+    #[test]
+    fn writes_from_first_and_statement_boundaries_stay_structured() {
+        for (dialect, sql, kind) in [
+            (DuckDB, "EXPLAIN FROM t SELECT x", "select"),
+            (DuckDB, "EXPLAIN ANALYZE UPDATE t SET x = 1", "update"),
+            (SQLite, "EXPLAIN QUERY PLAN DELETE FROM t", "delete"),
+            (
+                Snowflake,
+                "EXPLAIN USING JSON INSERT INTO t SELECT 1",
+                "insert",
+            ),
+            (MySQL, "EXPLAIN DELETE FROM t", "delete"),
+            (Oracle, "EXPLAIN PLAN FOR UPDATE t SET x = 1", "update"),
+            (HANA, "EXPLAIN PLAN FOR CALL p()", "call"),
+            (Athena, "EXPLAIN ANALYZE INSERT INTO t SELECT 1", "insert"),
+            (
+                Redshift,
+                "EXPLAIN CREATE TABLE t AS SELECT 1 AS x",
+                "create_table",
+            ),
+        ] {
+            assert_eq!(
+                check(dialect, sql).statement().unwrap().variant_name(),
+                kind,
+                "{sql}"
+            );
+        }
+        let ast = Dialect::get(DuckDB)
+            .parse("EXPLAIN SELECT 1; SELECT 2")
+            .unwrap();
+        assert_eq!(ast.len(), 2);
+        assert!(matches!(&ast[0], Expression::Explain(_)));
+        assert!(matches!(&ast[1], Expression::Select(_)));
+    }
+
+    #[test]
+    fn related_dialects_preserve_shared_plan_modes() {
+        assert_eq!(
+            transpile("EXPLAIN FORMATTED SELECT 1", Spark, Databricks),
+            "EXPLAIN FORMATTED SELECT 1"
+        );
+        assert_eq!(
+            transpile(
+                "EXPLAIN (TYPE DISTRIBUTED, FORMAT JSON) SELECT 1",
+                Presto,
+                Trino
+            ),
+            "EXPLAIN (TYPE DISTRIBUTED, FORMAT JSON) SELECT 1"
+        );
+        assert!(
+            polyglot_sql::transpile("EXPLAIN QUERY PLAN SELECT 1", SQLite, PostgreSQL).is_err()
+        );
+        assert!(polyglot_sql::transpile("EXPLAIN COST SELECT 1", Spark, DuckDB).is_err());
+    }
+
+    #[test]
+    fn duckdb_analyze_false_still_executes() {
+        let node = check(DuckDB, "EXPLAIN (ANALYZE FALSE) UPDATE t SET x = x + 1");
+        assert_eq!(node.options[0].kind, ExplainOptionKind::Analyze);
+        assert_eq!(node.options[0].boolean_value(), Some(false));
+        assert_eq!(node.execution_mode(), ExplainExecution::Executes);
+    }
 }

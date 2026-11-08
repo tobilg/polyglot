@@ -13,6 +13,11 @@ export type { Cast } from '../../generated/Cast';
 export type { Column } from '../../generated/Column';
 export type { DataType } from '../../generated/DataType';
 export type { Delete } from '../../generated/Delete';
+export type { Explain } from '../../generated/Explain';
+export type { ExplainOption } from '../../generated/ExplainOption';
+export type { ExplainOptionKind } from '../../generated/ExplainOptionKind';
+export type { ExplainOptionSyntax } from '../../generated/ExplainOptionSyntax';
+export type { ExplainTarget } from '../../generated/ExplainTarget';
 // Re-export specific commonly-used types for convenience
 export type { Expression } from '../../generated/Expression';
 export type { From } from '../../generated/From';

@@ -1,8 +1,220 @@
-//! Preserve DuckDB's type-dependent `//` semantics before target rewrites.
+//! Preserve DuckDB source semantics before target rewrites.
 
 use super::scalar::{expression_numeric_kind, NumericKind};
 use super::*;
-use crate::expressions::RoundFunc;
+use crate::expressions::{Annotated, DateTimeField, DateTruncFunc, ParameterStyle, RoundFunc};
+
+fn bigquery_conversion_error(feature: impl Into<String>) -> crate::error::Error {
+    crate::error::Error::unsupported(feature, "BigQuery")
+}
+
+/// Resolve source semantics before function renames or target casts erase them.
+pub(in crate::dialects) fn prepare_bigquery_conversion(
+    expr: Expression,
+    source: DialectType,
+    target: DialectType,
+    strict: bool,
+) -> Result<Expression> {
+    if source != DialectType::DuckDB || target != DialectType::BigQuery {
+        return Ok(expr);
+    }
+
+    use crate::traversal::ExpressionWalk;
+    let mut anonymous = false;
+    let mut numbered = false;
+    let mut named = false;
+    for node in expr.dfs() {
+        match node {
+            Expression::Placeholder(_) => anonymous = true,
+            Expression::Parameter(p) => match p.style {
+                ParameterStyle::Question => anonymous = true,
+                ParameterStyle::Dollar | ParameterStyle::DoubleDollar => {
+                    numbered |= p.index.is_some();
+                    named |= p.name.is_some();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    if anonymous && (numbered || named) {
+        return Err(bigquery_conversion_error(
+            "DuckDB queries mixing ? and $ parameters; use only numbered $ parameters or only ? placeholders",
+        ));
+    }
+    if numbered && named {
+        return Err(bigquery_conversion_error(
+            "DuckDB queries mixing numbered and named $ parameters",
+        ));
+    }
+
+    crate::traversal::transform_all(expr, &|expr| {
+        let (trunc, comments) = match expr {
+            Expression::Function(mut f)
+                if f.qualified_name.is_empty()
+                    && f.source_dialect.is_none()
+                    && (f.name.eq_ignore_ascii_case("DATE_TRUNC")
+                        || f.name.eq_ignore_ascii_case("DATETRUNC")) =>
+            {
+                if f.args.len() != 2 {
+                    return Err(bigquery_conversion_error(
+                        "DuckDB DATE_TRUNC requires exactly two arguments",
+                    ));
+                }
+                let unit = duckdb_trunc_unit(&f.args[0])?;
+                let this = f.args.pop().unwrap();
+                (DateTruncFunc { this, unit }, f.trailing_comments)
+            }
+            Expression::DateTrunc(f) | Expression::TimestampTrunc(f) => (*f, Vec::new()),
+            other => return Ok(other),
+        };
+        let result = normalize_bigquery_trunc(trunc, strict)?;
+        Ok(if comments.is_empty() {
+            result
+        } else {
+            Expression::Annotated(Box::new(Annotated {
+                this: result,
+                trailing_comments: comments,
+            }))
+        })
+    })
+}
+
+fn duckdb_trunc_unit(expr: &Expression) -> Result<DateTimeField> {
+    match expr {
+        Expression::Literal(literal) => {
+            if let Literal::String(unit) = literal.as_ref() {
+                return duckdb_trunc_unit_name(unit);
+            }
+        }
+        Expression::Paren(p) => return duckdb_trunc_unit(&p.this),
+        Expression::Annotated(a) => return duckdb_trunc_unit(&a.this),
+        _ => {}
+    }
+    Err(bigquery_conversion_error(
+        "DuckDB DATE_TRUNC with a dynamic granularity; BigQuery requires a constant date part",
+    ))
+}
+
+fn duckdb_trunc_unit_name(unit: &str) -> Result<DateTimeField> {
+    use DateTimeField::*;
+    Ok(match unit.to_ascii_lowercase().as_str() {
+        "year" | "years" | "yr" | "yrs" | "y" => Year,
+        "isoyear" => Custom("ISOYEAR".into()),
+        "quarter" | "quarters" => Quarter,
+        "month" | "months" | "mon" | "mons" => Month,
+        "week" | "weeks" | "w" => WeekWithModifier("MONDAY".into()),
+        "day" | "days" | "d" | "dayofmonth" => Day,
+        "hour" | "hours" | "hr" | "hrs" | "h" => Hour,
+        "minute" | "minutes" | "min" | "mins" | "m" => Minute,
+        "second" | "seconds" | "sec" | "secs" | "s" => Second,
+        "millisecond" | "milliseconds" | "ms" | "msec" | "msecs" | "msecond" | "mseconds" => {
+            Millisecond
+        }
+        "microsecond" | "microseconds" | "us" | "usec" | "usecs" | "usecond" | "useconds" => {
+            Microsecond
+        }
+        _ => {
+            return Err(bigquery_conversion_error(format!(
+                "DuckDB DATE_TRUNC granularity {unit:?}"
+            )))
+        }
+    })
+}
+
+fn trunc_input_type(expr: &Expression) -> Option<DataType> {
+    match expr {
+        Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => {
+            Some(c.to.clone())
+        }
+        Expression::Paren(p) => trunc_input_type(&p.this),
+        Expression::Annotated(a) => trunc_input_type(&a.this),
+        Expression::Interval(_) => Some(DataType::Interval {
+            unit: None,
+            to: None,
+        }),
+        Expression::Literal(literal) => match literal.as_ref() {
+            Literal::Date(_) => Some(DataType::Date),
+            Literal::Timestamp(_) | Literal::Datetime(_) => Some(DataType::Timestamp {
+                precision: None,
+                timezone: false,
+            }),
+            _ => None,
+        },
+        Expression::CurrentDate(_) => Some(DataType::Date),
+        Expression::Function(f) if f.qualified_name.is_empty() && f.args.is_empty() => {
+            match f.name.to_ascii_uppercase().as_str() {
+                "CURRENT_DATE" | "TODAY" => Some(DataType::Date),
+                "CURRENT_TIMESTAMP" | "NOW" | "GET_CURRENT_TIMESTAMP" | "TRANSACTION_TIMESTAMP" => {
+                    Some(DataType::Timestamp {
+                        precision: None,
+                        timezone: true,
+                    })
+                }
+                _ => f.inferred_type.clone(),
+            }
+        }
+        Expression::CurrentTimestamp(_) => Some(DataType::Timestamp {
+            precision: None,
+            timezone: true,
+        }),
+        Expression::Localtimestamp(_) => Some(DataType::Timestamp {
+            precision: None,
+            timezone: false,
+        }),
+        Expression::DateTrunc(f) | Expression::TimestampTrunc(f) => trunc_input_type(&f.this),
+        other => other.inferred_type().cloned(),
+    }
+}
+
+fn normalize_bigquery_trunc(mut trunc: DateTruncFunc, strict: bool) -> Result<Expression> {
+    trunc.unit = match trunc.unit {
+        DateTimeField::Week => DateTimeField::WeekWithModifier("MONDAY".into()),
+        DateTimeField::Custom(unit) => duckdb_trunc_unit_name(&unit)?,
+        unit @ (DateTimeField::Year
+        | DateTimeField::Quarter
+        | DateTimeField::Month
+        | DateTimeField::WeekWithModifier(_)
+        | DateTimeField::Day
+        | DateTimeField::Hour
+        | DateTimeField::Minute
+        | DateTimeField::Second
+        | DateTimeField::Millisecond
+        | DateTimeField::Microsecond) => unit,
+        unit => {
+            return Err(bigquery_conversion_error(format!(
+                "DuckDB DATE_TRUNC granularity {unit:?}"
+            )))
+        }
+    };
+    match trunc_input_type(&trunc.this) {
+        Some(DataType::Date) => {
+            // DuckDB returns a timestamp even for DATE inputs. Its timestamp
+            // without timezone maps to BigQuery DATETIME, including sub-day units.
+            trunc.this = super::operators::cast_expr(
+                trunc.this,
+                DataType::Timestamp {
+                    precision: None,
+                    timezone: false,
+                },
+            );
+        }
+        Some(DataType::Timestamp { timezone: true, .. }) if strict => {
+            return Err(bigquery_conversion_error(
+                "DuckDB DATE_TRUNC on TIMESTAMPTZ depends on the session TimeZone",
+            ));
+        }
+        Some(DataType::Timestamp { .. }) => {}
+        Some(_) => return Err(bigquery_conversion_error("DuckDB DATE_TRUNC operand type")),
+        None if strict => {
+            return Err(bigquery_conversion_error(
+                "DuckDB DATE_TRUNC with an unresolved operand type; use an explicit DATE or TIMESTAMP cast",
+            ));
+        }
+        None => {}
+    }
+    Ok(Expression::DateTrunc(Box::new(trunc)))
+}
 
 fn combine(left: NumericKind, right: NumericKind) -> NumericKind {
     use NumericKind::*;
@@ -269,4 +481,41 @@ pub(in crate::dialects) fn prepare_integer_division(
         }
         Ok(Expression::IntDiv(division))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bigquery_truncation_normalizes_typed_nodes() {
+        for timestamp_trunc in [false, true] {
+            let trunc = Box::new(DateTruncFunc {
+                this: Expression::Cast(Box::new(Cast {
+                    this: Expression::string("2024-03-13"),
+                    to: DataType::Date,
+                    trailing_comments: Vec::new(),
+                    double_colon_syntax: false,
+                    format: None,
+                    default: None,
+                    inferred_type: None,
+                })),
+                unit: DateTimeField::Week,
+            });
+            let expr = if timestamp_trunc {
+                Expression::TimestampTrunc(trunc)
+            } else {
+                Expression::DateTrunc(trunc)
+            };
+            let expr =
+                prepare_bigquery_conversion(expr, DialectType::DuckDB, DialectType::BigQuery, true)
+                    .unwrap();
+            assert_eq!(
+                Dialect::get(DialectType::BigQuery)
+                    .generate_with_source(&expr, DialectType::DuckDB)
+                    .unwrap(),
+                "DATE_TRUNC(CAST(CAST('2024-03-13' AS DATE) AS DATETIME), WEEK(MONDAY))"
+            );
+        }
+    }
 }

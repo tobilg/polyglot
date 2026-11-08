@@ -835,3 +835,34 @@ fn qualify_rebinds_distinct_on_expressions_to_outer_outputs() {
         "{output}"
     );
 }
+
+#[test]
+fn explain_children_participate_in_walks_and_transformations() {
+    use polyglot_sql::expressions::{ExplainExecution, ExplainTarget};
+    let sql = "EXPLAIN (ANALYZE FALSE, FORMAT JSON) WITH changed AS (UPDATE src.t SET x = 1 RETURNING x) SELECT x FROM changed";
+    let ast = parse_one_dialect(sql, DialectType::PostgreSQL);
+    assert!(ast.dfs().any(|n| matches!(n, Expression::Update(_))));
+    let transformed =
+        transform_recursive(ast, &|node| Ok(rename_predicate_children(node))).unwrap();
+    let Expression::Explain(explain) = &transformed else {
+        panic!("Expected Explain")
+    };
+    assert_eq!(explain.execution_mode(), ExplainExecution::PlanOnly);
+    assert!(matches!(explain.target, ExplainTarget::Statement(_)));
+    let output = generate_with_dialect(&transformed, DialectType::PostgreSQL);
+    assert!(output.contains("UPDATE \"dst\".t"), "{output}");
+    assert!(output.contains("SELECT lhs"), "{output}");
+    // Dialect transformations must also reach functions inside the explained query.
+    let output = polyglot_sql::transpile(
+        "EXPLAIN SELECT IFNULL(x, 1) FROM t",
+        DialectType::MySQL,
+        DialectType::PostgreSQL,
+    )
+    .unwrap();
+    assert_eq!(output, ["EXPLAIN SELECT COALESCE(x, 1) FROM t"]);
+    let ast = parse_one_dialect(
+        "SELECT * FROM (EXPLAIN VIRTUAL SELECT * FROM virtual_table) AS plan",
+        DialectType::Exasol,
+    );
+    assert!(ast.dfs().any(|n| matches!(n, Expression::Explain(_))));
+}

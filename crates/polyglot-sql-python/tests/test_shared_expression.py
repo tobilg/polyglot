@@ -40,3 +40,22 @@ def test_find_view_does_not_require_original_python_wrapper():
     gc.collect()
     assert child.this.name == "x"
     assert child.to_dict()["add"]["left"]["column"]["name"]["name"] == "x"
+
+
+@pytest.mark.parametrize(
+    "dialect,schema_type",
+    [
+        ("postgres", sql.Describe),
+        ("duckdb", sql.Describe),
+        ("mysql", sql.Describe),
+        ("clickhouse", sql.Command),
+    ],
+)
+def test_explain_has_distinct_type_and_walkable_statement(dialect, schema_type):
+    root = sql.parse_one("EXPLAIN SELECT x FROM t", dialect)
+    assert isinstance(root, sql.Explain)
+    assert not isinstance(root, sql.Describe)
+    assert isinstance(root.find(sql.Select), sql.Select)
+    assert root.find(sql.Table).name == "t"
+    assert "explain" in root.to_dict()
+    assert isinstance(sql.parse_one("DESCRIBE t", dialect), schema_type)

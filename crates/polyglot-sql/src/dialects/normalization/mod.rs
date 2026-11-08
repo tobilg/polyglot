@@ -3424,15 +3424,6 @@ pub(super) fn normalize(
                 {
                     Action::Types(types::Action::SparkDateFuncCast)
                 }
-                // $parameter -> @parameter for BigQuery
-                Expression::Parameter(ref p)
-                    if matches!(target, DialectType::BigQuery)
-                        && matches!(source, DialectType::DuckDB)
-                        && (p.style == crate::expressions::ParameterStyle::Dollar
-                            || p.style == crate::expressions::ParameterStyle::DoubleDollar) =>
-                {
-                    Action::Operators(operators::Action::DollarParamConvert)
-                }
                 // EscapeString literal: normalize literal newlines to \n
                 Expression::Literal(lit) if matches!(lit.as_ref(), Literal::EscapeString(ref s) if s.contains('\n') || s.contains('\r') || s.contains('\t'))
                     =>

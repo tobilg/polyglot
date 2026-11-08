@@ -294,6 +294,8 @@ test-rust-verify-core:
 	@cargo test -p polyglot-sql --test deep_nesting_regression
 	@cargo test -p polyglot-sql --test transform_regression
 	@cargo test -p polyglot-sql --test fixture_update_regression
+	@cargo test -p polyglot-sql --test clickhouse_regression
+	@cargo test -p polyglot-sql --test postgres_explain_options
 	@cargo test -p polyglot-sql --test dialect_matrix
 	@cargo test -p polyglot-sql --test duckdb_order_by_all
 	@cargo test -p polyglot-sql --test duckdb_integer_division

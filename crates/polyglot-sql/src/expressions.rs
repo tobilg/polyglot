@@ -33,6 +33,8 @@
 use crate::tokens::Span;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+mod explain;
+pub use explain::*;
 #[cfg(feature = "bindings")]
 use ts_rs::TS;
 
@@ -618,6 +620,7 @@ pub enum Expression {
     CreateType(Box<CreateType>),
     DropType(Box<DropType>),
     Describe(Box<Describe>),
+    Explain(Box<Explain>),
     Show(Box<Show>),
 
     // Transaction and other commands
@@ -1282,6 +1285,7 @@ impl Expression {
             | Expression::LoadData(_)
             | Expression::Pragma(_)
             | Expression::Describe(_)
+            | Expression::Explain(_)
             | Expression::Show(_)
             | Expression::Kill(_)
             | Expression::Prepare(_)
@@ -2347,6 +2351,7 @@ impl Expression {
             Expression::CreateType(_) => "create_type",
             Expression::DropType(_) => "drop_type",
             Expression::Describe(_) => "describe",
+            Expression::Explain(_) => "explain",
             Expression::Show(_) => "show",
             Expression::Command(_) => "command",
             Expression::TryCatch(_) => "try_catch",
@@ -11111,7 +11116,7 @@ impl DropType {
     }
 }
 
-/// DESCRIBE statement - shows table structure or query plan
+/// DESCRIBE statement - describes schema or query result columns.
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Describe {

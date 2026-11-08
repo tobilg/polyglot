@@ -623,3 +623,28 @@ fn complete_transform_handles_deep_typed_function_chains() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn explain_fragment_parsers_share_depth_budget_without_raw_fallback() {
+    use polyglot_sql::{parse_one_with_options, ParseOptions};
+    for dialect in [
+        DialectType::PostgreSQL,
+        DialectType::DuckDB,
+        DialectType::ClickHouse,
+    ] {
+        let sql = format!("{}SELECT 1", "EXPLAIN ".repeat(20));
+        let options = ParseOptions {
+            complexity_guard: Some(ComplexityGuardOptions {
+                max_parser_depth: Some(12),
+                ..Default::default()
+            }),
+        };
+        let error = parse_one_with_options(&sql, dialect, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("E_GUARD_PARSER_DEPTH_EXCEEDED"),
+            "{dialect:?}: {error}"
+        );
+    }
+}

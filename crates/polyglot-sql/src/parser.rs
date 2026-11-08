@@ -33,6 +33,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
+mod explain;
 mod pipes;
 mod routines;
 
@@ -1616,19 +1617,8 @@ impl Parser {
             {
                 self.fallback_to_command(statement_start)
             }
-            // ClickHouse EXPLAIN has many subforms. Preserve it verbatim for coverage.
-            TokenType::Var
-                if self.peek_text().eq_ignore_ascii_case("EXPLAIN")
-                    && matches!(
-                        self.config.dialect,
-                        Some(crate::dialects::DialectType::ClickHouse)
-                    ) =>
-            {
-                self.fallback_to_command(statement_start)
-            }
-            // EXPLAIN is treated as DESCRIBE (MySQL maps EXPLAIN -> DESCRIBE)
             TokenType::Var if self.peek_text().eq_ignore_ascii_case("EXPLAIN") => {
-                self.parse_describe()
+                self.parse_explain()
             }
             // LOCK TABLES / UNLOCK TABLES (MySQL)
             TokenType::Var
@@ -1993,7 +1983,7 @@ impl Parser {
                             self.config.dialect,
                             Some(crate::dialects::DialectType::ClickHouse)
                         ) {
-                        self.parse_clickhouse_command_until_rparen()?
+                        self.parse_explain()?
                     } else {
                         self.parse_statement()?
                     };
@@ -4934,7 +4924,7 @@ impl Parser {
                 ) && self.check(TokenType::Var)
                     && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
                 {
-                    self.parse_clickhouse_command_until_rparen()?
+                    self.parse_explain()?
                 } else {
                     self.parse_statement()?
                 };
@@ -25398,81 +25388,14 @@ impl Parser {
 
     /// Parse DESCRIBE statement
     /// DESCRIBE [EXTENDED|FORMATTED|ANALYZE] <table_or_query>
-    /// Also handles EXPLAIN (parsed as Describe)
+    /// MySQL query-plan aliases dispatch to the dedicated EXPLAIN parser.
     fn parse_describe(&mut self) -> Result<Expression> {
-        // Accept DESCRIBE, DESC, and EXPLAIN (Var token)
-        // Capture leading comments from the first token
-        let mut is_explain = false;
-        let leading_comments = if self.check(TokenType::Describe) {
-            let token = self.advance()?;
-            token.comments
-        } else if self.check(TokenType::Desc) {
-            let token = self.advance()?;
-            token.comments
-        } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("EXPLAIN") {
-            is_explain = true;
-            let token = self.advance()?; // consume EXPLAIN
-            token.comments
-        } else {
-            return Err(self.parse_error("Expected DESCRIBE, DESC, or EXPLAIN"));
-        };
-
-        // PostgreSQL-family: EXPLAIN ( option [, ...] ) statement
-        // e.g. EXPLAIN (VERBOSE, COSTS OFF, FORMAT JSON) SELECT ...
-        // These are planner/output directives (COSTS, BUFFERS, VERBOSE, FORMAT,
-        // SETTINGS, WAL, TIMING, SUMMARY, MEMORY, GENERIC_PLAN, SERIALIZE) with no
-        // cross-dialect meaning, so they are parsed and discarded here - consistent
-        // with the way EXPLAIN is normalized to DESCRIBE. ANALYZE is folded into the
-        // DESCRIBE style below so `EXPLAIN (ANALYZE) ...` matches bare `EXPLAIN ANALYZE ...`.
-        // A parenthesized query (`EXPLAIN (SELECT ...)`, `EXPLAIN (VALUES ...)`,
-        // `EXPLAIN (TABLE t)`) is left for the target parser; PostgreSQL option names
-        // must be non-reserved words, so these keywords cannot start an option list.
-        let mut analyze_option = false;
-        if is_explain
-            && self.check(TokenType::LParen)
-            && matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::PostgreSQL)
-                    | Some(crate::dialects::DialectType::CockroachDB)
-                    | Some(crate::dialects::DialectType::RisingWave)
-                    | Some(crate::dialects::DialectType::Materialize)
-            )
-            && !matches!(
-                self.peek_nth(1).map(|t| t.token_type),
-                Some(TokenType::Select)
-                    | Some(TokenType::With)
-                    | Some(TokenType::LParen)
-                    | Some(TokenType::Values)
-                    | Some(TokenType::Table)
-            )
-        {
-            self.advance()?; // consume '('
-            loop {
-                if self.check(TokenType::RParen) || self.is_at_end() {
-                    break;
-                }
-                // option name (identifier or keyword, e.g. ANALYZE, VERBOSE, FORMAT)
-                let name = self.advance()?.text.to_ascii_uppercase();
-                // optional single-token argument (boolean, or a word for FORMAT/SERIALIZE);
-                // every PostgreSQL explain option argument is a single token today —
-                // revisit if PG ever grows a multi-token option argument
-                let value = if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) {
-                    Some(self.advance()?.text.to_ascii_uppercase())
-                } else {
-                    None
-                };
-                if name == "ANALYZE" {
-                    analyze_option = match value.as_deref() {
-                        None => true,
-                        Some(v) => matches!(v, "TRUE" | "ON" | "1"),
-                    };
-                }
-                if !self.match_token(TokenType::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenType::RParen)?;
+        // In the MySQL family DESCRIBE/DESC also alias query-plan EXPLAIN.
+        // Table inspection remains a Describe node.
+        if self.is_mysql_explain_alias() {
+            return self.parse_explain();
         }
+        let leading_comments = self.advance()?.comments;
 
         // Check for EXTENDED or FORMATTED keywords
         let extended = self.match_identifier("EXTENDED");
@@ -25546,14 +25469,6 @@ impl Parser {
             Some("DETAIL".to_string())
         } else {
             None
-        };
-
-        // Fold a parenthesized ANALYZE option (EXPLAIN (ANALYZE) ...) into the
-        // DESCRIBE style, matching bare `EXPLAIN ANALYZE ...`.
-        let style = if analyze_option && style.is_none() {
-            Some("ANALYZE".to_string())
-        } else {
-            style
         };
 
         // Check for object kind like SEMANTIC VIEW, TABLE, INPUT, OUTPUT, etc.
@@ -35043,29 +34958,7 @@ impl Parser {
         }
 
         // Check if this is a subquery (SELECT, WITH, DuckDB FROM-first, or ClickHouse EXPLAIN)
-        let is_explain_subquery = self.check(TokenType::Var)
-            && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
-            && self.peek_nth(1).map_or(false, |t| {
-                matches!(
-                    t.token_type,
-                    TokenType::Select
-                        | TokenType::Insert
-                        | TokenType::Create
-                        | TokenType::Alter
-                        | TokenType::Drop
-                        | TokenType::Set
-                        | TokenType::System
-                        | TokenType::Table
-                ) || matches!(
-                    t.text(self.source.as_deref().unwrap_or_default())
-                        .to_ascii_uppercase()
-                        .as_str(),
-                    "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY"
-                ) || (t.token_type == TokenType::Var
-                    && self
-                        .peek_nth(2)
-                        .map_or(false, |t2| t2.token_type == TokenType::Eq))
-            });
+        let is_explain_subquery = self.check_keyword_text("EXPLAIN");
         // ClickHouse: (from, to, ...) -> body is a tuple-lambda with keyword params
         // Detect pattern: (keyword/ident, keyword/ident, ...) ->
         if matches!(
@@ -35164,7 +35057,7 @@ impl Parser {
             || is_explain_subquery
         {
             let query = if is_explain_subquery {
-                self.parse_clickhouse_command_until_rparen()?
+                self.parse_explain()?
             } else {
                 self.parse_statement()?
             };
@@ -49649,56 +49542,6 @@ impl Parser {
         }
     }
 
-    /// Preserve ClickHouse `(EXPLAIN ... SELECT ...)` subqueries as command text.
-    ///
-    /// `fallback_to_command` stops at semicolons, which is correct for statements
-    /// but wrong inside parenthesized FROM subqueries because it consumes the
-    /// closing paren and the outer query. This variant stops before the matching
-    /// top-level `)`, leaving it for the caller to consume.
-    fn parse_clickhouse_command_until_rparen(&mut self) -> Result<Expression> {
-        let start_index = self.current;
-        let start_span = self
-            .tokens
-            .get(start_index)
-            .map(|token| token.span.start)
-            .unwrap_or_default();
-
-        let mut depth = 0usize;
-        while !self.is_at_end() {
-            match self.peek().token_type {
-                TokenType::LParen => {
-                    depth += 1;
-                    self.skip();
-                }
-                TokenType::RParen if depth == 0 => break,
-                TokenType::RParen => {
-                    depth = depth.saturating_sub(1);
-                    self.skip();
-                }
-                TokenType::Semicolon if depth == 0 => break,
-                _ => self.skip(),
-            }
-        }
-
-        let end_span = if self.current > start_index {
-            self.tokens[self.current - 1].span.end
-        } else {
-            start_span
-        };
-
-        let command_text = if self.source.is_some() {
-            self.source_text_range(start_span, end_span)
-                .trim()
-                .to_string()
-        } else {
-            self.tokens_to_sql(start_index, self.current)
-        };
-
-        Ok(Expression::Command(Box::new(Command {
-            this: command_text,
-        })))
-    }
-
     /// Convert tokens to SQL for CREATE STAGE, normalizing FILE_FORMAT clause
     /// Transforms FILE_FORMAT='value' to FILE_FORMAT=(FORMAT_NAME='value')
     /// and FILE_FORMAT=schema.format to FILE_FORMAT=(FORMAT_NAME=schema.format)
@@ -60845,14 +60688,9 @@ impl Parser {
         }
 
         // Try to parse as subquery first
-        // ClickHouse also allows (EXPLAIN ...) as subquery
-        if matches!(
-            self.config.dialect,
-            Some(crate::dialects::DialectType::ClickHouse)
-        ) && self.check(TokenType::Var)
-            && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
-        {
-            let query = self.parse_clickhouse_command_until_rparen()?;
+        // ClickHouse and Exasol expose EXPLAIN results as a relation.
+        if self.check_keyword_text("EXPLAIN") {
+            let query = self.parse_explain()?;
             self.expect(TokenType::RParen)?;
             return Ok(Some(Expression::Subquery(Box::new(Subquery {
                 this: query,

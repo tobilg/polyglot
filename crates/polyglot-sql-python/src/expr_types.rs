@@ -469,6 +469,7 @@ define_expression_subclasses!(
     CreateType,
     DropType,
     Describe,
+    Explain,
     Show,
     Command,
     Kill,

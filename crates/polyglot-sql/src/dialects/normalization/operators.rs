@@ -17,7 +17,6 @@ pub(super) enum Action {
     MySQLSafeDivide,
     NullsOrdering,
     XorExpand,
-    DollarParamConvert,
     AnyToExists,
     RespectNullsConvert,
     BigQueryNullsOrdering,
@@ -606,23 +605,6 @@ pub(super) fn rewrite(
                     Ok(e)
                 }
             }
-            Action::DollarParamConvert => {
-                if let Expression::Parameter(p) = e {
-                    Ok(Expression::Parameter(Box::new(
-                        crate::expressions::Parameter {
-                            name: p.name,
-                            index: p.index,
-                            style: crate::expressions::ParameterStyle::At,
-                            quoted: p.quoted,
-                            string_quoted: p.string_quoted,
-                            expression: p.expression,
-                        },
-                    )))
-                } else {
-                    Ok(e)
-                }
-            }
-
             Action::AnyToExists => {
                 if let Expression::Any(q) = e {
                     if let Some(op) = q.op.clone() {

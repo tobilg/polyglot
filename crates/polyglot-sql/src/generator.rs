@@ -20,6 +20,7 @@ use crate::guard::{enforce_generate_ast, ComplexityGuardOptions};
 use crate::DialectType;
 use serde::{Deserialize, Serialize};
 
+mod explain;
 mod pipes;
 mod routines;
 
@@ -3924,6 +3925,7 @@ impl Generator {
             Expression::CreateType(ct) => self.generate_create_type(ct),
             Expression::DropType(dt) => self.generate_drop_type(dt),
             Expression::Describe(d) => self.generate_describe(d),
+            Expression::Explain(e) => self.generate_explain(e),
             Expression::Show(s) => self.generate_show(s),
 
             // CACHE/UNCACHE/LOAD TABLE (Spark/Hive)
@@ -23867,6 +23869,15 @@ impl Generator {
     }
 
     fn generate_date_trunc(&mut self, f: &DateTruncFunc) -> Result<()> {
+        if self.config.dialect == Some(DialectType::BigQuery) {
+            self.write_keyword("DATE_TRUNC");
+            self.write("(");
+            self.generate_expression(&f.this)?;
+            self.write(", ");
+            self.write_datetime_field(&f.unit);
+            self.write(")");
+            return Ok(());
+        }
         if matches!(
             self.config.dialect,
             Some(DialectType::TSQL) | Some(DialectType::Fabric)
@@ -26283,7 +26294,15 @@ impl Generator {
         // Parameter spelling is a rendering concern. Use the source dialect so
         // MySQL/TSQL @variables retain their meaning, and render nested BigQuery
         // parameters even in nodes outside the legacy dialect transform coverage.
-        let style = if self.config.source_dialect == Some(DialectType::BigQuery)
+        let duckdb_to_bigquery = self.config.source_dialect == Some(DialectType::DuckDB)
+            && self.config.dialect == Some(DialectType::BigQuery);
+        let style = if duckdb_to_bigquery
+            && matches!(
+                f.style,
+                ParameterStyle::Dollar | ParameterStyle::DoubleDollar
+            ) {
+            ParameterStyle::At
+        } else if self.config.source_dialect == Some(DialectType::BigQuery)
             && self.config.dialect == Some(DialectType::DuckDB)
             && f.style == ParameterStyle::At
         {
@@ -26339,7 +26358,10 @@ impl Generator {
             }
             ParameterStyle::At => {
                 self.write("@");
-                if let Some(ref name) = f.name {
+                if let Some(index) = f.index.filter(|_| duckdb_to_bigquery) {
+                    self.write("p");
+                    self.write(&index.to_string());
+                } else if let Some(ref name) = f.name {
                     if f.string_quoted {
                         self.write("'");
                         self.write(name);

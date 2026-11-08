@@ -1,106 +1,196 @@
-//! Regression tests for PostgreSQL's parenthesized `EXPLAIN ( option [, ...] )` form.
-//!
-//! PostgreSQL (and the PostgreSQL-compatible dialects CockroachDB, RisingWave and
-//! Materialize) accept `EXPLAIN ( VERBOSE, COSTS OFF, FORMAT JSON, ... ) <statement>`.
-//! These options are planner/output directives with no cross-dialect meaning, so they
-//! are parsed and discarded - consistent with the way `EXPLAIN` is normalized to
-//! `DESCRIBE`. The `ANALYZE` option is folded into the `DESCRIBE` style so that
-//! `EXPLAIN (ANALYZE) ...` matches bare `EXPLAIN ANALYZE ...`.
+//! EXPLAIN options are syntax and execution semantics, not disposable metadata.
+use polyglot_sql::expressions::{Explain, ExplainExecution, ExplainOptionKind, Expression};
+use polyglot_sql::{transpile, Dialect, DialectType};
 
-use polyglot_sql::{transpile, DialectType};
+fn explain(sql: &str) -> Explain {
+    let mut ast = Dialect::get(DialectType::PostgreSQL)
+        .parse(sql)
+        .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    let Expression::Explain(node) = ast.remove(0) else {
+        panic!("Expected Explain: {sql}")
+    };
+    *node
+}
 
 fn pg(sql: &str) -> String {
     transpile(sql, DialectType::PostgreSQL, DialectType::PostgreSQL)
-        .expect("PostgreSQL EXPLAIN should transpile")
+        .unwrap()
         .join("; ")
 }
 
 #[test]
-fn parenthesized_options_are_parsed_and_discarded() {
-    let cases = [
-        ("EXPLAIN (VERBOSE, COSTS OFF) SELECT 1", "DESCRIBE SELECT 1"),
-        ("EXPLAIN (FORMAT json) SELECT 1", "DESCRIBE SELECT 1"),
-        (
-            "EXPLAIN (VERBOSE, COSTS OFF) SELECT max(unique1) FROM tenk1",
-            "DESCRIBE SELECT MAX(unique1) FROM tenk1",
-        ),
-        (
-            "EXPLAIN (BUFFERS, SETTINGS, WAL, TIMING OFF, SUMMARY, GENERIC_PLAN) SELECT 1",
-            "DESCRIBE SELECT 1",
-        ),
-    ];
-    for (input, expected) in cases {
-        assert_eq!(pg(input), expected, "input: {input}");
-    }
+fn preserves_all_postgres_options_and_values() {
+    let sql = "EXPLAIN (ANALYZE FALSE, VERBOSE, COSTS OFF, BUFFERS ON, SETTINGS TRUE, WAL FALSE, TIMING 0, SUMMARY 1, MEMORY, GENERIC_PLAN OFF, SERIALIZE BINARY, FORMAT JSON) SELECT * FROM t";
+    assert_eq!(pg(sql), sql);
+    let node = explain(sql);
+    assert_eq!(node.options.len(), 12);
+    assert_eq!(node.execution_mode(), ExplainExecution::PlanOnly);
+    assert!(matches!(node.statement(), Some(Expression::Select(_))));
+    assert_eq!(node.options[0].boolean_value(), Some(false));
+    assert_eq!(node.options[10].kind, ExplainOptionKind::Serialize);
+    let ast = Expression::Explain(Box::new(node));
+    let json = serde_json::to_string(&ast).unwrap();
+    assert_eq!(serde_json::from_str::<Expression>(&json).unwrap(), ast);
 }
 
 #[test]
-fn analyze_option_folds_into_describe_style() {
-    // ANALYZE (with or without a truthy argument, in any position) behaves like bare
-    // `EXPLAIN ANALYZE`.
-    let cases = [
-        ("EXPLAIN (ANALYZE) SELECT 1", "DESCRIBE ANALYZE SELECT 1"),
-        (
-            "EXPLAIN (ANALYZE true) SELECT 1",
-            "DESCRIBE ANALYZE SELECT 1",
-        ),
-        ("EXPLAIN (ANALYZE ON) SELECT 1", "DESCRIBE ANALYZE SELECT 1"),
-        (
-            "EXPLAIN (COSTS OFF, ANALYZE) SELECT 1",
-            "DESCRIBE ANALYZE SELECT 1",
-        ),
-        (
-            "EXPLAIN (ANALYZE true, BUFFERS) SELECT max(a) FROM t",
-            "DESCRIBE ANALYZE SELECT MAX(a) FROM t",
-        ),
-    ];
-    for (input, expected) in cases {
-        assert_eq!(pg(input), expected, "input: {input}");
-    }
-}
-
-#[test]
-fn analyze_false_is_not_folded() {
-    assert_eq!(pg("EXPLAIN (ANALYZE false) SELECT 1"), "DESCRIBE SELECT 1");
-    assert_eq!(pg("EXPLAIN (ANALYZE off) SELECT 1"), "DESCRIBE SELECT 1");
-}
-
-#[test]
-fn bare_explain_is_unchanged() {
-    assert_eq!(pg("EXPLAIN SELECT 1"), "DESCRIBE SELECT 1");
-    assert_eq!(pg("EXPLAIN ANALYZE SELECT 1"), "DESCRIBE ANALYZE SELECT 1");
-}
-
-#[test]
-fn parenthesized_subquery_is_not_treated_as_options() {
-    // `EXPLAIN (SELECT ...)` must still be parsed as a parenthesized subquery target,
-    // not as an option list.
-    assert_eq!(pg("EXPLAIN (SELECT 1)"), "DESCRIBE (SELECT 1)");
-}
-
-#[test]
-fn options_transpile_to_clickhouse_without_error() {
-    // The primary motivation: PostgreSQL EXPLAIN statements must reach a target dialect
-    // (here ClickHouse) instead of failing at parse time.
-    let out = transpile(
-        "EXPLAIN (VERBOSE, COSTS OFF) SELECT max(unique1) FROM tenk1",
-        DialectType::PostgreSQL,
-        DialectType::ClickHouse,
-    )
-    .expect("PostgreSQL EXPLAIN (options) should transpile to ClickHouse");
-    assert_eq!(out, vec!["DESCRIBE SELECT max(unique1) FROM tenk1"]);
-}
-
-#[test]
-fn options_accepted_for_postgres_compatible_dialects() {
-    // CockroachDB / RisingWave / Materialize share the parenthesized EXPLAIN syntax.
-    for read in [
-        DialectType::CockroachDB,
-        DialectType::RisingWave,
-        DialectType::Materialize,
+fn analyze_execution_mode_includes_explicit_false_and_legacy_syntax() {
+    for (clause, executes) in [
+        ("", false),
+        ("ANALYZE", true),
+        ("ANALYZE VERBOSE", true),
+        ("VERBOSE", false),
+        ("(ANALYZE)", true),
+        ("(ANALYZE TRUE)", true),
+        ("(ANALYZE ON)", true),
+        ("(ANALYZE 1)", true),
+        ("(ANALYZE FALSE)", false),
+        ("(ANALYZE OFF)", false),
+        ("(ANALYZE 0)", false),
     ] {
-        let out = transpile("EXPLAIN (VERBOSE) SELECT 1", read, read)
-            .unwrap_or_else(|e| panic!("{read:?} EXPLAIN (options) should transpile: {e}"));
-        assert_eq!(out.len(), 1, "{read:?}");
+        let sql = format!("EXPLAIN {clause} SELECT 1");
+        assert_eq!(
+            explain(&sql).execution_mode(),
+            if executes {
+                ExplainExecution::Executes
+            } else {
+                ExplainExecution::PlanOnly
+            },
+            "{sql}"
+        );
+        let generated = pg(&sql);
+        assert_eq!(
+            explain(&generated).execution_mode(),
+            explain(&sql).execution_mode()
+        );
     }
+    assert!(Dialect::get(DialectType::PostgreSQL)
+        .parse("EXPLAIN (ANALYZE invalid) SELECT 1")
+        .is_err());
+    assert!(Dialect::get(DialectType::PostgreSQL)
+        .parse("EXPLAIN (VERBOSE FALSE extra) SELECT 1")
+        .is_err());
+}
+
+#[test]
+fn statement_targets_are_structured_including_writes_and_ctes() {
+    for (target, kind) in [
+        ("SELECT 1", "select"),
+        ("INSERT INTO t VALUES (1)", "insert"),
+        ("UPDATE t SET x = 1", "update"),
+        ("DELETE FROM t", "delete"),
+        (
+            "MERGE INTO t USING s ON t.x = s.x WHEN MATCHED THEN UPDATE SET x = s.x",
+            "merge",
+        ),
+        (
+            "WITH changed AS (UPDATE t SET x = 1 RETURNING x) SELECT * FROM changed",
+            "select",
+        ),
+        ("CREATE TABLE result AS SELECT 1 AS x", "create_table"),
+        ("VALUES (1), (2)", "values"),
+        ("TABLE t", "select"),
+        ("DECLARE c CURSOR FOR SELECT * FROM t", "declare"),
+        ("(SELECT 1)", "subquery"),
+        ("(VALUES (1))", "subquery"),
+        ("(TABLE t)", "subquery"),
+        ("EXECUTE prepared_query(1)", "execute"),
+    ] {
+        let sql = format!("EXPLAIN ANALYZE {target}");
+        let node = explain(&sql);
+        assert_eq!(node.statement().unwrap().variant_name(), kind, "{sql}");
+        assert_eq!(node.execution_mode(), ExplainExecution::Executes);
+        let generated = pg(&sql);
+        assert_eq!(
+            explain(&generated).statement().unwrap().variant_name(),
+            kind,
+            "{generated}"
+        );
+    }
+}
+
+#[test]
+fn explain_and_describe_have_distinct_ast_and_sql() {
+    let dialect = Dialect::get(DialectType::PostgreSQL);
+    let plans = dialect.parse("EXPLAIN SELECT 1").unwrap();
+    let columns = dialect.parse("DESCRIBE SELECT 1").unwrap();
+    assert_ne!(plans, columns);
+    assert_eq!(pg("EXPLAIN SELECT 1"), "EXPLAIN SELECT 1");
+    assert_eq!(pg("DESCRIBE SELECT 1"), "DESCRIBE SELECT 1");
+}
+
+#[test]
+fn cross_dialect_explain_preserves_execution_and_rejects_lossy_options() {
+    use DialectType::*;
+    assert_eq!(
+        transpile("EXPLAIN SELECT 1", PostgreSQL, DuckDB).unwrap(),
+        ["EXPLAIN SELECT 1"]
+    );
+    assert_eq!(
+        transpile("EXPLAIN ANALYZE SELECT 1", PostgreSQL, DuckDB).unwrap(),
+        ["EXPLAIN ANALYZE SELECT 1"]
+    );
+    // DuckDB enables ANALYZE by presence, even with an explicit FALSE argument.
+    assert_eq!(
+        transpile(
+            "EXPLAIN (ANALYZE FALSE, FORMAT JSON) SELECT 1",
+            PostgreSQL,
+            DuckDB
+        )
+        .unwrap(),
+        ["EXPLAIN (FORMAT JSON) SELECT 1"]
+    );
+    assert_eq!(
+        transpile(
+            "EXPLAIN (ANALYZE FALSE, FORMAT JSON) SELECT 1",
+            DuckDB,
+            PostgreSQL
+        )
+        .unwrap(),
+        ["EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1"]
+    );
+    assert!(transpile("EXPLAIN ANALYZE SELECT 1", PostgreSQL, Snowflake).is_err());
+    assert!(transpile("EXPLAIN (COSTS OFF) SELECT 1", PostgreSQL, DuckDB).is_err());
+    assert!(transpile(
+        "EXPLAIN (VERBOSE, COSTS OFF) SELECT 1",
+        PostgreSQL,
+        ClickHouse
+    )
+    .is_err());
+    assert_eq!(
+        transpile("EXPLAIN (FORMAT JSON) SELECT 1", PostgreSQL, Snowflake).unwrap(),
+        ["EXPLAIN USING JSON SELECT 1"]
+    );
+    assert_eq!(
+        transpile("EXPLAIN SELECT 1", PostgreSQL, Oracle).unwrap(),
+        ["EXPLAIN PLAN FOR SELECT 1"]
+    );
+    for target in [BigQuery, Fabric, Solr, Tableau, TSQL] {
+        assert!(
+            transpile("EXPLAIN SELECT 1", PostgreSQL, target).is_err(),
+            "{target:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_options_remain_visible_and_conservative() {
+    let node = explain("EXPLAIN (FUTURE_OPTION ON) SELECT 1");
+    assert_eq!(node.execution_mode(), ExplainExecution::Unknown);
+    assert_eq!(
+        pg("EXPLAIN (FUTURE_OPTION ON) SELECT 1"),
+        "EXPLAIN (FUTURE_OPTION ON) SELECT 1"
+    );
+    assert!(transpile(
+        "EXPLAIN (FUTURE_OPTION ON) SELECT 1",
+        DialectType::PostgreSQL,
+        DialectType::DuckDB
+    )
+    .is_err());
+    assert!(transpile(
+        "EXPLAIN ANALYZE FUTURE_EXTENSION value",
+        DialectType::ClickHouse,
+        DialectType::DuckDB,
+    )
+    .is_err());
 }

@@ -26,7 +26,7 @@ go get github.com/tobilg/polyglot/packages/go
 ```
 
 Go module releases use nested tags that match the root Polyglot release, for
-example `packages/go/v0.14.0`.
+example `packages/go/v0.14.1`.
 
 ## Native Library Setup
 
@@ -90,6 +90,13 @@ func main() {
 	fmt.Println(sql[0])
 }
 ```
+
+For DuckDB → BigQuery transpilation, `$1` becomes `@p1`, `$2` becomes `@p2`,
+and repeated references keep the same name. Supply the corresponding values as
+BigQuery named parameters `p1`, `p2`, etc.; `Transpile` does not remap binding
+values. Named DuckDB parameters retain their names, and queries using only `?`
+remain positional. Mixing `?` with `$` parameters, or numbered with named `$`
+parameters, returns an error.
 
 ## Immutable SQL Builders
 

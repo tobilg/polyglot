@@ -524,6 +524,7 @@ from polyglot_sql._polyglot_sql import (  # pyright: ignore[reportMissingImports
     Delete,
     DenseRank,
     Describe,
+    Explain,
     Detach,
     DictProperty,
     DictRange,

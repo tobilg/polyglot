@@ -891,7 +891,7 @@ where
     // semantics even though all physical children are visible to traversal APIs.
     fn uses_generated_dispatch(expression: &Expression) -> bool {
         match expression {
-            Expression::CreateTable(_) => true,
+            Expression::CreateTable(_) | Expression::Explain(_) => true,
             Expression::Select(select) => {
                 select.joins.is_empty()
                     && select.with.is_none()
@@ -3777,6 +3777,12 @@ impl Dialect {
                     expr,
                     self.dialect_type,
                     target,
+                )?;
+                let expr = normalization::duckdb::prepare_bigquery_conversion(
+                    expr,
+                    self.dialect_type,
+                    target,
+                    matches!(opts.unsupported_level, UnsupportedLevel::Raise | UnsupportedLevel::Immediate),
                 )?;
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser

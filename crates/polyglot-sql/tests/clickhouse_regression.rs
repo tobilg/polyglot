@@ -1,5 +1,5 @@
 use polyglot_sql::dialects::Dialect;
-use polyglot_sql::{parse, DialectType};
+use polyglot_sql::{parse, DialectType, ExpressionWalk};
 
 fn assert_clickhouse_parse(sql: &str) {
     let parsed = parse(sql, DialectType::ClickHouse).expect("ClickHouse SQL should parse");
@@ -428,4 +428,94 @@ fn clickhouse_native_string_alias_casts_keep_stable_nullability() {
             polyglot_sql::transpile(sql, DialectType::ClickHouse, DialectType::ClickHouse).unwrap();
         assert!(!output[0].contains("Nullable"), "{}", output[0]);
     }
+}
+
+#[test]
+fn explain_nested_queries_keep_structured_targets_and_outer_clauses() {
+    use polyglot_sql::expressions::{ExplainExecution, Expression};
+    for sql in [
+        "SELECT * FROM (EXPLAIN SELECT 1) AS plan WHERE 1 = 1 LIMIT 2",
+        "SELECT * FROM (EXPLAIN PIPELINE graph=1 SELECT number FROM numbers(10)) AS plan LIMIT 3",
+        "SELECT * FROM (EXPLAIN AST CREATE TABLE t (x Int32) ENGINE=Memory) AS plan LIMIT 4",
+        "SELECT * FROM (EXPLAIN SYNTAX SELECT * FROM (EXPLAIN SELECT 1)) AS plan LIMIT 5",
+    ] {
+        let ast = parse(sql, DialectType::ClickHouse).unwrap();
+        assert!(matches!(&ast[0], Expression::Select(_)));
+        let plans: Vec<_> = ast[0]
+            .dfs()
+            .filter_map(|node| match node {
+                Expression::Explain(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert!(!plans.is_empty(), "{sql}");
+        assert!(
+            plans.iter().all(|p| !matches!(
+                p.statement(),
+                Some(Expression::Command(_) | Expression::Raw(_))
+            )),
+            "{sql}"
+        );
+        let output = normalize_clickhouse(sql);
+        assert!(output.contains("LIMIT"), "{output}");
+        assert_clickhouse_normalized_roundtrip(sql);
+    }
+    let ast = parse(
+        "EXPLAIN PLAN actions=1 SELECT 1 FORMAT JSON",
+        DialectType::ClickHouse,
+    )
+    .unwrap();
+    let Expression::Explain(plan) = &ast[0] else {
+        panic!("Expected Explain")
+    };
+    assert_eq!(plan.output_format.as_ref().unwrap().name, "JSON");
+    assert!(matches!(plan.statement(), Some(Expression::Select(_))));
+    assert_clickhouse_normalized_roundtrip("EXPLAIN PLAN actions=1 SELECT 1 FORMAT JSON");
+    // Extensions unsupported by the statement parser remain explicit opaque targets.
+    // In a nested relation their fallback cannot swallow the outer WHERE/LIMIT.
+    let sql = "SELECT * FROM (EXPLAIN AST FUTURE_EXTENSION value) AS plan LIMIT 6";
+    let ast = parse(sql, DialectType::ClickHouse).unwrap();
+    let plan = ast[0]
+        .dfs()
+        .find_map(|n| match n {
+            Expression::Explain(e) => Some(e),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(plan.execution_mode(), ExplainExecution::Unknown);
+    assert!(normalize_clickhouse(sql).contains("LIMIT 6"));
+    assert_clickhouse_normalized_roundtrip(sql);
+}
+
+#[test]
+fn explain_parenthesized_explain_is_a_target_not_an_option_list() {
+    use polyglot_sql::expressions::Expression;
+    let sql = "EXPLAIN AST (EXPLAIN SYNTAX SELECT 1) FORMAT TSV";
+    let ast = parse(sql, DialectType::ClickHouse).unwrap();
+    assert_eq!(
+        ast[0]
+            .dfs()
+            .filter(|n| matches!(n, Expression::Explain(_)))
+            .count(),
+        2
+    );
+    assert_clickhouse_normalized_roundtrip(sql);
+}
+
+#[test]
+fn explain_table_override_preserves_all_clauses_and_output_format() {
+    use polyglot_sql::expressions::{ExplainTarget, Expression};
+    let sql = "EXPLAIN TABLE OVERRIDE mysql('host', 'db', 't', 'u', 'p') COLUMNS (id UInt64, created DateTime) ORDER BY id PARTITION BY toYYYYMM(created) PRIMARY KEY id SAMPLE BY id TTL created + INTERVAL 1 DAY FORMAT TSV";
+    let ast = parse(sql, DialectType::ClickHouse).unwrap();
+    let Expression::Explain(plan) = &ast[0] else {
+        panic!("Expected Explain")
+    };
+    let ExplainTarget::TableOverride { clauses, .. } = &plan.target else {
+        panic!("Expected TableOverride")
+    };
+    assert_eq!(clauses.len(), 6);
+    assert_eq!(plan.output_format.as_ref().unwrap().name, "TSV");
+    let output = normalize_clickhouse(sql);
+    assert_eq!(output.matches("TTL").count(), 1, "{output}");
+    assert_clickhouse_normalized_roundtrip(sql);
 }

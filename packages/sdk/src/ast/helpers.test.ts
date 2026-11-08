@@ -17,6 +17,34 @@ import {
 type IsAny<T> = 0 extends 1 & T ? true : false;
 
 describe('AST helper types', () => {
+  it('recognizes explain and traverses its statement and option payloads', () => {
+    const parsed = parse('SELECT a FROM t', Dialect.PostgreSQL);
+    if (!parsed.success) throw new Error(parsed.error);
+    const root: Expression = {
+      explain: {
+        source_dialect: 'postgresql',
+        target: { statement: parsed.ast[0] },
+        options: [
+          {
+            kind: 'analyze',
+            value: { boolean: { value: false } },
+            syntax: 'parenthesized',
+          },
+        ],
+        for_target: false,
+        output_format: null,
+        as_sql: false,
+        leading_comments: [],
+      },
+    };
+    expect(isExpressionType(root, 'explain')).toBe(true);
+    expect(isExpressionType(root, 'describe')).toBe(false);
+    expect(findByType(root, 'select')).toEqual(parsed.ast);
+    expect(findByType(root, 'boolean')).toEqual([
+      { boolean: { value: false } },
+    ]);
+  });
+
   it('exposes a typed, discriminated parse result', () => {
     expectTypeOf<
       IsAny<NonNullable<ParseResult['ast']>>

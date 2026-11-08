@@ -25,12 +25,12 @@ By default, `polyglot-sql` enables the full public API. Parser-only consumers ca
 disable default features and opt into only the dialect parsers they need:
 
 ```toml
-polyglot-sql = { version = "0.14.0", default-features = false }
+polyglot-sql = { version = "0.14.1", default-features = false }
 ```
 
 ```toml
 polyglot-sql = {
-    version = "0.14.0",
+    version = "0.14.1",
     default-features = false,
     features = ["dialect-clickhouse"],
 }
@@ -44,14 +44,14 @@ Examples:
 ```toml
 # Parse and generate SQL for one dialect.
 polyglot-sql = {
-    version = "0.14.0",
+    version = "0.14.1",
     default-features = false,
     features = ["generate", "dialect-clickhouse"],
 }
 
 # Cross-dialect transpilation.
 polyglot-sql = {
-    version = "0.14.0",
+    version = "0.14.1",
     default-features = false,
     features = ["transpile", "dialect-clickhouse", "dialect-postgresql"],
 }
@@ -95,6 +95,22 @@ let pg = Dialect::get(DialectType::Postgres);
 let via_handle = mysql.transpile("SELECT IFNULL(a, b) FROM t", &pg).unwrap();
 ```
 
+When transpiling DuckDB to BigQuery, numbered parameters become named parameters:
+`$1` becomes `@p1`, `$2` becomes `@p2`, and repeated references retain the same
+name. Bind the original values under names `p1`, `p2`, etc. in the BigQuery client;
+Polyglot translates SQL and does not remap binding values. Named DuckDB parameters
+retain their names, and queries using only `?` remain positional. Queries mixing
+`?` and `$` parameters are rejected because BigQuery cannot mix positional and
+named parameters. Mixing numbered and named `$` parameters is also rejected.
+
+DuckDB `DATE_TRUNC`/`DATETRUNC` calls use BigQuery's value-first argument order,
+canonical date parts, and `WEEK(MONDAY)` for DuckDB weeks. Known `DATE` inputs are
+promoted to `DATETIME` to preserve DuckDB's timestamp result. Without type
+information, BigQuery selects the overload from the input type. Timezone-aware
+inputs use BigQuery's default UTC timezone; strict mode rejects unresolved input
+types and truncation that depends on DuckDB's session `TimeZone`. Dynamic or
+unsupported granularities produce an error.
+
 ### Parse + Generate
 
 ```rust
@@ -104,6 +120,22 @@ let ast = parse("SELECT 1 + 2", DialectType::Generic).unwrap();
 let sql = generate(&ast[0], DialectType::Postgres).unwrap();
 assert_eq!(sql, "SELECT 1 + 2");
 ```
+
+### Execution Plans
+
+`EXPLAIN` parses as `Expression::Explain`, with a structured statement or native
+inspection target and ordered, typed options. `DESCRIBE` remains a separate node
+for schema and result-column inspection. MySQL query-plan `DESCRIBE`/`DESC`
+aliases also produce `Explain` (the generator retains MySQL's canonical
+`DESCRIBE` spelling).
+
+`Explain::execution_mode()` distinguishes planning, executing the target,
+inspecting an existing plan/object, and unknown behavior. It accounts for source
+dialect semantics: DuckDB enables analysis even for `ANALYZE FALSE`. Planning
+is not a read-only guarantee; engines may perform work during planning.
+Cross-dialect generation returns an error when a native option or inspection
+target cannot be represented without changing its meaning. Unsupported
+ClickHouse statement extensions remain opaque *inside* the `Explain` target.
 
 ### Standalone Data Types
 
