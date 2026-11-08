@@ -4,6 +4,48 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.14.1] - 2026-11-08
+
+### Added
+
+- Dedicated `Expression::Explain` AST nodes with structured statements or native
+  inspection targets, ordered typed options, and execution-mode classification.
+  TypeScript AST types and a Python `Explain` expression subclass expose the new
+  representation.
+  ([#524](https://github.com/tobilg/polyglot/issues/524))
+
+### Changed
+
+- Production playground builds load version-pinned WASM from jsDelivr with an
+  UNPKG fallback instead of bundling the WASM asset. Startup verifies the engine
+  version against the SDK; local development continues to use local WASM builds.
+- `EXPLAIN` statements now produce `Explain` rather than `Describe` nodes.
+  Consumers inspecting serialized AST kinds or matching Rust `Expression`
+  variants exhaustively may need to update their code.
+
+### Fixed
+
+- `EXPLAIN` parsing and generation preserve command identity, native options,
+  and the underlying statement, including DML. Execution classification
+  distinguishes planning, target execution, existing-plan inspection, and
+  unknown behavior. DuckDB's `ANALYZE FALSE` correctly counts as target execution.
+  Cross-dialect conversions reject options or inspection targets that cannot
+  retain their meaning. Schema-oriented `DESCRIBE` remains separate; planning
+  classification is not a read-only guarantee.
+  ([#524](https://github.com/tobilg/polyglot/issues/524))
+- DuckDB-to-BigQuery transpilation preserves numbered parameter identities:
+  `$1` becomes `@p1`, including repeated and out-of-order references. Callers
+  bind values under the corresponding `p1`, `p2`, etc. names. Named parameters
+  retain their names, anonymous-only queries remain positional, and mixed
+  parameter styles return explicit errors instead of invalid or ambiguous SQL.
+  ([#523](https://github.com/tobilg/polyglot/issues/523))
+- DuckDB `DATE_TRUNC` and `DATETRUNC` convert to BigQuery's value-first argument
+  order with unquoted canonical units and `WEEK(MONDAY)` for DuckDB weeks. Known
+  `DATE` inputs are promoted to `DATETIME` to preserve the timestamp result.
+  Dynamic or unsupported granularities report errors; strict mode also rejects
+  unresolved operand types and truncation that depends on the session time zone.
+  ([#523](https://github.com/tobilg/polyglot/issues/523))
+
 ## [0.14.0] - 2026-11-03
 
 ### Added
@@ -2317,6 +2359,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.14.1]: https://github.com/tobilg/polyglot/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/tobilg/polyglot/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/tobilg/polyglot/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/tobilg/polyglot/compare/v0.13.3...v0.13.4
