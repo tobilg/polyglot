@@ -1,5 +1,6 @@
 import json
 import copy
+import io
 import os
 import re
 import subprocess
@@ -457,6 +458,49 @@ class ReleaseRecoveryTests(unittest.TestCase):
 
     def test_reuses_build_from_newer_workflow_only_for_the_verified_release_source(self):
         self.assertEqual(release_recovery.validate_recovery_build(**self.recovery_build_args()), "42")
+
+    def test_recovery_cli_captures_colored_logs_without_printing_them(self):
+        recovery = self.recovery_build_args()
+        recovery["jobs"][0]["id"] = 789
+        prefix = "repos/tobilg/polyglot"
+        responses = {
+            f"{prefix}/commits/v0.14.1": {"sha": self.sha},
+            f"{prefix}/actions/runs/123": self.run,
+            f"{prefix}/actions/runs/123/jobs?filter=latest&per_page=100&page=1": {"jobs": self.jobs},
+            f"{prefix}/actions/runs/123/artifacts?per_page=100&page=1": {"artifacts": self.artifacts},
+            f"{prefix}/actions/runs/456": recovery["run"],
+            f"{prefix}/actions/runs/456/jobs?filter=latest&per_page=100&page=1": {"jobs": recovery["jobs"]},
+            f"{prefix}/actions/runs/456/artifacts?per_page=100&page=1": {"artifacts": recovery["artifacts"]},
+        }
+
+        def gh_api(command, *, text):
+            self.assertTrue(text)
+            self.assertEqual(command[:2], ["gh", "api"])
+            endpoint = command[-1]
+            if endpoint == f"{prefix}/actions/jobs/789/logs":
+                # Reproduce the CLI's raw-log response guard seen on the runner.
+                if "--allow-escape-sequences" not in command:
+                    raise subprocess.CalledProcessError(
+                        1, command, stderr="the response contains terminal escape sequences"
+                    )
+                return "2026-11-09T06:54:21.000Z \x1b[36mcheckout\x1b[0m\n" + recovery["source_log"]
+            self.assertNotIn("--allow-escape-sequences", command)
+            return json.dumps(responses[endpoint])
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "tobilg/polyglot", "GITHUB_OUTPUT": str(output)}),
+                mock.patch("sys.argv", ["release_recovery.py", "v0.14.1", "123", "--arm64-run-id", "456"]),
+                mock.patch.object(release_recovery.subprocess, "check_output", side_effect=gh_api),
+                mock.patch("sys.stdout", stdout),
+            ):
+                release_recovery.main()
+            self.assertEqual(output.read_text(),
+                             f"source_sha={self.sha}\nartifact_ids=1,2,3,4,5\narm64_artifact_id=42\n")
+            self.assertNotIn("\x1b", stdout.getvalue())
+            self.assertIn(f"Validated v0.14.1 at {self.sha} from run 123", stdout.getvalue())
 
     def test_rejects_a_recovery_build_for_another_release_source(self):
         args = self.recovery_build_args()

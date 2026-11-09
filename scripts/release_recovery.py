@@ -177,8 +177,11 @@ def main() -> None:
         source_jobs = [job for job in recovery_jobs if job.get("name") == "validate-source"]
         if len(source_jobs) != 1 or source_jobs[0].get("conclusion") != "success":
             raise ValueError("ARM64 recovery source validation did not succeed")
+        # Actions logs contain ANSI colors. Capture them for validation only;
+        # never print the raw log or enable this flag for other API responses.
         source_log = subprocess.check_output(
-            ["gh", "api", f"repos/{repo}/actions/jobs/{source_jobs[0]['id']}/logs"], text=True
+            ["gh", "api", "--allow-escape-sequences",
+             f"repos/{repo}/actions/jobs/{source_jobs[0]['id']}/logs"], text=True
         )
         result["arm64_artifact_id"] = validate_recovery_build(
             args.release_tag, args.source_run_id, result["source_sha"], args.arm64_run_id,
