@@ -1,14 +1,17 @@
 import json
+import copy
 import os
 import re
 import subprocess
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from itertools import product
 from pathlib import Path
 
 from scripts import check_project_consistency as consistency
+from scripts import release_recovery
 
 
 class ConsistencyCheckerTests(unittest.TestCase):
@@ -336,6 +339,102 @@ class RustCiConsistencyTests(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(result.returncode == 0, quality == suites == "success")
+
+
+class ReleaseRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.sha = "a" * 40
+        self.run = {
+            "id": 123, "event": "push", "path": ".github/workflows/ci.yml",
+            "head_branch": "v0.14.1", "head_sha": self.sha,
+            "status": "completed", "conclusion": "failure",
+        }
+        self.jobs = [
+            {"name": name, "conclusion": "success"}
+            for name in ("quality", "rust-test", *release_recovery.REUSED_ARTIFACTS.values())
+        ]
+        self.artifacts = [
+            {
+                "name": name, "id": index, "expired": False, "size_in_bytes": 1024,
+                "workflow_run": {"id": 123, "head_sha": self.sha, "head_branch": "v0.14.1"},
+            }
+            for index, name in enumerate(release_recovery.REUSED_ARTIFACTS, 1)
+        ]
+
+    def validate(self, **overrides):
+        args = dict(
+            release_tag="v0.14.1", run_id="123", tag_sha=self.sha,
+            run=self.run, jobs=self.jobs, artifacts=self.artifacts,
+        )
+        args.update(overrides)
+        return release_recovery.validate_source(**args)
+
+    def test_selects_only_the_required_artifacts_from_the_tagged_run(self):
+        extras = [{"name": "dist", "id": 99}, {"name": "ffi-linux-aarch64", "id": 100}]
+        self.assertEqual(
+            self.validate(artifacts=self.artifacts + extras),
+            {"source_sha": self.sha, "artifact_ids": "1,2,3,4,5"},
+        )
+
+    def test_rejects_invalid_dispatch_inputs(self):
+        for tag, run_id in (
+            ("main", "123"), ("v0.14.1\n", "123"), ("v0.14.1;echo bad", "123"),
+            ("v0.14.1", "0"), ("v0.14.1", "../123"), ("v0.14.1", "123\n"),
+        ):
+            with self.subTest(tag=tag, run_id=run_id), self.assertRaises(ValueError):
+                release_recovery.validate_inputs(tag, run_id)
+
+    def test_rejects_wrong_commit_tag_workflow_or_incomplete_run(self):
+        for key, value in (
+            ("id", 456), ("event", "pull_request"), ("head_branch", "main"),
+            ("path", ".github/workflows/unrelated.yml"), ("head_sha", "b" * 40),
+            ("status", "in_progress"), ("conclusion", "cancelled"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.validate(run={**self.run, key: value})
+        with self.assertRaises(ValueError):
+            self.validate(tag_sha="b" * 40)
+
+    def test_requires_successful_tests_and_artifact_producers(self):
+        for index in range(len(self.jobs)):
+            for conclusion in ("failure", "cancelled", "skipped", None):
+                jobs = copy.deepcopy(self.jobs)
+                jobs[index]["conclusion"] = conclusion
+                with self.subTest(index=index, conclusion=conclusion), self.assertRaises(ValueError):
+                    self.validate(jobs=jobs)
+            with self.subTest(missing=index), self.assertRaises(ValueError):
+                self.validate(jobs=self.jobs[:index] + self.jobs[index + 1:])
+
+    def test_requires_every_artifact_exactly_once(self):
+        for index in range(len(self.artifacts)):
+            with self.subTest(missing=index), self.assertRaises(ValueError):
+                self.validate(artifacts=self.artifacts[:index] + self.artifacts[index + 1:])
+            with self.subTest(duplicate=index), self.assertRaises(ValueError):
+                self.validate(artifacts=self.artifacts + [self.artifacts[index]])
+
+    def test_rejects_expired_empty_or_mismatched_artifacts(self):
+        for update in (
+            {"expired": True}, {"size_in_bytes": 0}, {"id": 0},
+            {"workflow_run": {"id": 456, "head_sha": self.sha, "head_branch": "v0.14.1"}},
+            {"workflow_run": {"id": 123, "head_sha": "b" * 40, "head_branch": "v0.14.1"}},
+            {"workflow_run": {"id": 123, "head_sha": self.sha, "head_branch": "main"}},
+        ):
+            artifacts = copy.deepcopy(self.artifacts)
+            artifacts[0].update(update)
+            with self.subTest(update=update), self.assertRaises(ValueError):
+                self.validate(artifacts=artifacts)
+
+    def test_reads_all_job_pages_and_preserves_the_latest_attempt_filter(self):
+        first = [{"id": index} for index in range(100)]
+        with mock.patch.object(
+            release_recovery, "github_api", side_effect=[{"jobs": first}, {"jobs": [{"id": 100}]}]
+        ) as api:
+            items = release_recovery.github_items("runs/123/jobs?filter=latest", "jobs")
+        self.assertEqual(len(items), 101)
+        self.assertEqual(api.call_args_list, [
+            mock.call("runs/123/jobs?filter=latest&per_page=100&page=1"),
+            mock.call("runs/123/jobs?filter=latest&per_page=100&page=2"),
+        ])
 
 
 if __name__ == "__main__":

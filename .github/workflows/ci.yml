@@ -729,6 +729,10 @@ jobs:
         if: matrix.use_cross
         env:
           CARGO_TARGET_DIR: ${{ matrix.target_dir }}
+          # The core crate can exhaust the runner's memory as one LLVM unit.
+          # Split codegen and limit concurrency while retaining ThinLTO.
+          CARGO_PROFILE_FFI_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_BUILD_JOBS: "1"
         run: cross build -p polyglot-sql-ffi --profile ffi_release --target ${{ matrix.target }}
 
       - name: Build FFI artifacts with cargo

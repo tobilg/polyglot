@@ -1,0 +1,192 @@
+name: Recover release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to recover
+        required: true
+        type: string
+        default: v0.14.1
+      source_run_id:
+        description: Original CI run with successful FFI and WASI artifacts
+        required: true
+        type: string
+        default: '42502581894'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-recovery-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate-source:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      artifact_ids: ${{ steps.source.outputs.artifact_ids }}
+    steps:
+      # Load recovery tooling from the selected workflow ref, not the old tag.
+      - uses: actions/checkout@v7
+      - name: Validate the source run, tag, tests, and reusable artifacts
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: python3 scripts/release_recovery.py "$RELEASE_TAG" "$SOURCE_RUN_ID"
+
+  rebuild-arm64:
+    needs: validate-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate-source.outputs.source_sha }}
+
+      - name: Verify the source version matches the release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          with open('Cargo.toml', 'rb') as source:
+              version = tomllib.load(source)['workspace']['package']['version']
+          assert f'v{version}' == os.environ['RELEASE_TAG'], 'release version mismatch'
+          PY
+
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build ARM64 FFI with bounded compiler concurrency
+        env:
+          CARGO_TARGET_DIR: target-cross
+          CARGO_PROFILE_FFI_RELEASE_CODEGEN_UNITS: '16'
+          CARGO_BUILD_JOBS: '1'
+        run: |
+          free -h
+          cross build -p polyglot-sql-ffi --profile ffi_release --target aarch64-unknown-linux-gnu
+
+      - name: Report memory diagnostics on failure
+        if: failure()
+        run: |
+          free -h
+          df -h
+          sudo dmesg | tail -80
+
+      - name: Package ARM64 archive
+        run: |
+          dir=polyglot-sql-ffi-linux-aarch64
+          mkdir -p "$dir"
+          cp crates/polyglot-sql-ffi/polyglot_sql.h LICENSE "$dir/"
+          cp target-cross/aarch64-unknown-linux-gnu/ffi_release/libpolyglot_sql_ffi.{so,a} "$dir/"
+          tar -czf "${dir}.tar.gz" "$dir"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovered-ffi-linux-aarch64
+          path: polyglot-sql-ffi-linux-aarch64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [validate-source, rebuild-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_SHA: ${{ needs.validate-source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate-source.outputs.source_sha }}
+
+      - name: Download the validated original artifacts
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          artifact-ids: ${{ needs.validate-source.outputs.artifact_ids }}
+          merge-multiple: true
+          path: dist
+
+      - name: Download the recovered ARM64 archive
+        uses: actions/download-artifact@v8
+        with:
+          name: recovered-ffi-linux-aarch64
+          path: dist
+
+      - name: Verify the complete asset set and generate checksums
+        working-directory: dist
+        run: |
+          archives=(
+            polyglot-sql-ffi-linux-x86_64.tar.gz
+            polyglot-sql-ffi-linux-aarch64.tar.gz
+            polyglot-sql-ffi-macos-x86_64.tar.gz
+            polyglot-sql-ffi-macos-aarch64.tar.gz
+            polyglot-sql-ffi-windows-x86_64.zip
+          )
+          for file in "${archives[@]}" polyglot_sql_wasi.wasm polyglot_sql_wasi.wasm.sha256; do
+            test -s "$file"
+          done
+          sha256sum -c polyglot_sql_wasi.wasm.sha256
+          sha256sum "${archives[@]}" > checksums.sha256
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Test Go SDK against the original release-built FFI archive
+        run: |
+          tar -xzf dist/polyglot-sql-ffi-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
+          cd packages/go
+          POLYGLOT_SQL_FFI_PATH="$RUNNER_TEMP/polyglot-sql-ffi-linux-x86_64/libpolyglot_sql_ffi.so" go test ./...
+
+      - name: Verify release and Go tags before publishing
+        id: tags
+        run: |
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_SHA"
+          go_tag="packages/go/$RELEASE_TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/$go_tag"; then
+            git fetch --no-tags origin "refs/tags/$go_tag:refs/tags/$go_tag"
+            test "$(git rev-parse "refs/tags/$go_tag^{commit}")" = "$SOURCE_SHA"
+            echo 'go_tag_exists=true' >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            test "$status" -eq 2
+            echo 'go_tag_exists=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the complete release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ needs.validate-source.outputs.source_sha }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/polyglot-sql-ffi-linux-x86_64.tar.gz
+            dist/polyglot-sql-ffi-linux-aarch64.tar.gz
+            dist/polyglot-sql-ffi-macos-x86_64.tar.gz
+            dist/polyglot-sql-ffi-macos-aarch64.tar.gz
+            dist/polyglot-sql-ffi-windows-x86_64.zip
+            dist/checksums.sha256
+            dist/polyglot_sql_wasi.wasm
+            dist/polyglot_sql_wasi.wasm.sha256
+
+      - name: Create the missing Go module tag at the release commit
+        if: steps.tags.outputs.go_tag_exists == 'false'
+        run: |
+          go_tag="packages/go/$RELEASE_TAG"
+          git tag "$go_tag" "$SOURCE_SHA"
+          git push origin "refs/tags/$go_tag"
