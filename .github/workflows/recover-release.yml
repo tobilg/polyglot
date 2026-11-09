@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: '42502581894'
+      arm64_run_id:
+        description: Optional previous recovery run with a successful ARM64 build (skip rebuilding)
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       artifact_ids: ${{ steps.source.outputs.artifact_ids }}
+      arm64_artifact_id: ${{ steps.source.outputs.arm64_artifact_id }}
     steps:
       # Load recovery tooling from the selected workflow ref, not the old tag.
       - uses: actions/checkout@v7
@@ -37,10 +43,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-        run: python3 scripts/release_recovery.py "$RELEASE_TAG" "$SOURCE_RUN_ID"
+          ARM64_RUN_ID: ${{ inputs.arm64_run_id }}
+        run: python3 scripts/release_recovery.py "$RELEASE_TAG" "$SOURCE_RUN_ID" --arm64-run-id "$ARM64_RUN_ID"
 
   rebuild-arm64:
     needs: validate-source
+    if: needs.validate-source.outputs.arm64_artifact_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -98,6 +106,11 @@ jobs:
 
   publish:
     needs: [validate-source, rebuild-arm64]
+    if: >-
+      ${{ !cancelled() && needs.validate-source.result == 'success' &&
+          (needs.rebuild-arm64.result == 'success' ||
+           (needs.rebuild-arm64.result == 'skipped' &&
+            needs.validate-source.outputs.arm64_artifact_id != '')) }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -120,9 +133,19 @@ jobs:
           path: dist
 
       - name: Download the recovered ARM64 archive
+        if: inputs.arm64_run_id == ''
         uses: actions/download-artifact@v8
         with:
           name: recovered-ffi-linux-aarch64
+          path: dist
+
+      - name: Reuse the validated ARM64 archive from a previous recovery
+        if: inputs.arm64_run_id != ''
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.arm64_run_id }}
+          artifact-ids: ${{ needs.validate-source.outputs.arm64_artifact_id }}
           path: dist
 
       - name: Verify the complete asset set and generate checksums
@@ -169,12 +192,10 @@ jobs:
           fi
 
       - name: Publish the complete release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          target_commitish: ${{ needs.validate-source.outputs.source_sha }}
-          fail_on_unmatched_files: true
-          files: |
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=(
             dist/polyglot-sql-ffi-linux-x86_64.tar.gz
             dist/polyglot-sql-ffi-linux-aarch64.tar.gz
             dist/polyglot-sql-ffi-macos-x86_64.tar.gz
@@ -183,6 +204,27 @@ jobs:
             dist/checksums.sha256
             dist/polyglot_sql_wasi.wasm
             dist/polyglot_sql_wasi.wasm.sha256
+          )
+          # A failed API request must abort, not be treated as a missing release.
+          draft="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .draft")"
+          case "$draft" in
+            '')
+              # The tag is verified above and must already exist. Sending an old
+              # target_commitish needlessly requires Workflows: write, which the
+              # built-in GITHUB_TOKEN cannot have. The existing tag fixes the source.
+              gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+                --verify-tag --title "$RELEASE_TAG" --notes ""
+              ;;
+            true|false)
+              # Uploading assets does not require updating release target metadata.
+              gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+              if [ "$draft" = true ]; then
+                gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+              fi
+              ;;
+            *) echo "Unexpected release state: $draft" >&2; exit 1 ;;
+          esac
 
       - name: Create the missing Go module tag at the release commit
         if: steps.tags.outputs.go_tag_exists == 'false'

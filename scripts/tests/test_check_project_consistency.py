@@ -437,5 +437,130 @@ class ReleaseRecoveryTests(unittest.TestCase):
         ])
 
 
+    def recovery_build_args(self):
+        return dict(
+            release_tag="v0.14.1", source_run_id="123", source_sha=self.sha,
+            recovery_run_id="456",
+            run={
+                "id": 456, "event": "workflow_dispatch", "head_branch": "main",
+                "head_sha": "b" * 40, "status": "completed", "conclusion": "failure",
+                "path": ".github/workflows/recover-release.yml",
+            },
+            jobs=[{"name": name, "conclusion": "success"} for name in ("validate-source", "rebuild-arm64")],
+            artifacts=[{
+                "id": 42, "name": "recovered-ffi-linux-aarch64", "expired": False,
+                "size_in_bytes": 1024,
+                "workflow_run": {"id": 456, "head_sha": "b" * 40, "head_branch": "main"},
+            }],
+            source_log=f"2026-11-09T06:54:22.1731272Z Validated v0.14.1 at {self.sha} from run 123\n",
+        )
+
+    def test_reuses_build_from_newer_workflow_only_for_the_verified_release_source(self):
+        self.assertEqual(release_recovery.validate_recovery_build(**self.recovery_build_args()), "42")
+
+    def test_rejects_a_recovery_build_for_another_release_source(self):
+        args = self.recovery_build_args()
+        for log in (
+            "", args["source_log"].replace(self.sha, "c" * 40),
+            args["source_log"].replace("v0.14.1", "v0.14.2"),
+            args["source_log"].replace("run 123", "run 789"),
+            args["source_log"].replace("Z Validated", "Z echo Validated"),
+        ):
+            with self.subTest(log=log), self.assertRaises(ValueError):
+                release_recovery.validate_recovery_build(**{**args, "source_log": log})
+
+    def test_rejects_unfinished_unrelated_or_unsuccessful_recovery_runs(self):
+        for key, value in (
+            ("id", 789), ("status", "in_progress"), ("event", "push"),
+            ("path", ".github/workflows/ci.yml"), ("head_branch", "other"),
+        ):
+            args = self.recovery_build_args()
+            args["run"][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                release_recovery.validate_recovery_build(**args)
+        for index in (0, 1):
+            for conclusion in ("failure", "cancelled", "skipped", None):
+                args = self.recovery_build_args()
+                args["jobs"][index]["conclusion"] = conclusion
+                with self.subTest(index=index, conclusion=conclusion), self.assertRaises(ValueError):
+                    release_recovery.validate_recovery_build(**args)
+
+    def test_rejects_missing_expired_or_mismatched_recovery_artifacts(self):
+        for change in (
+            {"expired": True}, {"size_in_bytes": 0}, {"id": -1},
+            {"workflow_run": {"id": 789, "head_sha": "b" * 40, "head_branch": "main"}},
+            {"workflow_run": {"id": 456, "head_sha": "c" * 40, "head_branch": "main"}},
+        ):
+            args = self.recovery_build_args()
+            args["artifacts"][0].update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                release_recovery.validate_recovery_build(**args)
+        for count in (0, 2):
+            args = self.recovery_build_args()
+            args["artifacts"] *= count
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                release_recovery.validate_recovery_build(**args)
+
+    def run_publication(self, state, fail_upload=False):
+        # Execute the actual workflow shell block with a local gh stub. No API writes.
+        workflow = (consistency.PROJECT_ROOT / ".github/workflows/recover-release.yml").read_text()
+        block = workflow.split("      - name: Publish the complete release assets\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+        stub = r'''
+gh() {
+  printf '%s\n' "$*" >> "$CALLS_LOG"
+  if [ "$1" = api ]; then
+    case "$RELEASE_STATE" in
+      missing) return 0 ;;
+      error) return 13 ;;
+      *) printf '%s\n' "$RELEASE_STATE" ;;
+    esac
+  elif [ "$2" = upload ] && [ "$FAIL_UPLOAD" = 1 ]; then
+    return 17
+  fi
+  return 0
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "calls.log"
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", stub + script],
+                env={**os.environ, "CALLS_LOG": str(log), "RELEASE_STATE": state,
+                     "RELEASE_TAG": "v0.14.1", "GITHUB_REPOSITORY": "tobilg/polyglot",
+                     "FAIL_UPLOAD": "1" if fail_upload else "0"},
+                capture_output=True, text=True,
+            )
+            return result, log.read_text().splitlines()
+
+    def test_release_creation_requires_existing_tag_without_historical_target(self):
+        result, calls = self.run_publication("missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[1].startswith("release create v0.14.1 "))
+        self.assertIn("--verify-tag", calls[1])
+        self.assertNotIn("--target", calls[1])
+        self.assertEqual(calls[1].count("dist/"), 8)
+
+    def test_existing_published_release_only_receives_assets(self):
+        result, calls = self.run_publication("false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[1].startswith("release upload v0.14.1 "))
+
+    def test_existing_draft_is_published_only_after_successful_upload(self):
+        result, calls = self.run_publication("true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(calls[-1].startswith("release edit v0.14.1 "))
+        self.assertIn("--draft=false", calls[-1])
+        result, calls = self.run_publication("true", fail_upload=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call.startswith("release edit ") for call in calls))
+
+    def test_release_query_error_never_causes_release_creation(self):
+        result, calls = self.run_publication("error")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
