@@ -809,5 +809,13 @@
     "upstream_expected": "CAST(x AS BIGNUMERIC)",
     "reason": "Trino DECIMAL(p,s) constrains precision and scale; an unparameterized BigQuery BIGNUMERIC cast does not retain these rounding/overflow checks. https://trino.io/docs/current/language/types.html#decimal https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#parameterized_data_types",
     "vendor_error": "Wide decimal casts require precision and scale enforcement"
+  },
+  {
+    "source": "generic",
+    "target": "spark",
+    "sql": "DATE_TRUNC('DAY', x)",
+    "upstream_expected": "TRUNC(x, 'DAY')",
+    "reason": "Spark's TRUNC takes only YEAR, QUARTER, MONTH and WEEK and returns NULL for DAY; DATE_TRUNC takes every unit. https://spark.apache.org/docs/latest/api/sql/index.html#trunc https://spark.apache.org/docs/latest/api/sql/index.html#date_trunc",
+    "vendor_expected": "DATE_TRUNC('DAY', x)"
   }
 ]

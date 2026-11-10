@@ -2020,11 +2020,21 @@ pub(super) fn rewrite(
                                     vec![Expression::string(&unit_str), expr_arg],
                                 ))))
                             }
-                            DialectType::Spark | DialectType::Databricks => {
+                            DialectType::Spark | DialectType::Databricks
+                                if spark_trunc_takes_unit(&unit_str) =>
+                            {
                                 // Spark: TRUNC(x, 'UNIT')
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "TRUNC".to_string(),
                                     vec![expr_arg, Expression::string(&unit_str)],
+                                ))))
+                            }
+                            DialectType::Spark | DialectType::Databricks => {
+                                // Spark's TRUNC returns NULL for any other unit (DAY, HOUR,
+                                // ...); DATE_TRUNC('UNIT', x) takes them all.
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(),
+                                    vec![Expression::string(&unit_str), expr_arg],
                                 ))))
                             }
                             DialectType::MySQL => {
@@ -3660,6 +3670,15 @@ fn cast_postgres_date_part_to_double(expression: Expression) -> Expression {
         default: None,
         inferred_type: None,
     }))
+}
+
+/// The units Spark's `TRUNC(date, fmt)` accepts; it returns NULL for any other.
+/// `unit` is upper case.
+fn spark_trunc_takes_unit(unit: &str) -> bool {
+    matches!(
+        unit,
+        "YEAR" | "YYYY" | "YY" | "QUARTER" | "MONTH" | "MON" | "MM" | "WEEK"
+    )
 }
 
 pub(super) fn date_trunc_to_mysql(unit: &str, expr: &Expression) -> Result<Expression> {
