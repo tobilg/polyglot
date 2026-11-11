@@ -166,6 +166,106 @@ fn clickhouse_preserves_incomplete_insert_probe_as_command() {
 }
 
 #[test]
+fn clickhouse_format_values_accepts_empty_data() {
+    for format in ["Values", "values", "VALUES", "VaLuEs"] {
+        for columns in ["", " (a, b)"] {
+            let header = format!("INSERT INTO db1.t{columns} FORMAT {format}");
+            for suffix in ["", ";"] {
+                let sql = format!("{header}{suffix}");
+                let parsed = parse(&sql, DialectType::ClickHouse).unwrap();
+                assert_eq!(parsed.len(), 1);
+                let polyglot_sql::Expression::Insert(insert) = &parsed[0] else {
+                    panic!("expected structured INSERT for {sql}");
+                };
+                assert_eq!(insert.table.schema.as_ref().unwrap().name, "db1");
+                assert_eq!(insert.table.name.name, "t");
+                let column_names: Vec<_> = insert
+                    .columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect();
+                let expected_columns: &[&str] = if columns.is_empty() { &[] } else { &["a", "b"] };
+                assert_eq!(column_names, expected_columns);
+                assert!(insert.values.is_empty());
+                assert!(matches!(
+                    &insert.query,
+                    Some(polyglot_sql::Expression::Command(command))
+                        if command.this == format!("FORMAT {format}")
+                ));
+                assert_eq!(normalize_clickhouse(&sql), header);
+                assert_clickhouse_normalized_roundtrip(&sql);
+            }
+        }
+    }
+}
+
+#[test]
+fn clickhouse_format_values_preserves_statement_boundaries() {
+    let header = "INSERT INTO db1.t (a, b) FORMAT Values";
+    for suffix in [
+        " \n",
+        " -- streamed separately\n",
+        " /* streamed separately */",
+    ] {
+        let sql = format!("{header}{suffix}");
+        assert_clickhouse_parse(&sql);
+        assert_clickhouse_normalized_roundtrip(&sql);
+
+        let statements = parse(&format!("{sql}; SELECT 1"), DialectType::ClickHouse).unwrap();
+        assert_eq!(statements.len(), 2);
+        assert!(matches!(
+            &statements[1],
+            polyglot_sql::Expression::Select(_)
+        ));
+    }
+    assert_eq!(
+        polyglot_sql::transpile(
+            &format!("{header}; SELECT 1"),
+            DialectType::ClickHouse,
+            DialectType::ClickHouse,
+        )
+        .unwrap(),
+        vec![header.to_string(), "SELECT 1".to_string()]
+    );
+}
+
+#[test]
+fn clickhouse_format_values_preserves_inline_rows() {
+    for source in ["VALUES", "FORMAT Values"] {
+        let sql = format!("INSERT INTO db1.t (a, b) {source} (1, 'a'), (2, 'b')");
+        let parsed = parse(&sql, DialectType::ClickHouse).unwrap();
+        let polyglot_sql::Expression::Insert(insert) = &parsed[0] else {
+            panic!("expected INSERT");
+        };
+        assert_eq!(insert.values.len(), 2);
+        assert!(insert.values.iter().all(|row| row.len() == 2));
+        assert!(insert.query.is_none());
+        assert_eq!(
+            normalize_clickhouse(&sql),
+            "INSERT INTO db1.t (a, b) VALUES ((1), ('a')), ((2), ('b'))"
+        );
+        assert_clickhouse_normalized_roundtrip(&sql);
+    }
+}
+
+#[test]
+fn clickhouse_format_values_rejects_invalid_data() {
+    for sql in [
+        "INSERT INTO db1.t FORMAT Values (",
+        "INSERT INTO db1.t FORMAT Values garbage",
+    ] {
+        assert!(parse(sql, DialectType::ClickHouse).is_err(), "{sql}");
+    }
+    for dialect in [
+        DialectType::Generic,
+        DialectType::PostgreSQL,
+        DialectType::MySQL,
+    ] {
+        assert!(parse("INSERT INTO db1.t FORMAT Values", dialect).is_err());
+    }
+}
+
+#[test]
 fn clickhouse_recovers_missing_terminal_rparen_for_extracted_subquery() {
     assert_eq!(
         normalize_clickhouse("SELECT count() FROM (SELECT 1"),

@@ -13068,20 +13068,30 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.match_text_seq(&["FORMAT", "VALUES"])
         {
-            let mut all_values = Vec::new();
+            if self.is_at_end() || self.check(TokenType::Semicolon) {
+                // The client may stream Values data separately from the query header.
+                (
+                    Vec::new(),
+                    Some(Expression::Command(Box::new(crate::expressions::Command {
+                        this: format!("FORMAT {}", self.previous_text()),
+                    }))),
+                )
+            } else {
+                let mut all_values = Vec::new();
 
-            loop {
-                self.expect(TokenType::LParen)?;
-                let row = self.parse_expression_list()?;
-                self.expect(TokenType::RParen)?;
-                all_values.push(row);
+                loop {
+                    self.expect(TokenType::LParen)?;
+                    let row = self.parse_expression_list()?;
+                    self.expect(TokenType::RParen)?;
+                    all_values.push(row);
 
-                if !self.match_token(TokenType::Comma) {
-                    break;
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
                 }
-            }
 
-            (all_values, None)
+                (all_values, None)
+            }
         } else if self.match_token(TokenType::Values)
             || (self.config.dialect == Some(crate::dialects::DialectType::MySQL)
                 && self.match_identifier("VALUE"))
