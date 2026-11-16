@@ -4427,6 +4427,13 @@ pub(super) fn rewrite(
                                         ))))
                                     }
                                 }
+                                // SQLite takes the format first: STRFTIME(fmt, val)
+                                DialectType::SQLite => {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "STRFTIME".to_string(),
+                                        vec![fmt_expr.clone(), val],
+                                    ))))
+                                }
                                 _ => Ok(Expression::Function(f)),
                             }
                         }
