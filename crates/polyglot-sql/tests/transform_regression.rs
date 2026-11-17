@@ -44,6 +44,39 @@ fn first_index(order: &[String], target: &str) -> usize {
         .unwrap_or_else(|| panic!("missing {target} in visit order: {order:?}"))
 }
 
+#[test]
+fn duckdb_bitwise_xor_uses_function_instead_of_power_operator() {
+    use polyglot_sql::{expressions::BinaryOp, transpile};
+
+    for (input, expected) in [
+        ("SELECT BITXOR(12, 10) AS f", "SELECT XOR(12, 10) AS f"),
+        (
+            "SELECT BITXOR(BITXOR(a, b), 10) + 1 FROM t",
+            "SELECT (XOR(XOR(a, b), 10)) + 1 FROM t",
+        ),
+        ("SELECT BITXOR(NULL, 10)", "SELECT XOR(NULL, 10)"),
+    ] {
+        assert_eq!(
+            transpile(input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+
+    let expr = Expression::BitwiseXor(Box::new(BinaryOp::new(
+        Expression::number(12),
+        Expression::number(10),
+    )));
+    assert_eq!(
+        generate_with_dialect(&expr, DialectType::DuckDB),
+        "XOR(12, 10)"
+    );
+    assert_eq!(
+        generate_with_dialect(&expr, DialectType::PostgreSQL),
+        "12 # 10"
+    );
+}
+
 fn rename_predicate_children(node: Expression) -> Expression {
     match node {
         Expression::Table(mut table) => {

@@ -3672,12 +3672,16 @@ impl Generator {
                 }
             }
             Expression::BitwiseXor(op) => {
-                // Presto/Trino use BITWISE_XOR function, PostgreSQL uses #, others use ^
+                // DuckDB's ^ means exponentiation; bitwise XOR is a function.
                 if matches!(
                     self.config.dialect,
-                    Some(DialectType::Presto) | Some(DialectType::Trino)
+                    Some(DialectType::Presto | DialectType::Trino | DialectType::DuckDB)
                 ) {
-                    self.write_keyword("BITWISE_XOR");
+                    self.write_keyword(if self.config.dialect == Some(DialectType::DuckDB) {
+                        "XOR"
+                    } else {
+                        "BITWISE_XOR"
+                    });
                     self.write("(");
                     self.generate_expression(&op.left)?;
                     self.write(", ");
