@@ -124,6 +124,78 @@ fn snowflake_get_preserves_duckdb_json_array_indexes() {
     }
 }
 
+#[test]
+fn snowflake_datediff_preserves_subday_timestamp_boundaries() {
+    for (function, unit, start, end, data_type) in [
+        (
+            "DATEDIFF",
+            "HOUR",
+            "2026-01-01 23:59:00",
+            "2026-01-02 00:01:00",
+            "TIMESTAMP",
+        ),
+        (
+            "DATEDIFF",
+            "SECOND",
+            "2026-01-01 00:00:00.9",
+            "2026-01-01 00:00:01.1",
+            "TIMESTAMP",
+        ),
+        (
+            "TIMESTAMPDIFF",
+            "MINUTE",
+            "2026-11-16 12:00:00",
+            "2026-11-16 13:30:00",
+            "TIMESTAMP",
+        ),
+        ("TIMEDIFF", "SECOND", "00:00:00.9", "00:00:01.1", "TIME"),
+        (
+            "DATEDIFF",
+            "MILLISECOND",
+            "2026-01-01 00:00:00.0009",
+            "2026-01-01 00:00:00.0011",
+            "TIMESTAMP",
+        ),
+        (
+            "DATEDIFF",
+            "MICROSECOND",
+            "2026-01-01 00:00:00.000001",
+            "2026-01-01 00:00:00.000002",
+            "TIMESTAMP",
+        ),
+    ] {
+        let source_type = if data_type == "TIMESTAMP" {
+            "TIMESTAMP_NTZ"
+        } else {
+            data_type
+        };
+        let input = format!(
+            "SELECT {function}({unit}, '{start}'::{source_type}, '{end}'::{source_type}) AS d"
+        );
+        let expected = format!("SELECT DATE_DIFF('{unit}', CAST('{start}' AS {data_type}), CAST('{end}' AS {data_type})) AS d");
+        assert_eq!(
+            polyglot_sql::transpile(&input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+    for (unit, output_type) in [
+        ("HOUR", "TIMESTAMP"),
+        ("MINUTE", "TIMESTAMP"),
+        ("SECOND", "TIMESTAMP"),
+        ("DAY", "DATE"),
+    ] {
+        let input =
+            format!("SELECT DATEDIFF({unit}, '2026-01-01 23:59:00', '2026-01-02 00:01:00')");
+        let expected = format!("SELECT DATE_DIFF('{unit}', CAST('2026-01-01 23:59:00' AS {output_type}), CAST('2026-01-02 00:01:00' AS {output_type}))");
+        assert_eq!(
+            polyglot_sql::transpile(&input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+}
+
 fn rename_predicate_children(node: Expression) -> Expression {
     match node {
         Expression::Table(mut table) => {

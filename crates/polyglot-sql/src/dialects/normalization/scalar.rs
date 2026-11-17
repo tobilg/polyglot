@@ -5327,6 +5327,18 @@ pub(super) fn rewrite(
                                                     vec![Expression::string(&unit_str), dt1, dt2],
                                                 ))))
                                             }
+                                            "HOUR" | "MINUTE" | "SECOND" | "MILLISECOND"
+                                            | "MICROSECOND" => {
+                                                // Sub-day boundaries require the time component.
+                                                // Cast strings, but preserve typed TIME/TIMESTAMP
+                                                // operands (including their time zones).
+                                                let d1 = temporal::ensure_cast_timestamp(arg1);
+                                                let d2 = temporal::ensure_cast_timestamp(arg2);
+                                                Ok(Expression::Function(Box::new(Function::new(
+                                                    "DATE_DIFF".to_string(),
+                                                    vec![Expression::string(&unit_str), d1, d2],
+                                                ))))
+                                            }
                                             _ => {
                                                 // YEAR, MONTH, QUARTER, DAY, etc.: CAST to DATE
                                                 let d1 = temporal::force_cast_date(arg1);
