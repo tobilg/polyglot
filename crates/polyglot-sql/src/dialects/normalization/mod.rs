@@ -2018,7 +2018,7 @@ pub(super) fn normalize(
                             | "REGEXP_EXTRACT" | "REGEXP_SUBSTR" | "TO_DAYS"
                             | "RLIKE"
                             | "DATEDIFF" | "DATE_DIFF" | "MONTHS_BETWEEN"
-                            | "ADD_MONTHS" | "DATEADD" | "DATE_ADD" | "DATE_SUB" | "DATETRUNC"
+                            | "ADD_MONTHS" | "DATEADD" | "TIMEADD" | "DATE_ADD" | "DATE_SUB" | "DATETRUNC"
                             | "LAST_DAY" | "LAST_DAY_OF_MONTH" | "EOMONTH"
                             | "ARRAY_CONSTRUCT" | "ARRAY_CAT" | "ARRAY_COMPACT"
                             | "ARRAY_FILTER" | "FILTER" | "REDUCE" | "ARRAY_REVERSE"

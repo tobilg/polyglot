@@ -3431,6 +3431,10 @@ fn is_interval_value(expression: &Expression) -> bool {
     }
 }
 
+pub(super) fn is_date_value(expression: &Expression) -> bool {
+    temporal_operand(expression) == TemporalOperand::Date
+}
+
 fn temporal_operand(expression: &Expression) -> TemporalOperand {
     if is_time_value(expression) {
         return TemporalOperand::Time;

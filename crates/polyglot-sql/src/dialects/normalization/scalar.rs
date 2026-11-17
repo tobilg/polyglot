@@ -5676,7 +5676,12 @@ pub(super) fn rewrite(
                             }
                         }
                         // DATEADD(unit, val, date) - 3-arg form
-                        "DATEADD" if f.args.len() == 3 => {
+                        "DATEADD" | "TIMEADD"
+                            if f.args.len() == 3
+                                && (f.name.eq_ignore_ascii_case("DATEADD")
+                                    || (source == DialectType::Snowflake
+                                        && target == DialectType::DuckDB)) =>
+                        {
                             let mut args = f.args;
                             let arg0 = args.remove(0);
                             let arg1 = args.remove(0);
@@ -5815,6 +5820,16 @@ pub(super) fn rewrite(
                                     } else {
                                         // DuckDB: convert to date + INTERVAL syntax with CAST
                                         let iu = temporal::parse_interval_unit_static(&unit_str);
+                                        let preserve_date = source == DialectType::Snowflake
+                                            && matches!(
+                                                iu,
+                                                IntervalUnit::Day
+                                                    | IntervalUnit::Week
+                                                    | IntervalUnit::Month
+                                                    | IntervalUnit::Quarter
+                                                    | IntervalUnit::Year
+                                            )
+                                            && temporal::is_date_value(&arg2);
                                         let interval = Expression::Interval(Box::new(
                                             crate::expressions::Interval {
                                                 this: Some(arg1),
@@ -5846,9 +5861,16 @@ pub(super) fn rewrite(
                                         } else {
                                             arg2
                                         };
-                                        Ok(Expression::Add(Box::new(
+                                        let result = Expression::Add(Box::new(
                                             crate::expressions::BinaryOp::new(arg2, interval),
-                                        )))
+                                        ));
+                                        // Snowflake retains DATE for calendar-unit additions;
+                                        // DuckDB's DATE + INTERVAL promotes it to TIMESTAMP.
+                                        Ok(if preserve_date {
+                                            temporal::force_cast_date(result)
+                                        } else {
+                                            result
+                                        })
                                     }
                                 }
                                 DialectType::Spark => {

@@ -196,6 +196,51 @@ fn snowflake_datediff_preserves_subday_timestamp_boundaries() {
     }
 }
 
+#[test]
+fn snowflake_dateadd_preserves_date_result_type() {
+    for function in ["DATEADD", "TIMEADD", "TIMESTAMPADD"] {
+        for unit in ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"] {
+            let input = format!("SELECT {function}({unit}, 1, '2026-01-31'::DATE) AS d");
+            let expected =
+                format!("SELECT CAST(CAST('2026-01-31' AS DATE) + INTERVAL 1 {unit} AS DATE) AS d");
+            assert_eq!(
+                polyglot_sql::transpile(&input, DialectType::Snowflake, DialectType::DuckDB)
+                    .unwrap(),
+                vec![expected],
+                "{input}"
+            );
+        }
+    }
+    for (input, expected) in [
+        (
+            "SELECT DATEADD(DAY, n, CAST(d AS DATE)) FROM t",
+            "SELECT CAST(CAST(d AS DATE) + INTERVAL (n) DAY AS DATE) FROM t",
+        ),
+        (
+            "SELECT DATEADD(DAY, 1, DATEADD(MONTH, 1, '2026-01-31'::DATE))",
+            "SELECT CAST(CAST(CAST('2026-01-31' AS DATE) + INTERVAL 1 MONTH AS DATE) + INTERVAL 1 DAY AS DATE)",
+        ),
+        (
+            "SELECT DATEADD(DAY, 1, CURRENT_DATE)",
+            "SELECT CAST(CURRENT_DATE + INTERVAL 1 DAY AS DATE)",
+        ),
+        (
+            "SELECT DATEADD(HOUR, 1, '2026-01-31'::DATE)",
+            "SELECT CAST('2026-01-31' AS DATE) + INTERVAL 1 HOUR",
+        ),
+        (
+            "SELECT DATEADD(DAY, 1, '2026-01-31 12:30:00'::TIMESTAMP_NTZ)",
+            "SELECT CAST('2026-01-31 12:30:00' AS TIMESTAMP) + INTERVAL 1 DAY",
+        ),
+    ] {
+        assert_eq!(
+            polyglot_sql::transpile(input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+}
+
 fn rename_predicate_children(node: Expression) -> Expression {
     match node {
         Expression::Table(mut table) => {
