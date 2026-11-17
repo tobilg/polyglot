@@ -77,6 +77,53 @@ fn duckdb_bitwise_xor_uses_function_instead_of_power_operator() {
     );
 }
 
+#[test]
+fn snowflake_get_preserves_duckdb_json_array_indexes() {
+    for (input, expected) in [
+        (
+            "SELECT GET(PARSE_JSON('[10, 20, 30]'), 0) AS first",
+            "SELECT JSON('[10, 20, 30]') -> '$[0]' AS first",
+        ),
+        (
+            "SELECT GET(PARSE_JSON('[10, 20, 30]'), 2)",
+            "SELECT JSON('[10, 20, 30]') -> '$[2]'",
+        ),
+        (
+            "SELECT GET(GET(PARSE_JSON('[[10, 20], [30]]'), 0), 1)",
+            "SELECT JSON('[[10, 20], [30]]') -> '$[0]' -> '$[1]'",
+        ),
+        ("SELECT GET(v, 0) FROM t", "SELECT v -> '$[0]' FROM t"),
+        ("SELECT GET([10, 20, 30], 0)", "SELECT [10, 20, 30][1]"),
+        ("SELECT GET(([10, 20, 30]), 0)", "SELECT ([10, 20, 30])[1]"),
+        (
+            "SELECT GET(ARRAY_CONSTRUCT(10, 20, 30), 0)",
+            "SELECT [10, 20, 30][1]",
+        ),
+        (
+            "SELECT GET(SPLIT('a,b', ','), 0)",
+            "SELECT CASE WHEN ',' IS NULL THEN NULL WHEN ',' = '' THEN ['a,b'] ELSE STR_SPLIT('a,b', ',') END -> '$[0]'",
+        ),
+        (
+            "SELECT GET(PARSE_JSON('[10, 20, 30]'), 3)",
+            "SELECT JSON('[10, 20, 30]') -> '$[3]'",
+        ),
+        (
+            "SELECT GET(CAST(v AS ARRAY(INT)), 0) FROM t",
+            "SELECT CAST(v AS INT[])[1] FROM t",
+        ),
+        (
+            "SELECT GET(CAST(v AS MAP(INT, VARCHAR)), 1) FROM t",
+            "SELECT CAST(v AS MAP(INT, TEXT))[1] FROM t",
+        ),
+    ] {
+        assert_eq!(
+            polyglot_sql::transpile(input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+}
+
 fn rename_predicate_children(node: Expression) -> Expression {
     match node {
         Expression::Table(mut table) => {

@@ -4379,7 +4379,7 @@ impl DuckDBDialect {
                 }
             }
 
-            // GET(array_or_obj, key) -> array[key+1] for arrays, obj -> '$.key' for objects
+            // Only native arrays need a one-based offset. JSON arrays are zero-based.
             "GET" if f.args.len() == 2 => {
                 let mut args = f.args;
                 let this = args.remove(0);
@@ -4406,22 +4406,53 @@ impl DuckDBDialect {
                             on_error: None,
                         })))
                     }
-                    // Numeric key -> array subscript
-                    // For MAP access: key is used as-is (map[key])
-                    // For ARRAY access: Snowflake is 0-based, DuckDB is 1-based, so add 1
+                    // Use native subscripts for known ARRAY/MAP inputs, otherwise
+                    // preserve Snowflake VARIANT semantics through JSON extraction.
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
                         let Literal::Number(n) = lit.as_ref() else {
                             unreachable!()
                         };
-                        let idx: i64 = n.parse().unwrap_or(0);
-                        let is_map = matches!(&this, Expression::Cast(c) if matches!(c.to, DataType::Map { .. }));
-                        let index_val = if is_map { idx } else { idx + 1 };
-                        Ok(Expression::Subscript(Box::new(
-                            crate::expressions::Subscript {
+                        let mut input = &this;
+                        while let Expression::Paren(paren) = input {
+                            input = &paren.this;
+                        }
+                        let is_map = matches!(input, Expression::Cast(c) | Expression::TryCast(c) if matches!(c.to, DataType::Map { .. }))
+                            || matches!(input.inferred_type(), Some(DataType::Map { .. }));
+                        let is_array = matches!(
+                            input,
+                            Expression::Array(_) | Expression::ArrayFunc(_)
+                        ) || matches!(input, Expression::Cast(c) | Expression::TryCast(c) if matches!(c.to, DataType::Array { .. }))
+                            || matches!(input.inferred_type(), Some(DataType::Array { .. }));
+                        if is_map || is_array {
+                            let index = if is_array {
+                                let offset = n.parse::<i64>().ok().and_then(|n| n.checked_add(1));
+                                offset.map(Expression::number).unwrap_or_else(|| {
+                                    Expression::Add(Box::new(BinaryOp::new(
+                                        key,
+                                        Expression::number(1),
+                                    )))
+                                })
+                            } else {
+                                key
+                            };
+                            Ok(Expression::Subscript(Box::new(
+                                crate::expressions::Subscript { this, index },
+                            )))
+                        } else {
+                            Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
                                 this,
-                                index: Expression::number(index_val),
-                            },
-                        )))
+                                path: normalize_json_path(key),
+                                arrow_syntax: true,
+                                options: None,
+                                source_dialect: None,
+                                returning: None,
+                                hash_arrow_syntax: false,
+                                wrapper_option: None,
+                                quotes_option: None,
+                                on_scalar_string: false,
+                                on_error: None,
+                            })))
+                        }
                     }
                     _ => {
                         // Unknown key type - use JSON arrow
