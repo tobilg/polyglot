@@ -3113,6 +3113,23 @@ pub(super) fn rewrite(
                                 f.args,
                             )))),
                         },
+                        // Snowflake propagates NULL; DuckDB CONCAT skips NULLs.
+                        "CONCAT"
+                            if !f.args.is_empty()
+                                && matches!(source, DialectType::Snowflake)
+                                && matches!(target, DialectType::DuckDB) =>
+                        {
+                            Ok(f.args
+                                .into_iter()
+                                .reduce(|left, right| {
+                                    Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                        this: Box::new(left),
+                                        expression: Box::new(right),
+                                        safe: None,
+                                    }))
+                                })
+                                .expect("CONCAT has at least one argument"))
+                        }
                         // CONCAT(a, b) -> a || b for PostgreSQL
                         "CONCAT"
                             if f.args.len() == 2
@@ -9815,7 +9832,7 @@ pub(super) fn rewrite(
                                 _ => Ok(Expression::Function(f)),
                             }
                         }
-                        // CONCAT_WS from Generic is null-propagating in SQLGlot fixtures.
+                        // CONCAT_WS from Generic and Snowflake propagates NULL.
                         // Trino also requires non-separator arguments cast to VARCHAR.
                         "CONCAT_WS" if f.args.len() >= 2 => {
                             fn concat_ws_null_case(
@@ -9910,7 +9927,9 @@ pub(super) fn rewrite(
                                     ))))
                                 }
                                 DialectType::Spark | DialectType::Hive | DialectType::DuckDB
-                                    if matches!(source, DialectType::Generic) =>
+                                    if matches!(source, DialectType::Generic)
+                                        || (matches!(source, DialectType::Snowflake)
+                                            && matches!(target, DialectType::DuckDB)) =>
                                 {
                                     let args = f.args;
                                     let else_expr = Expression::Function(Box::new(Function::new(

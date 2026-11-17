@@ -78,6 +78,52 @@ fn duckdb_bitwise_xor_uses_function_instead_of_power_operator() {
 }
 
 #[test]
+fn snowflake_concat_preserves_null_arguments_in_duckdb() {
+    for (input, expected) in [
+        ("SELECT CONCAT('a', NULL) AS a", "SELECT 'a' || NULL AS a"),
+        ("SELECT CONCAT(NULL, 'b', 'c')", "SELECT NULL || 'b' || 'c'"),
+        ("SELECT CONCAT('a', 'b', 'c')", "SELECT 'a' || 'b' || 'c'"),
+        ("SELECT CONCAT(NULL), CONCAT('')", "SELECT NULL, ''"),
+        ("SELECT CONCAT(a, b) FROM t", "SELECT a || b FROM t"),
+        ("SELECT CONCAT('a', CONCAT(b, NULL)) FROM t", "SELECT 'a' || b || NULL FROM t"),
+        (
+            "SELECT CONCAT_WS('-', 'a', NULL, 'b') AS c",
+            "SELECT CASE WHEN '-' IS NULL OR 'a' IS NULL OR NULL IS NULL OR 'b' IS NULL THEN NULL ELSE CONCAT_WS('-', 'a', NULL, 'b') END AS c",
+        ),
+        (
+            "SELECT CONCAT_WS(s, a, b) FROM t",
+            "SELECT CASE WHEN s IS NULL OR a IS NULL OR b IS NULL THEN NULL ELSE CONCAT_WS(s, a, b) END FROM t",
+        ),
+        (
+            "SELECT CONCAT_WS(NULL, 'a')",
+            "SELECT CASE WHEN NULL IS NULL OR 'a' IS NULL THEN NULL ELSE CONCAT_WS(NULL, 'a') END",
+        ),
+        (
+            "SELECT CONCAT_WS('-', 'a', '', 'b')",
+            "SELECT CASE WHEN '-' IS NULL OR 'a' IS NULL OR '' IS NULL OR 'b' IS NULL THEN NULL ELSE CONCAT_WS('-', 'a', '', 'b') END",
+        ),
+    ] {
+        assert_eq!(
+            polyglot_sql::transpile(input, DialectType::Snowflake, DialectType::DuckDB).unwrap(),
+            vec![expected],
+            "{input}"
+        );
+    }
+    // DuckDB and PostgreSQL source functions intentionally skip NULL arguments.
+    let input = "SELECT CONCAT('a', NULL), CONCAT_WS('-', 'a', NULL, 'b')";
+    for source in [DialectType::DuckDB, DialectType::PostgreSQL] {
+        assert_eq!(
+            polyglot_sql::transpile(input, source, DialectType::DuckDB).unwrap(),
+            vec![input]
+        );
+    }
+    assert_eq!(
+        polyglot_sql::transpile(input, DialectType::Snowflake, DialectType::Snowflake).unwrap(),
+        vec![input]
+    );
+}
+
+#[test]
 fn snowflake_get_preserves_duckdb_json_array_indexes() {
     for (input, expected) in [
         (
