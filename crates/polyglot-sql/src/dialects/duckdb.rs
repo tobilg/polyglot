@@ -8868,6 +8868,73 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_timestamp_type_aliases() {
+        for (input, expected) in [
+            (
+                "CREATE TABLE t (a TIMESTAMP_LTZ, b TIMESTAMP_NTZ, c TIMESTAMP_LTZ(6))",
+                "CREATE TABLE t (a TIMESTAMPTZ, b TIMESTAMP, c TIMESTAMPTZ)",
+            ),
+            (
+                "SELECT x::TIMESTAMP_LTZ, x::TIMESTAMP_NTZ FROM t",
+                "SELECT CAST(x AS TIMESTAMPTZ), CAST(x AS TIMESTAMP) FROM t",
+            ),
+            (
+                "SELECT CAST(x AS TIMESTAMPLTZ(3)), CAST(x AS TIMESTAMPNTZ(9)) FROM t",
+                "SELECT CAST(x AS TIMESTAMPTZ), CAST(x AS TIMESTAMP(9)) FROM t",
+            ),
+            (
+                "SELECT TRY_CAST(x AS TIMESTAMP_LTZ(6)), TRY_CAST(x AS TIMESTAMP_NTZ(3)) FROM t",
+                "SELECT TRY_CAST(x AS TIMESTAMPTZ), TRY_CAST(x AS TIMESTAMP(3)) FROM t",
+            ),
+            (
+                "CREATE TABLE t (a ARRAY(TIMESTAMP_NTZ(3)), b MAP(VARCHAR, TIMESTAMP_LTZ(6)))",
+                "CREATE TABLE t (a TIMESTAMP(3)[], b MAP(TEXT, TIMESTAMPTZ))",
+            ),
+            (
+                "SELECT CAST(NULL AS ARRAY(TIMESTAMP_LTZ)), CAST(NULL AS TIMESTAMP_NTZ(0))",
+                "SELECT CAST(NULL AS TIMESTAMPTZ[]), CAST(NULL AS TIMESTAMP(0))",
+            ),
+            (
+                "SELECT CAST(x AS TIMESTAMP WITH LOCAL TIME ZONE) FROM t",
+                "SELECT CAST(x AS TIMESTAMPTZ) FROM t",
+            ),
+            (
+                "CREATE TABLE t (a DECFLOAT, b TIMESTAMP_TZ(6))",
+                "CREATE TABLE t (a DECIMAL(38, 5), b TIMESTAMPTZ)",
+            ),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        assert_eq!(
+            transpile_to_duckdb_from(
+                "CREATE TABLE t (a TIMESTAMPTZ, b TIMESTAMP, c TIMESTAMP(9), d MY_TIMESTAMP_TYPE)",
+                DialectType::DuckDB,
+            ),
+            "CREATE TABLE t (a TIMESTAMPTZ, b TIMESTAMP, c TIMESTAMP(9), d MY_TIMESTAMP_TYPE)"
+        );
+        assert_eq!(
+            transpile_to_duckdb_from(
+                "CREATE TABLE t (a UNIQUEIDENTIFIER, b DATETIME2, c NVARCHAR(20))",
+                DialectType::TSQL,
+            ),
+            "CREATE TABLE t (a UUID, b TIMESTAMP, c TEXT(20))"
+        );
+        assert_eq!(
+            crate::transpile(
+                "CREATE TABLE t (a TIMESTAMP_LTZ(6), b TIMESTAMP_NTZ)",
+                DialectType::Snowflake,
+                DialectType::Snowflake,
+            )
+            .unwrap()[0],
+            "CREATE TABLE t (a TIMESTAMPLTZ(6), b TIMESTAMPNTZ)"
+        );
+    }
+
+    #[test]
     fn test_snowflake_json_path_cast_to_text() {
         for (input, expected) in [
             (

@@ -30727,6 +30727,22 @@ impl Generator {
                         };
 
                         match base_upper.as_str() {
+                            // Embedded CAST/column types do not visit the
+                            // dialect's standalone DataType transform.
+                            "TIMESTAMPNTZ" | "TIMESTAMP_NTZ"
+                                if self.config.dialect == Some(DialectType::DuckDB) =>
+                            {
+                                self.write_keyword("TIMESTAMP");
+                                if let Some(args) = _args_str {
+                                    self.write(args);
+                                }
+                            }
+                            "TIMESTAMPLTZ" | "TIMESTAMP_LTZ"
+                                if self.config.dialect == Some(DialectType::DuckDB) =>
+                            {
+                                // DuckDB does not accept TIMESTAMPTZ(p).
+                                self.write_keyword("TIMESTAMPTZ");
+                            }
                             "INT64"
                                 if !matches!(self.config.dialect, Some(DialectType::BigQuery)) =>
                             {

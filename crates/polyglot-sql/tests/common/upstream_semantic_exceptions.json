@@ -2,6 +2,20 @@
   {
     "source": "snowflake",
     "target": "duckdb",
+    "sql": "SELECT DATE_PART(NANOSECOND, CAST('2026-01-06 11:45:00.123456789' AS TIMESTAMPNTZ))",
+    "upstream_expected": "SELECT CAST(STRFTIME(CAST(CAST('2026-01-06 11:45:00.123456789' AS TIMESTAMP) AS TIMESTAMP_NS), '%n') AS BIGINT)",
+    "reason": "Snowflake TIMESTAMP_NTZ defaults to nanosecond precision. SQLGlot's intermediate DuckDB TIMESTAMP cast truncates .123456789 before extracting nanoseconds, producing 123456000 instead of 123456789. Verified with local SQLGlot and DuckDB 2.0 while fixing timestamp type compatibility (#544); do not assert this precision-losing upstream expectation. https://docs.snowflake.com/en/sql-reference/data-types-datetime"
+  },
+  {
+    "source": "snowflake",
+    "target": "duckdb",
+    "sql": "SELECT EXTRACT(NANOSECOND FROM CAST('2026-01-06 11:45:00.123456789' AS TIMESTAMP_NTZ))",
+    "upstream_expected": "SELECT CAST(STRFTIME(CAST(CAST('2026-01-06 11:45:00.123456789' AS TIMESTAMP) AS TIMESTAMP_NS), '%n') AS BIGINT)",
+    "reason": "Snowflake TIMESTAMP_NTZ defaults to nanosecond precision. SQLGlot's intermediate DuckDB TIMESTAMP cast truncates .123456789 before extracting nanoseconds, producing 123456000 instead of 123456789. Verified with local SQLGlot and DuckDB 2.0 while fixing timestamp type compatibility (#544); do not assert this precision-losing upstream expectation. https://docs.snowflake.com/en/sql-reference/data-types-datetime"
+  },
+  {
+    "source": "snowflake",
+    "target": "duckdb",
     "sql": "WITH t AS (SELECT PARSE_JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT t.v:c[s.x]:r:d::varchar FROM t, s",
     "upstream_expected": "WITH t AS (SELECT JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT CAST((t.v -> '$.c')[s.x] -> '$.r.d' AS TEXT) FROM t, s",
     "vendor_expected": "WITH t AS (SELECT JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT CAST((t.v -> '$.c')[s.x] -> '$.r.d' ->> '$' AS TEXT) FROM t, s",
