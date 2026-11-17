@@ -1467,7 +1467,9 @@ impl DuckDBDialect {
     fn normalize_empty_map_expr(expr: Expression) -> Expression {
         match expr {
             Expression::Cast(mut c) if matches!(&c.to, DataType::Map { .. }) => {
-                if matches!(&c.this, Expression::Struct(s) if s.fields.is_empty()) {
+                if matches!(&c.this, Expression::Struct(s) if s.fields.is_empty())
+                    || matches!(&c.this, Expression::Function(f) if f.name.eq_ignore_ascii_case("JSON_OBJECT") && f.args.is_empty())
+                {
                     c.this =
                         Expression::Function(Box::new(Function::new("MAP".to_string(), vec![])));
                 }
@@ -2794,38 +2796,105 @@ impl DuckDBDialect {
                     f.args,
                 ))))
             }
-            "OBJECT_CONSTRUCT" => {
-                // Convert to DuckDB struct literal: {'key1': val1, 'key2': val2}
-                let args = f.args;
-                if args.is_empty() {
-                    // Empty OBJECT_CONSTRUCT() -> STRUCT_PACK() (no args)
-                    Ok(Expression::Function(Box::new(Function::new(
-                        "STRUCT_PACK".to_string(),
+            "OBJECT_CONSTRUCT" if f.args.len() % 2 == 0 => {
+                // SQL NULL pairs are absent; JSON null values remain present.
+                let pairs: Vec<_> = f
+                    .args
+                    .chunks_exact(2)
+                    .filter(|pair| {
+                        !matches!(pair[0], Expression::Null(_))
+                            && !matches!(pair[1], Expression::Null(_))
+                    })
+                    .map(|pair| (pair[0].clone(), pair[1].clone()))
+                    .collect();
+                if pairs.is_empty() {
+                    return Ok(Expression::Function(Box::new(Function::new(
+                        "JSON_OBJECT",
                         vec![],
-                    ))))
-                } else {
-                    // Build struct literal from key-value pairs
-                    let mut fields = Vec::new();
-                    let mut i = 0;
-                    while i + 1 < args.len() {
-                        let key = &args[i];
-                        let value = args[i + 1].clone();
-                        let key_name = match key {
-                            Expression::Literal(lit)
-                                if matches!(lit.as_ref(), Literal::String(_)) =>
-                            {
-                                let Literal::String(s) = lit.as_ref() else {
-                                    unreachable!()
-                                };
-                                Some(s.clone())
-                            }
-                            _ => None,
-                        };
-                        fields.push((key_name, value));
-                        i += 2;
-                    }
-                    Ok(Expression::Struct(Box::new(Struct { fields })))
+                    ))));
                 }
+                // A struct is sufficient when every field is statically present.
+                if pairs.iter().all(|(key, value)| {
+                    matches!(key, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
+                        && matches!(value, Expression::Literal(_) | Expression::Boolean(_)
+                            | Expression::Struct(_) | Expression::Array(_) | Expression::ArrayFunc(_))
+                }) {
+                    let fields = pairs.into_iter().map(|(key, value)| {
+                        let Expression::Literal(lit) = key else { unreachable!() };
+                        let Literal::String(key) = *lit else { unreachable!() };
+                        (Some(key), value)
+                    }).collect();
+                    return Ok(Expression::Struct(Box::new(Struct { fields })));
+                }
+
+                // JSON values give the entries a common type without coercing mixed
+                // scalars to strings. TO_JSON preserves SQL NULL versus JSON null.
+                let entries = pairs
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Expression::Struct(Box::new(Struct {
+                            fields: vec![
+                                (
+                                    Some("key".to_string()),
+                                    Expression::Cast(Box::new(Cast {
+                                        this: key,
+                                        to: DataType::Text,
+                                        trailing_comments: Vec::new(),
+                                        double_colon_syntax: false,
+                                        format: None,
+                                        default: None,
+                                        inferred_type: None,
+                                    })),
+                                ),
+                                (
+                                    Some("value".to_string()),
+                                    Expression::Function(Box::new(Function::new(
+                                        "TO_JSON",
+                                        vec![value],
+                                    ))),
+                                ),
+                            ],
+                        }))
+                    })
+                    .collect();
+                let is_present = |field| {
+                    Expression::IsNull(Box::new(IsNull {
+                        this: Expression::Dot(Box::new(crate::expressions::DotAccess {
+                            this: Expression::column("__entry"),
+                            field: Identifier::new(field),
+                            inferred_type: None,
+                        })),
+                        not: true,
+                        postfix_form: false,
+                    }))
+                };
+                let predicate = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                    parameters: vec![Identifier::new("__entry")],
+                    body: Expression::And(Box::new(BinaryOp::new(
+                        is_present("key"),
+                        is_present("value"),
+                    ))),
+                    colon: false,
+                    parameter_types: Vec::new(),
+                }));
+                let filtered = Expression::Function(Box::new(Function::new(
+                    "LIST_FILTER",
+                    vec![
+                        Expression::Array(Box::new(crate::expressions::Array {
+                            expressions: entries,
+                            inferred_type: None,
+                        })),
+                        predicate,
+                    ],
+                )));
+                let map = Expression::Function(Box::new(Function::new(
+                    "MAP_FROM_ENTRIES",
+                    vec![filtered],
+                )));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "TO_JSON",
+                    vec![map],
+                ))))
             }
             "IS_NULL_VALUE" if f.args.len() == 1 => {
                 let arg = f.args.into_iter().next().unwrap();
@@ -4361,7 +4430,8 @@ impl DuckDBDialect {
                     Expression::Struct(s) if s.fields.is_empty() => true,
                     Expression::Function(f) => {
                         let n = f.name.to_uppercase();
-                        (n == "STRUCT_PACK" || n == "OBJECT_CONSTRUCT") && f.args.is_empty()
+                        (n == "STRUCT_PACK" || n == "OBJECT_CONSTRUCT" || n == "JSON_OBJECT")
+                            && f.args.is_empty()
                     }
                     _ => false,
                 };
@@ -8795,6 +8865,68 @@ mod tests {
             transpile_to_duckdb_from("SELECT SUBSTRING('hello', 0, 2)", DialectType::DuckDB),
             "SELECT SUBSTRING('hello', 0, 2)"
         );
+    }
+
+    #[test]
+    fn test_snowflake_object_construct_omits_sql_null_pairs() {
+        for (input, expected) in [
+            (
+                "SELECT OBJECT_CONSTRUCT(k, v) FROM t",
+                "SELECT TO_JSON(MAP_FROM_ENTRIES(LIST_FILTER([{'key': CAST(k AS TEXT), 'value': TO_JSON(v)}], LAMBDA __entry : __entry.key IS NOT NULL AND __entry.value IS NOT NULL))) FROM t",
+            ),
+            (
+                "SELECT OBJECT_INSERT(OBJECT_CONSTRUCT(), 'a', 1)",
+                "SELECT STRUCT_PACK(a := 1)",
+            ),
+            (
+                "SELECT OBJECT_CONSTRUCT('b', 1, 'a', NULL) AS o",
+                "SELECT {'b': 1} AS o",
+            ),
+            (
+                "SELECT OBJECT_CONSTRUCT(NULL, 1, 'a', 'x')",
+                "SELECT {'a': 'x'}",
+            ),
+            ("SELECT OBJECT_CONSTRUCT('a', NULL)", "SELECT JSON_OBJECT()"),
+            ("SELECT OBJECT_CONSTRUCT()", "SELECT JSON_OBJECT()"),
+            (
+                "SELECT OBJECT_CONSTRUCT('n', 1, 's', 'text')",
+                "SELECT {'n': 1, 's': 'text'}",
+            ),
+            (
+                "SELECT OBJECT_CONSTRUCT('outer', OBJECT_CONSTRUCT('drop', NULL, 'keep', 1))",
+                "SELECT {'outer': {'keep': 1}}",
+            ),
+            (
+                "SELECT OBJECT_CONSTRUCT_KEEP_NULL('b', 1, 'a', NULL)",
+                "SELECT JSON_OBJECT('b', 1, 'a', NULL)",
+            ),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        for input in [
+            "SELECT OBJECT_CONSTRUCT('a', a, 'b', b) FROM t",
+            "SELECT OBJECT_CONSTRUCT(k, v) FROM t",
+            "SELECT OBJECT_CONSTRUCT('a', PARSE_JSON('null'), 'b', NULL)",
+            "SELECT OBJECT_CONSTRUCT('a', CAST(NULL AS INT))",
+        ] {
+            let result = transpile_to_duckdb_from(input, DialectType::Snowflake);
+            assert!(
+                result.contains("TO_JSON(MAP_FROM_ENTRIES(LIST_FILTER("),
+                "{input}: {result}"
+            );
+            assert!(
+                result.contains("__entry.key IS NOT NULL AND __entry.value IS NOT NULL"),
+                "{result}"
+            );
+            assert!(
+                !result.contains("JSON_TYPE("),
+                "JSON null must remain present: {result}"
+            );
+        }
     }
 
     #[test]

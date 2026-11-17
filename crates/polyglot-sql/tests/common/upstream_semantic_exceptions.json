@@ -1,5 +1,12 @@
 [
   {
+    "source": "snowflake",
+    "target": "duckdb",
+    "sql": "OBJECT_CONSTRUCT('a', b, 'c', d)",
+    "upstream_expected": "{'a': b, 'c': d}",
+    "reason": "Snowflake OBJECT_CONSTRUCT omits pairs whose key or value is SQL NULL; the upstream DuckDB struct retains fields when b or d is NULL (issue #542). Verified with local SQLGlot and DuckDB 2.0. https://docs.snowflake.com/en/sql-reference/functions/object_construct"
+  },
+  {
     "source": "generic",
     "target": "mysql",
     "sql": "SELECT * FROM t QUALIFY COUNT(*) OVER () > 1",
