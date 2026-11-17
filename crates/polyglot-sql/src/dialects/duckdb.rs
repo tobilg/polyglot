@@ -8745,6 +8745,33 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_regexp_like_uses_full_match() {
+        for (input, expected) in [
+            ("SELECT REGEXP_LIKE('abc', 'b') AS r", "SELECT REGEXP_FULL_MATCH('abc', 'b') AS r"),
+            ("SELECT REGEXP_LIKE('abc', 'abc')", "SELECT REGEXP_FULL_MATCH('abc', 'abc')"),
+            ("SELECT REGEXP_LIKE('abc', '.*b.*')", "SELECT REGEXP_FULL_MATCH('abc', '.*b.*')"),
+            ("SELECT REGEXP_LIKE('abc', 'ABC', 'i')", "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'i')"),
+            ("SELECT REGEXP_LIKE('abc', 'ABC', 'c')", "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'c')"),
+            ("SELECT REGEXP_LIKE('', '')", "SELECT REGEXP_FULL_MATCH('', '')"),
+            ("SELECT REGEXP_LIKE('abc', '')", "SELECT REGEXP_FULL_MATCH('abc', '')"),
+            ("SELECT REGEXP_LIKE(NULL, 'b')", "SELECT REGEXP_FULL_MATCH(NULL, 'b')"),
+            ("SELECT NOT REGEXP_LIKE(s, p, f) FROM t", "SELECT NOT REGEXP_FULL_MATCH(s, p, f) FROM t"),
+            ("SELECT RLIKE('abc', 'b')", "SELECT REGEXP_FULL_MATCH('abc', 'b')"),
+            ("SELECT 'abc' RLIKE 'b'", "SELECT REGEXP_FULL_MATCH('abc', 'b')"),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        assert_eq!(
+            transpile_to_duckdb_from("SELECT REGEXP_LIKE('abc', 'b')", DialectType::PostgreSQL),
+            "SELECT REGEXP_MATCHES('abc', 'b')"
+        );
+    }
+
+    #[test]
     fn test_double_quote_identifiers() {
         // DuckDB uses double quotes for identifiers
         let dialect = Dialect::get(DialectType::DuckDB);

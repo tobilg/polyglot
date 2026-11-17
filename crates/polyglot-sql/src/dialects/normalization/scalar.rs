@@ -3503,8 +3503,14 @@ pub(super) fn rewrite(
                                     if let Some(fl) = flags {
                                         new_args.push(fl);
                                     }
+                                    // Snowflake REGEXP_LIKE, like RLIKE, matches the whole string.
+                                    let name = if matches!(source, DialectType::Snowflake) {
+                                        "REGEXP_FULL_MATCH"
+                                    } else {
+                                        "REGEXP_MATCHES"
+                                    };
                                     Ok(Expression::Function(Box::new(Function::new(
-                                        "REGEXP_MATCHES".to_string(),
+                                        name.to_string(),
                                         new_args,
                                     ))))
                                 }
