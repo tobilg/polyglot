@@ -3091,6 +3091,13 @@ pub(super) fn normalize(
                         Action::None
                     }
                 }
+                // Snowflake treats a substring start of zero as one.
+                Expression::Substring(_)
+                    if matches!(source, DialectType::Snowflake)
+                        && matches!(target, DialectType::DuckDB) =>
+                {
+                    Action::Scalar(scalar::Action::SnowflakeSubstringStart)
+                }
                 // EPOCH(x) expression -> target-specific epoch conversion
                 Expression::Epoch(_) if !matches!(target, DialectType::DuckDB) => {
                     Action::Temporal(temporal::Action::EpochConvert)

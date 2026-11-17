@@ -8772,6 +8772,32 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_substring_zero_start() {
+        for (input, expected) in [
+            ("SELECT SUBSTR('hello', 0, 2) AS s", "SELECT SUBSTRING('hello', 1, 2) AS s"),
+            ("SELECT SUBSTRING('hello', 0, 2)", "SELECT SUBSTRING('hello', 1, 2)"),
+            ("SELECT SUBSTR('hello', 0)", "SELECT SUBSTRING('hello', 1)"),
+            ("SELECT SUBSTR('hello', 0, 0)", "SELECT SUBSTRING('hello', 1, 0)"),
+            ("SELECT SUBSTR('hello', 1, 2)", "SELECT SUBSTRING('hello', 1, 2)"),
+            ("SELECT SUBSTR('hello', 3, 2)", "SELECT SUBSTRING('hello', 3, 2)"),
+            ("SELECT SUBSTR('hello', -2, 2)", "SELECT SUBSTRING('hello', CASE WHEN -2 = 0 THEN 1 ELSE -2 END, 2)"),
+            ("SELECT SUBSTR('hello', NULL, 2)", "SELECT SUBSTRING('hello', CASE WHEN NULL = 0 THEN 1 ELSE NULL END, 2)"),
+            ("SELECT SUBSTR(s, p, n) FROM t", "SELECT SUBSTRING(s, CASE WHEN p = 0 THEN 1 ELSE p END, n) FROM t"),
+            ("SELECT SUBSTR(s, p - 1) FROM t", "SELECT SUBSTRING(s, CASE WHEN p - 1 = 0 THEN 1 ELSE p - 1 END) FROM t"),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        assert_eq!(
+            transpile_to_duckdb_from("SELECT SUBSTRING('hello', 0, 2)", DialectType::DuckDB),
+            "SELECT SUBSTRING('hello', 0, 2)"
+        );
+    }
+
+    #[test]
     fn test_double_quote_identifiers() {
         // DuckDB uses double quotes for identifiers
         let dialect = Dialect::get(DialectType::DuckDB);

@@ -62,6 +62,7 @@ fn java_to_strptime_format(fmt: &str) -> String {
 #[derive(Debug)]
 pub(super) enum Action {
     GreatestLeastNull,
+    SnowflakeSubstringStart,
     SnowflakeRoundToClickHouse,
     BigQueryFunctionNormalize,
     BigQueryToHexBare,
@@ -97,6 +98,37 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::SnowflakeSubstringStart => {
+                if let Expression::Substring(mut f) = e {
+                    let literal_start = match &f.start {
+                        Expression::Literal(lit) => match lit.as_ref() {
+                            Literal::Number(value) => value.parse::<i64>().ok(),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    f.start = match literal_start {
+                        Some(0) => Expression::number(1),
+                        Some(_) => f.start,
+                        None => Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![(
+                                Expression::Eq(Box::new(BinaryOp::new(
+                                    f.start.clone(),
+                                    Expression::number(0),
+                                ))),
+                                Expression::number(1),
+                            )],
+                            else_: Some(f.start),
+                            comments: Vec::new(),
+                            inferred_type: None,
+                        })),
+                    };
+                    Ok(Expression::Substring(f))
+                } else {
+                    Ok(e)
+                }
+            }
             Action::GreatestLeastNull => {
                 let f = if let Expression::Function(f) = e {
                     *f
