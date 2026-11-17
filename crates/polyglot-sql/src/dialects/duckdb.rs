@@ -8868,6 +8868,53 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_json_path_cast_to_text() {
+        for (input, expected) in [
+            (
+                "SELECT v:s::STRING AS s, v:n::STRING AS n FROM (SELECT PARSE_JSON('{\"s\":\"text\",\"n\":null}') AS v)",
+                "SELECT CAST(v -> '$.s' ->> '$' AS TEXT) AS s, CAST(v -> '$.n' ->> '$' AS TEXT) AS n FROM (SELECT JSON('{\"s\":\"text\",\"n\":null}') AS v)",
+            ),
+            (
+                "SELECT CAST(v:s AS VARCHAR), CAST(v:n AS TEXT), CAST(v:missing AS CHAR) FROM t",
+                "SELECT CAST(v -> '$.s' ->> '$' AS TEXT), CAST(v -> '$.n' ->> '$' AS TEXT), CAST(v -> '$.missing' ->> '$' AS TEXT) FROM t",
+            ),
+            (
+                "SELECT v:a[0]:s::VARCHAR, (v:s)::STRING FROM t",
+                "SELECT CAST(v -> '$.a[0].s' ->> '$' AS TEXT), CAST((v -> '$.s') ->> '$' AS TEXT) FROM t",
+            ),
+            (
+                "SELECT PARSE_JSON('\"text\"')::STRING, PARSE_JSON('null')::STRING, PARSE_JSON(NULL)::STRING",
+                "SELECT CAST(JSON('\"text\"') ->> '$' AS TEXT), CAST(JSON('null') ->> '$' AS TEXT), CAST(JSON(NULL) ->> '$' AS TEXT)",
+            ),
+            (
+                "SELECT GET_PATH(v, 's')::STRING FROM t",
+                "SELECT CAST(v -> '$.s' ->> '$' AS TEXT) FROM t",
+            ),
+            (
+                "SELECT v:a[t.i]::STRING FROM t",
+                "SELECT CAST((v -> '$.a')[t.i] ->> '$' AS TEXT) FROM t",
+            ),
+            (
+                "SELECT v:s::INTEGER, CAST('text' AS STRING), CAST(s AS VARCHAR) FROM t",
+                "SELECT CAST(v -> '$.s' AS INT), CAST('text' AS TEXT), CAST(s AS TEXT) FROM t",
+            ),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        assert_eq!(
+            transpile_to_duckdb_from(
+                "SELECT CAST(j -> '$.s' AS VARCHAR) FROM t",
+                DialectType::DuckDB
+            ),
+            "SELECT CAST(j -> '$.s' AS TEXT) FROM t"
+        );
+    }
+
+    #[test]
     fn test_snowflake_object_construct_omits_sql_null_pairs() {
         for (input, expected) in [
             (

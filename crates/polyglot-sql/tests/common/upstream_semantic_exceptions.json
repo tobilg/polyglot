@@ -2,6 +2,14 @@
   {
     "source": "snowflake",
     "target": "duckdb",
+    "sql": "WITH t AS (SELECT PARSE_JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT t.v:c[s.x]:r:d::varchar FROM t, s",
+    "upstream_expected": "WITH t AS (SELECT JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT CAST((t.v -> '$.c')[s.x] -> '$.r.d' AS TEXT) FROM t, s",
+    "vendor_expected": "WITH t AS (SELECT JSON('{\"c\": [{\"r\": {\"d\": 1}}]}') AS v), s AS (SELECT 0 AS x) SELECT CAST((t.v -> '$.c')[s.x] -> '$.r.d' ->> '$' AS TEXT) FROM t, s",
+    "reason": "The upstream fixture's numeric value still gives the correct result, but explicit Snowflake JSON-to-text casts now use JSON_EXTRACT_STRING to also handle strings and JSON null correctly (issue #543). Keep testing this equivalent numeric case with the corrected general cast translation. https://docs.snowflake.com/en/user-guide/querying-semistructured"
+  },
+  {
+    "source": "snowflake",
+    "target": "duckdb",
     "sql": "OBJECT_CONSTRUCT('a', b, 'c', d)",
     "upstream_expected": "{'a': b, 'c': d}",
     "reason": "Snowflake OBJECT_CONSTRUCT omits pairs whose key or value is SQL NULL; the upstream DuckDB struct retains fields when b or d is NULL (issue #542). Verified with local SQLGlot and DuckDB 2.0. https://docs.snowflake.com/en/sql-reference/functions/object_construct"

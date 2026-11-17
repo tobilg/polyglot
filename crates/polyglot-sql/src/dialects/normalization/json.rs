@@ -13,6 +13,7 @@ pub(super) enum Action {
     JsonQueryValueConvert,
     JsonLiteralToJsonParse,
     DuckDBCastJsonToVariant,
+    SnowflakeJsonCastToText,
     DuckDBTryCastJsonToTryJsonParse,
     DuckDBJsonFuncToJsonParse,
     DuckDBJsonValidToIsJson,
@@ -41,6 +42,19 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::SnowflakeJsonCastToText => {
+                if let Expression::Cast(mut c) = e {
+                    // Snowflake's VARIANT cast unwraps strings and maps JSON null
+                    // to SQL NULL. DuckDB's JSON cast instead serializes both.
+                    c.this = Expression::Function(Box::new(Function::new(
+                        "JSON_EXTRACT_STRING".to_string(),
+                        vec![c.this, Expression::string("$")],
+                    )));
+                    Ok(Expression::Cast(c))
+                } else {
+                    Ok(e)
+                }
+            }
             Action::TsqlJsonConstructorReturnType => rewrite_tsql_json_constructor_return_type(e),
             Action::PostgresJsonBuildObjectToJsonObject => match e {
                 Expression::Function(f) => Ok(Expression::JsonObject(
@@ -828,6 +842,37 @@ enum TsqlJsonReturnType {
     Json,
     Character(DataType),
     Unsupported,
+}
+
+pub(super) fn is_snowflake_json_text_cast(cast: &Cast) -> bool {
+    fn is_json(expression: &Expression) -> bool {
+        match expression {
+            Expression::JSONExtract(_)
+            | Expression::JsonExtract(_)
+            | Expression::ParseJson(_) => true,
+            Expression::Paren(p) => is_json(&p.this),
+            Expression::Subscript(s) => is_json(&s.this),
+            Expression::Cast(c) | Expression::TryCast(c) => matches!(c.to, DataType::Json),
+            Expression::Function(f)
+                if matches!(
+                    f.name.to_ascii_uppercase().as_str(),
+                    "GET_PATH" | "PARSE_JSON" | "TRY_PARSE_JSON"
+                ) =>
+            {
+                true
+            }
+            _ => matches!(expression.inferred_type(), Some(DataType::Json)),
+        }
+    }
+
+    matches!(
+        cast.to,
+        DataType::Char { .. }
+            | DataType::VarChar { .. }
+            | DataType::String { .. }
+            | DataType::Text
+            | DataType::TextWithLength { .. }
+    ) && is_json(&cast.this)
 }
 
 pub(super) fn has_json_constructor_return_type(expression: &Expression) -> bool {

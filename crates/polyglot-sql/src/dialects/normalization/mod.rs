@@ -2520,7 +2520,12 @@ pub(super) fn normalize(
                 // because BigQuery's TIMESTAMP is really TIMESTAMPTZ, and
                 // DATETIME is the timezone-unaware type
                 Expression::Cast(ref c) => {
-                    if matches!(source, DialectType::PostgreSQL)
+                    if matches!(source, DialectType::Snowflake)
+                        && matches!(target, DialectType::DuckDB)
+                        && json::is_snowflake_json_text_cast(c)
+                    {
+                        Action::Json(json::Action::SnowflakeJsonCastToText)
+                    } else if matches!(source, DialectType::PostgreSQL)
                         && matches!(target, DialectType::TSQL | DialectType::Fabric)
                         && types::is_postgres_unknown_null_cast(c)
                     {
