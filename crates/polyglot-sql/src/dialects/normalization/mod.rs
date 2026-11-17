@@ -2483,6 +2483,11 @@ pub(super) fn normalize(
                 }
                 Expression::WithinGroup(wg) => {
                     if matches!(source, DialectType::Snowflake)
+                        && matches!(target, DialectType::DuckDB)
+                        && matches!(&wg.this, Expression::ListAgg(f) if f.separator.is_none())
+                    {
+                        Action::Aggregates(aggregates::Action::SnowflakeListAggSeparator)
+                    } else if matches!(source, DialectType::Snowflake)
                         && matches!(
                             target,
                             DialectType::DuckDB | DialectType::Presto | DialectType::Trino
@@ -3093,6 +3098,14 @@ pub(super) fn normalize(
                 // EPOCH_MS(x) expression -> target-specific epoch ms conversion
                 Expression::EpochMs(_) if !matches!(target, DialectType::DuckDB) => {
                     Action::Temporal(temporal::Action::EpochMsConvert)
+                }
+                // Snowflake LISTAGG defaults to an empty separator; DuckDB uses a comma.
+                Expression::ListAgg(f)
+                    if f.separator.is_none()
+                        && matches!(source, DialectType::Snowflake)
+                        && matches!(target, DialectType::DuckDB) =>
+                {
+                    Action::Aggregates(aggregates::Action::SnowflakeListAggSeparator)
                 }
                 // STRING_AGG -> GROUP_CONCAT for MySQL/SQLite
                 Expression::StringAgg(_) => {

@@ -15,6 +15,7 @@ pub(super) enum Action {
     BigQueryAnyValueHaving,
     BigQueryApproxQuantiles,
     StringAggConvert,
+    SnowflakeListAggSeparator,
     GroupConcatConvert,
     MaxByMinByConvert,
     ArrayAggToCollectList,
@@ -51,6 +52,20 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::SnowflakeListAggSeparator => Ok(match e {
+                Expression::ListAgg(mut f) => {
+                    f.separator = Some(Expression::string(""));
+                    Expression::ListAgg(f)
+                }
+                Expression::WithinGroup(mut wg) => {
+                    // The dialect walker keeps WITHIN GROUP and its aggregate together.
+                    if let Expression::ListAgg(ref mut f) = wg.this {
+                        f.separator = Some(Expression::string(""));
+                    }
+                    Expression::WithinGroup(wg)
+                }
+                other => other,
+            }),
             Action::DuckDBSampleAlias => Ok(match e {
                 Expression::Variance(f) => Expression::VarSamp(f),
                 Expression::Stddev(f) => Expression::StddevSamp(f),

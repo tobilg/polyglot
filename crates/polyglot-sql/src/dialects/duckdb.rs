@@ -8681,6 +8681,39 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_listagg_default_separator() {
+        for (input, expected) in [
+            (
+                "SELECT LISTAGG(x) WITHIN GROUP (ORDER BY x) AS l FROM (SELECT 'b' AS x UNION ALL SELECT 'a' UNION ALL SELECT 'b')",
+                "SELECT LISTAGG(x, '' ORDER BY x) AS l FROM (SELECT 'b' AS x UNION ALL SELECT 'a' UNION ALL SELECT 'b')",
+            ),
+            ("SELECT LISTAGG(x) FROM t", "SELECT LISTAGG(x, '') FROM t"),
+            (
+                "SELECT LISTAGG(DISTINCT x) WITHIN GROUP (ORDER BY x DESC) FROM t",
+                "SELECT LISTAGG(DISTINCT x, '' ORDER BY x DESC NULLS FIRST) FROM t",
+            ),
+            (
+                "SELECT LISTAGG(x) WITHIN GROUP (ORDER BY x) OVER (PARTITION BY k) FROM t",
+                "SELECT LISTAGG(x, '' ORDER BY x) OVER (PARTITION BY k) FROM t",
+            ),
+            ("SELECT LISTAGG(x, '|') FROM t", "SELECT LISTAGG(x, '|') FROM t"),
+            ("SELECT LISTAGG(x, '') FROM t", "SELECT LISTAGG(x, '') FROM t"),
+        ] {
+            assert_eq!(
+                transpile_to_duckdb_from(input, DialectType::Snowflake),
+                expected,
+                "{input}"
+            );
+        }
+        let input = "SELECT LISTAGG(x) FROM t";
+        assert_eq!(transpile_to_duckdb_from(input, DialectType::DuckDB), input);
+        assert_eq!(
+            crate::transpile(input, DialectType::Snowflake, DialectType::Snowflake).unwrap(),
+            vec![input]
+        );
+    }
+
+    #[test]
     fn test_ordered_group_concat_uses_duckdb_listagg_order_syntax() {
         let result = transpile_to_duckdb_from(
             "SELECT GROUP_CONCAT(nm ORDER BY id SEPARATOR ',') AS v FROM t",
