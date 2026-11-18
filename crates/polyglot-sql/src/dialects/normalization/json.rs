@@ -847,9 +847,9 @@ enum TsqlJsonReturnType {
 pub(super) fn is_snowflake_json_text_cast(cast: &Cast) -> bool {
     fn is_json(expression: &Expression) -> bool {
         match expression {
-            Expression::JSONExtract(_)
-            | Expression::JsonExtract(_)
-            | Expression::ParseJson(_) => true,
+            Expression::JSONExtract(_) | Expression::JsonExtract(_) | Expression::ParseJson(_) => {
+                true
+            }
             Expression::Paren(p) => is_json(&p.this),
             Expression::Subscript(s) => is_json(&s.this),
             Expression::Cast(c) | Expression::TryCast(c) => matches!(c.to, DataType::Json),

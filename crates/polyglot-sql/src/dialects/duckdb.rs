@@ -8817,17 +8817,50 @@ mod tests {
     #[test]
     fn test_snowflake_regexp_like_uses_full_match() {
         for (input, expected) in [
-            ("SELECT REGEXP_LIKE('abc', 'b') AS r", "SELECT REGEXP_FULL_MATCH('abc', 'b') AS r"),
-            ("SELECT REGEXP_LIKE('abc', 'abc')", "SELECT REGEXP_FULL_MATCH('abc', 'abc')"),
-            ("SELECT REGEXP_LIKE('abc', '.*b.*')", "SELECT REGEXP_FULL_MATCH('abc', '.*b.*')"),
-            ("SELECT REGEXP_LIKE('abc', 'ABC', 'i')", "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'i')"),
-            ("SELECT REGEXP_LIKE('abc', 'ABC', 'c')", "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'c')"),
-            ("SELECT REGEXP_LIKE('', '')", "SELECT REGEXP_FULL_MATCH('', '')"),
-            ("SELECT REGEXP_LIKE('abc', '')", "SELECT REGEXP_FULL_MATCH('abc', '')"),
-            ("SELECT REGEXP_LIKE(NULL, 'b')", "SELECT REGEXP_FULL_MATCH(NULL, 'b')"),
-            ("SELECT NOT REGEXP_LIKE(s, p, f) FROM t", "SELECT NOT REGEXP_FULL_MATCH(s, p, f) FROM t"),
-            ("SELECT RLIKE('abc', 'b')", "SELECT REGEXP_FULL_MATCH('abc', 'b')"),
-            ("SELECT 'abc' RLIKE 'b'", "SELECT REGEXP_FULL_MATCH('abc', 'b')"),
+            (
+                "SELECT REGEXP_LIKE('abc', 'b') AS r",
+                "SELECT REGEXP_FULL_MATCH('abc', 'b') AS r",
+            ),
+            (
+                "SELECT REGEXP_LIKE('abc', 'abc')",
+                "SELECT REGEXP_FULL_MATCH('abc', 'abc')",
+            ),
+            (
+                "SELECT REGEXP_LIKE('abc', '.*b.*')",
+                "SELECT REGEXP_FULL_MATCH('abc', '.*b.*')",
+            ),
+            (
+                "SELECT REGEXP_LIKE('abc', 'ABC', 'i')",
+                "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'i')",
+            ),
+            (
+                "SELECT REGEXP_LIKE('abc', 'ABC', 'c')",
+                "SELECT REGEXP_FULL_MATCH('abc', 'ABC', 'c')",
+            ),
+            (
+                "SELECT REGEXP_LIKE('', '')",
+                "SELECT REGEXP_FULL_MATCH('', '')",
+            ),
+            (
+                "SELECT REGEXP_LIKE('abc', '')",
+                "SELECT REGEXP_FULL_MATCH('abc', '')",
+            ),
+            (
+                "SELECT REGEXP_LIKE(NULL, 'b')",
+                "SELECT REGEXP_FULL_MATCH(NULL, 'b')",
+            ),
+            (
+                "SELECT NOT REGEXP_LIKE(s, p, f) FROM t",
+                "SELECT NOT REGEXP_FULL_MATCH(s, p, f) FROM t",
+            ),
+            (
+                "SELECT RLIKE('abc', 'b')",
+                "SELECT REGEXP_FULL_MATCH('abc', 'b')",
+            ),
+            (
+                "SELECT 'abc' RLIKE 'b'",
+                "SELECT REGEXP_FULL_MATCH('abc', 'b')",
+            ),
         ] {
             assert_eq!(
                 transpile_to_duckdb_from(input, DialectType::Snowflake),
@@ -8844,16 +8877,43 @@ mod tests {
     #[test]
     fn test_snowflake_substring_zero_start() {
         for (input, expected) in [
-            ("SELECT SUBSTR('hello', 0, 2) AS s", "SELECT SUBSTRING('hello', 1, 2) AS s"),
-            ("SELECT SUBSTRING('hello', 0, 2)", "SELECT SUBSTRING('hello', 1, 2)"),
+            (
+                "SELECT SUBSTR('hello', 0, 2) AS s",
+                "SELECT SUBSTRING('hello', 1, 2) AS s",
+            ),
+            (
+                "SELECT SUBSTRING('hello', 0, 2)",
+                "SELECT SUBSTRING('hello', 1, 2)",
+            ),
             ("SELECT SUBSTR('hello', 0)", "SELECT SUBSTRING('hello', 1)"),
-            ("SELECT SUBSTR('hello', 0, 0)", "SELECT SUBSTRING('hello', 1, 0)"),
-            ("SELECT SUBSTR('hello', 1, 2)", "SELECT SUBSTRING('hello', 1, 2)"),
-            ("SELECT SUBSTR('hello', 3, 2)", "SELECT SUBSTRING('hello', 3, 2)"),
-            ("SELECT SUBSTR('hello', -2, 2)", "SELECT SUBSTRING('hello', CASE WHEN -2 = 0 THEN 1 ELSE -2 END, 2)"),
-            ("SELECT SUBSTR('hello', NULL, 2)", "SELECT SUBSTRING('hello', CASE WHEN NULL = 0 THEN 1 ELSE NULL END, 2)"),
-            ("SELECT SUBSTR(s, p, n) FROM t", "SELECT SUBSTRING(s, CASE WHEN p = 0 THEN 1 ELSE p END, n) FROM t"),
-            ("SELECT SUBSTR(s, p - 1) FROM t", "SELECT SUBSTRING(s, CASE WHEN p - 1 = 0 THEN 1 ELSE p - 1 END) FROM t"),
+            (
+                "SELECT SUBSTR('hello', 0, 0)",
+                "SELECT SUBSTRING('hello', 1, 0)",
+            ),
+            (
+                "SELECT SUBSTR('hello', 1, 2)",
+                "SELECT SUBSTRING('hello', 1, 2)",
+            ),
+            (
+                "SELECT SUBSTR('hello', 3, 2)",
+                "SELECT SUBSTRING('hello', 3, 2)",
+            ),
+            (
+                "SELECT SUBSTR('hello', -2, 2)",
+                "SELECT SUBSTRING('hello', CASE WHEN -2 = 0 THEN 1 ELSE -2 END, 2)",
+            ),
+            (
+                "SELECT SUBSTR('hello', NULL, 2)",
+                "SELECT SUBSTRING('hello', CASE WHEN NULL = 0 THEN 1 ELSE NULL END, 2)",
+            ),
+            (
+                "SELECT SUBSTR(s, p, n) FROM t",
+                "SELECT SUBSTRING(s, CASE WHEN p = 0 THEN 1 ELSE p END, n) FROM t",
+            ),
+            (
+                "SELECT SUBSTR(s, p - 1) FROM t",
+                "SELECT SUBSTRING(s, CASE WHEN p - 1 = 0 THEN 1 ELSE p - 1 END) FROM t",
+            ),
         ] {
             assert_eq!(
                 transpile_to_duckdb_from(input, DialectType::Snowflake),
