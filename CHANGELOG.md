@@ -4,6 +4,57 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.14.2] - 2026-11-18
+
+### Fixed
+
+- ClickHouse accepts `INSERT INTO ... FORMAT Values` headers without inline
+  rows when data is supplied separately. Parsing preserves the structured
+  `INSERT`, format spelling, column list, and statement boundaries.
+  ([#530](https://github.com/tobilg/polyglot/issues/530))
+- DuckDB generation uses `XOR(left, right)` for bitwise exclusive OR instead of
+  `^`, which DuckDB interprets as exponentiation.
+  ([#534](https://github.com/tobilg/polyglot/issues/534))
+- Snowflake-to-DuckDB `GET` preserves zero-based JSON array indexes for numeric
+  literals. Known native arrays receive the one-based offset required by
+  DuckDB; native map keys retain their values.
+  ([#535](https://github.com/tobilg/polyglot/issues/535))
+- Snowflake-to-DuckDB `DATEDIFF` retains time components for hour, minute,
+  second, millisecond, and microsecond units instead of truncating operands
+  to dates before calculating the difference.
+  ([#536](https://github.com/tobilg/polyglot/issues/536))
+- Snowflake-to-DuckDB `DATEADD`, `TIMEADD`, and `TIMESTAMPADD` preserve `DATE`
+  results for known `DATE` inputs when adding days, weeks, months, quarters,
+  or years, instead of promoting the result to `TIMESTAMP`.
+  ([#537](https://github.com/tobilg/polyglot/issues/537))
+- Snowflake-to-DuckDB `CONCAT` and `CONCAT_WS` propagate SQL `NULL` arguments,
+  including a NULL separator, rather than skipping them.
+  ([#538](https://github.com/tobilg/polyglot/issues/538))
+- Snowflake-to-DuckDB `LISTAGG` uses an empty separator when none is specified,
+  including ordered, distinct, and windowed aggregates.
+  ([#539](https://github.com/tobilg/polyglot/issues/539))
+- Snowflake-to-DuckDB `REGEXP_LIKE` uses full-string matching through
+  `REGEXP_FULL_MATCH`, preserving pattern flags instead of matching substrings.
+  ([#540](https://github.com/tobilg/polyglot/issues/540))
+- Snowflake-to-DuckDB `SUBSTR` and `SUBSTRING` treat a start position of zero as
+  one, including dynamically computed positions.
+  ([#541](https://github.com/tobilg/polyglot/issues/541))
+- Snowflake-to-DuckDB `OBJECT_CONSTRUCT` omits entries whose key or value is
+  SQL `NULL`, including dynamic keys and values, while retaining JSON null
+  values and heterogeneous value types.
+  ([#542](https://github.com/tobilg/polyglot/issues/542))
+- Snowflake-to-DuckDB explicit string casts of known JSON expressions extract
+  text instead of serializing JSON: strings lose their surrounding JSON quotes,
+  and JSON null or missing paths produce SQL `NULL`.
+  ([#543](https://github.com/tobilg/polyglot/issues/543))
+- DuckDB generation maps Snowflake `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ` aliases
+  to supported types in column definitions, casts, and nested types. LTZ uses
+  `TIMESTAMPTZ` without a precision modifier; NTZ uses `TIMESTAMP` and retains
+  explicit precision. Default target timestamps use microsecond precision.
+  ([#544](https://github.com/tobilg/polyglot/issues/544))
+- Linux ARM64 FFI release builds split code generation and limit compiler
+  concurrency to reduce peak memory usage while retaining ThinLTO.
+
 ## [0.14.1] - 2026-11-08
 
 ### Added
@@ -2359,6 +2410,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.14.2]: https://github.com/tobilg/polyglot/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/tobilg/polyglot/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/tobilg/polyglot/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/tobilg/polyglot/compare/v0.13.4...v0.13.5
