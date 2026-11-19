@@ -4237,10 +4237,43 @@ pub(super) fn rewrite(
                             let (val, fmt_expr) = if matches!(source, DialectType::SQLite) {
                                 // SQLite: args[0] = format, args[1] = value
                                 (f.args[1].clone(), &f.args[0])
+                            } else if matches!(source, DialectType::DuckDB)
+                                && is_constant_string(&f.args[0])
+                                && !is_constant_string(&f.args[1])
+                            {
+                                // DuckDB also accepts STRFTIME(fmt, val). Its format must be a
+                                // constant and its value a date/timestamp, so a constant string
+                                // in first position is the format.
+                                (f.args[1].clone(), &f.args[0])
                             } else {
                                 // DuckDB and others: args[0] = value, args[1] = format
                                 (f.args[0].clone(), &f.args[1])
                             };
+
+                            // A string literal, or a concatenation of string literals
+                            fn is_constant_string(expr: &Expression) -> bool {
+                                match expr {
+                                    Expression::Literal(lit) => matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::String(_)
+                                    ),
+                                    Expression::Paren(p) => is_constant_string(&p.this),
+                                    Expression::DPipe(d) => {
+                                        is_constant_string(&d.this)
+                                            && is_constant_string(&d.expression)
+                                    }
+                                    Expression::Concat(op) => {
+                                        is_constant_string(&op.left)
+                                            && is_constant_string(&op.right)
+                                    }
+                                    Expression::Function(func)
+                                        if func.name.eq_ignore_ascii_case("CONCAT") =>
+                                    {
+                                        func.args.iter().all(is_constant_string)
+                                    }
+                                    _ => false,
+                                }
+                            }
 
                             // Helper to convert C-style format to Java-style
                             fn c_to_java_format(fmt: &str) -> String {
