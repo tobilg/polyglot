@@ -354,30 +354,24 @@ pub(super) fn rewrite(
                 if let Expression::Div(op) = e {
                     let left = op.left;
                     let right = op.right;
-                    // For SQLite: CAST left as REAL but NO NULLIF wrapping
+                    // SQLite: no NULLIF wrapping; the REAL cast is added by
+                    // cast_division_to_real after normalization
                     if matches!(target, DialectType::SQLite) {
-                        let new_left = Expression::Cast(Box::new(Cast {
-                            this: left,
-                            to: DataType::Float {
-                                precision: None,
-                                scale: None,
-                                real_spelling: true,
-                            },
-                            trailing_comments: Vec::new(),
-                            double_colon_syntax: false,
-                            format: None,
-                            default: None,
-                            inferred_type: None,
-                        }));
-                        return Ok(Expression::Div(Box::new(BinaryOp::new(new_left, right))));
+                        return Ok(Expression::Div(Box::new(BinaryOp::new(left, right))));
                     }
-                    // Wrap right in NULLIF(right, 0)
-                    let nullif_right = Expression::Function(Box::new(Function::new(
-                        "NULLIF".to_string(),
-                        vec![right, Expression::number(0)],
-                    )));
+                    // Wrap right in NULLIF(right, 0) unless it already is one
+                    let nullif_right = if matches!(&right, Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF"))
+                    {
+                        right
+                    } else {
+                        Expression::Function(Box::new(Function::new(
+                            "NULLIF".to_string(),
+                            vec![right, Expression::number(0)],
+                        )))
+                    };
                     // For some dialects, also CAST the left side
                     let new_left = match target {
+                        _ if is_float_cast(&left) => left,
                         DialectType::PostgreSQL
                         | DialectType::Redshift
                         | DialectType::Teradata
@@ -1751,6 +1745,42 @@ fn snowflake_regex_inline_flags(flags: Option<&Expression>) -> std::result::Resu
     } else {
         Ok(format!("(?{enabled}-s)"))
     }
+}
+
+/// Whether `expr` is already a CAST to a floating-point type.
+fn is_float_cast(expr: &Expression) -> bool {
+    match expr {
+        Expression::Cast(cast) => match &cast.to {
+            DataType::Double { .. } | DataType::Float { .. } => true,
+            DataType::Custom { name } => {
+                name.eq_ignore_ascii_case("REAL") || name.eq_ignore_ascii_case("DOUBLE")
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Cast the left operand of each `/` to REAL so SQLite divides fractionally,
+/// unless an operand is already a float cast or the right one a float literal.
+pub(super) fn cast_division_to_real(expr: Expression) -> Result<Expression> {
+    crate::dialects::transform_recursive(expr, &|e| match e {
+        Expression::Div(mut op) => {
+            let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')));
+            if !is_float_cast(&op.left) && !is_float_cast(&op.right) && !right_is_float {
+                op.left = cast_expr(
+                    op.left,
+                    DataType::Float {
+                        precision: None,
+                        scale: None,
+                        real_spelling: true,
+                    },
+                );
+            }
+            Ok(Expression::Div(op))
+        }
+        _ => Ok(e),
+    })
 }
 
 pub(super) fn cast_expr(this: Expression, to: DataType) -> Expression {

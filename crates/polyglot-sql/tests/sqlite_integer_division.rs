@@ -19,7 +19,48 @@ fn integer_division_is_kept_from_truncating_dialects() {
 }
 
 #[test]
-fn float_division_to_sqlite_still_casts() {
-    let out = transpile("SELECT 7 / 2", DialectType::MySQL, DialectType::SQLite).unwrap();
-    assert_eq!(out, vec!["SELECT CAST(7 AS REAL) / 2"]);
+fn fractional_division_to_sqlite_casts() {
+    for read in [
+        DialectType::Generic,
+        DialectType::BigQuery,
+        DialectType::Snowflake,
+        DialectType::MySQL,
+        DialectType::DuckDB,
+    ] {
+        let out = transpile("SELECT 7 / 2, a / b FROM t", read, DialectType::SQLite).unwrap();
+        assert_eq!(
+            out,
+            vec!["SELECT CAST(7 AS REAL) / 2, CAST(a AS REAL) / b FROM t"],
+            "{read:?}"
+        );
+    }
+}
+
+#[test]
+fn bigquery_safe_divide_to_sqlite_casts() {
+    let out = transpile(
+        "SELECT SAFE_DIVIDE(7, 2)",
+        DialectType::BigQuery,
+        DialectType::SQLite,
+    )
+    .unwrap();
+    assert_eq!(out, vec!["SELECT IIF(2 <> 0, CAST(7 AS REAL) / 2, NULL)"]);
+}
+
+#[test]
+fn existing_nullif_denominator_still_casts() {
+    for read in [DialectType::MySQL, DialectType::DuckDB] {
+        let out = transpile("SELECT 7 / NULLIF(2, 0)", read, DialectType::SQLite).unwrap();
+        assert_eq!(
+            out,
+            vec!["SELECT CAST(7 AS REAL) / NULLIF(2, 0)"],
+            "{read:?}"
+        );
+        let out = transpile("SELECT 7 / NULLIF(2, 0)", read, DialectType::PostgreSQL).unwrap();
+        assert_eq!(
+            out,
+            vec!["SELECT CAST(7 AS DOUBLE PRECISION) / NULLIF(2, 0)"],
+            "{read:?}"
+        );
+    }
 }
