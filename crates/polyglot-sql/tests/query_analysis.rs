@@ -6,6 +6,40 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn commented_columns_keep_their_output_names_and_lineage() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"schema":"s","name":"t","columns":[{"name":"a","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for comment in ["-- note", "/* note */"] {
+        let projection = format!("SELECT\n {comment}\n a FROM s.t");
+        for sql in [
+            projection.clone(),
+            format!("WITH c AS ({projection}) SELECT a FROM c"),
+        ] {
+            let analysis = analyze_query(
+                &sql,
+                AnalyzeQueryOptions {
+                    dialect: DialectType::Snowflake,
+                    schema: Some(schema.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let output = &analysis.projections[0];
+            assert_eq!(output.name.as_deref(), Some("a"), "{sql}");
+            assert_eq!(output.upstream.len(), 1, "{sql}");
+            assert_eq!(
+                output.upstream[0].source_name.as_deref(),
+                Some("s.t"),
+                "{sql}"
+            );
+            assert_eq!(output.upstream[0].source_kind, SourceKind::Table, "{sql}");
+        }
+    }
+}
+
+#[test]
 fn catalog_qualified_cte_star_lineage() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables":[
         {"schema":"s","name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]},

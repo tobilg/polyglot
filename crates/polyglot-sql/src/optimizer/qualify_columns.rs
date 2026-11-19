@@ -1167,14 +1167,15 @@ fn qualify_outputs_select(select: &mut Select) -> QualifyColumnsResult<()> {
     let mut new_selections: Vec<Expression> = Vec::new();
 
     for (i, expr) in select.expressions.iter().enumerate() {
-        match expr {
+        let mut output = expr;
+        while let Expression::Annotated(annotated) = output {
+            output = &annotated.this;
+        }
+        match output {
             Expression::Alias(_) => new_selections.push(expr.clone()),
-            Expression::Column(col) => {
-                new_selections.push(create_alias(expr.clone(), &col.name.name));
-            }
             Expression::Star(_) => new_selections.push(expr.clone()),
             _ => {
-                let alias_name = get_output_name(expr).unwrap_or_else(|| format!("_col_{}", i));
+                let alias_name = get_output_name(output).unwrap_or_else(|| format!("_col_{}", i));
                 new_selections.push(create_alias(expr.clone(), &alias_name));
             }
         }
