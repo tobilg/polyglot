@@ -6,6 +6,64 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn aggregate_order_columns_are_projection_dependencies() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name":"t","columns":[{"name":"a","type":"VARCHAR"}]},
+        {"name":"u","columns":[{"name":"b","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for (dialect, aggregate) in [
+        (DialectType::DuckDB, "string_agg(t.a, ',' ORDER BY u.b)"),
+        (DialectType::DuckDB, "array_agg(t.a ORDER BY u.b + 1 DESC)"),
+        (
+            DialectType::Snowflake,
+            "listagg(t.a, ',') WITHIN GROUP (ORDER BY u.b)",
+        ),
+    ] {
+        let sql = format!("SELECT {aggregate} AS result FROM t CROSS JOIN u");
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect,
+                schema: Some(schema.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut inputs: Vec<_> = analysis.projections[0]
+            .upstream
+            .iter()
+            .map(|reference| {
+                assert_eq!(
+                    reference.path_transform_kind,
+                    Some(TransformKind::Aggregation),
+                    "{sql}: {reference:?}"
+                );
+                (
+                    reference.source_name.as_deref(),
+                    reference.column.to_ascii_lowercase(),
+                )
+            })
+            .collect();
+        inputs.sort();
+        assert_eq!(
+            inputs,
+            [(Some("t"), "a".into()), (Some("u"), "b".into())],
+            "{sql}"
+        );
+        assert!(
+            analysis.column_uses.iter().any(|usage| usage.context
+                == polyglot_sql::ColumnUseContext::AggregateOrder
+                && usage
+                    .references
+                    .iter()
+                    .any(|r| r.reference.column.eq_ignore_ascii_case("b"))),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn commented_columns_keep_their_output_names_and_lineage() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
         {"schema":"s","name":"t","columns":[{"name":"a","type":"INT"}]}

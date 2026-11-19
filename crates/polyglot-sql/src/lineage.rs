@@ -3959,65 +3959,16 @@ fn collect_column_refs(
                 }
             }
 
-            // === AggFunc variants: this, filter, having_max, limit ===
-            Expression::Sum(f)
-            | Expression::Avg(f)
-            | Expression::Min(f)
-            | Expression::Max(f)
-            | Expression::ArrayAgg(f)
-            | Expression::CountIf(f)
-            | Expression::Stddev(f)
-            | Expression::StddevPop(f)
-            | Expression::StddevSamp(f)
-            | Expression::Variance(f)
-            | Expression::VarPop(f)
-            | Expression::VarSamp(f)
-            | Expression::Median(f)
-            | Expression::Mode(f)
-            | Expression::First(f)
-            | Expression::Last(f)
-            | Expression::AnyValue(f)
-            | Expression::ApproxDistinct(f)
-            | Expression::ApproxCountDistinct(f)
-            | Expression::LogicalAnd(f)
-            | Expression::LogicalOr(f)
-            | Expression::Skewness(f)
-            | Expression::ArrayConcatAgg(f)
-            | Expression::ArrayUniqueAgg(f)
-            | Expression::BoolXorAgg(f)
-            | Expression::BitwiseAndAgg(f)
-            | Expression::BitwiseOrAgg(f)
-            | Expression::BitwiseXorAgg(f) => {
-                stack.push(&f.this);
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-                if let Some((ref expr, _)) = f.having_max {
-                    stack.push(expr);
-                }
-                if let Some(ref limit) = f.limit {
-                    stack.push(limit);
-                }
+            // Ordering, filters, and other aggregate operands can all affect the value.
+            aggregate if crate::traversal::is_aggregate(aggregate) => {
+                crate::ast_children::for_each_child(aggregate, |_, child| stack.push(child));
             }
 
-            // === Generic Function / AggregateFunction: args ===
             Expression::Function(func) => {
                 for arg in &func.args {
                     stack.push(arg);
                 }
             }
-            Expression::AggregateFunction(func) => {
-                for arg in &func.args {
-                    stack.push(arg);
-                }
-                if let Some(ref filter) = func.filter {
-                    stack.push(filter);
-                }
-                if let Some(ref limit) = func.limit {
-                    stack.push(limit);
-                }
-            }
-
             // === WindowFunction: this (skip Over for lineage purposes) ===
             Expression::WindowFunction(wf) => {
                 stack.push(&wf.this);
@@ -4242,51 +4193,6 @@ fn collect_column_refs(
                     stack.push(e);
                 }
             }
-            Expression::Count(f) => {
-                if let Some(ref this) = f.this {
-                    stack.push(this);
-                }
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
-            Expression::GroupConcat(f) => {
-                stack.push(&f.this);
-                if let Some(ref sep) = f.separator {
-                    stack.push(sep);
-                }
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
-            Expression::StringAgg(f) => {
-                stack.push(&f.this);
-                if let Some(ref sep) = f.separator {
-                    stack.push(sep);
-                }
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-                if let Some(ref limit) = f.limit {
-                    stack.push(limit);
-                }
-            }
-            Expression::ListAgg(f) => {
-                stack.push(&f.this);
-                if let Some(ref sep) = f.separator {
-                    stack.push(sep);
-                }
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
-            Expression::SumIf(f) => {
-                stack.push(&f.this);
-                stack.push(&f.condition);
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
             Expression::DateAdd(f) | Expression::DateSub(f) => {
                 stack.push(&f.this);
                 stack.push(&f.interval);
@@ -4443,25 +4349,6 @@ fn collect_column_refs(
                     stack.push(style);
                 }
             }
-            Expression::ApproxPercentile(f) => {
-                stack.push(&f.this);
-                stack.push(&f.percentile);
-                if let Some(ref acc) = f.accuracy {
-                    stack.push(acc);
-                }
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
-            Expression::Percentile(f)
-            | Expression::PercentileCont(f)
-            | Expression::PercentileDisc(f) => {
-                stack.push(&f.this);
-                stack.push(&f.percentile);
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
             Expression::WithinGroup(f) => {
                 stack.push(&f.this);
                 for e in &f.order_by {
@@ -4605,19 +4492,6 @@ fn collect_column_refs(
             Expression::TransformKeys(f) | Expression::TransformValues(f) => {
                 stack.push(&f.this);
                 stack.push(&f.transform);
-            }
-            Expression::JsonArrayAgg(f) => {
-                stack.push(&f.this);
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
-            }
-            Expression::JsonObjectAgg(f) => {
-                stack.push(&f.key);
-                stack.push(&f.value);
-                if let Some(ref filter) = f.filter {
-                    stack.push(filter);
-                }
             }
             Expression::NTile(f) => {
                 if let Some(ref n) = f.num_buckets {
