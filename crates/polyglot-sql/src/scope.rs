@@ -1034,7 +1034,7 @@ fn identifier_table(expr: &Expression) -> Option<TableRef> {
 }
 
 /// Split a literal object name without treating quoted dots as separators.
-fn identifier_table_parts(name: &str) -> Option<Vec<Identifier>> {
+pub(crate) fn identifier_table_parts(name: &str) -> Option<Vec<Identifier>> {
     let mut chars = name.chars().peekable();
     let mut parts = Vec::new();
     loop {

@@ -2269,7 +2269,11 @@ fn source_columns(
 ) -> Vec<String> {
     match &source.expression {
         Expression::Table(table) => mapping_schema
-            .and_then(|schema| schema.column_names(&table_name(table)).ok())
+            .and_then(|schema| {
+                schema
+                    .column_names(&crate::binding::schema_table_name(table))
+                    .ok()
+            })
             .unwrap_or_default(),
         Expression::Select(_)
         | Expression::Union(_)

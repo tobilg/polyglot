@@ -82,6 +82,19 @@ pub(crate) fn identifier_name(identifier: &crate::expressions::Identifier) -> St
     identifier.to_type_field_name()
 }
 
+/// Render a table path for schema lookup, retaining identifier boundaries and quoting.
+pub(crate) fn schema_table_name(table: &crate::expressions::TableRef) -> String {
+    let mut parts = Vec::new();
+    if let Some(catalog) = &table.catalog {
+        parts.push(identifier_name(catalog));
+    }
+    if let Some(schema) = &table.schema {
+        parts.push(identifier_name(schema));
+    }
+    parts.push(identifier_name(&table.name));
+    parts.join(".")
+}
+
 /// Boolean contexts are inline AST fields as well as standalone nodes. Keep
 /// their discovery shared so DML does not silently miss the SELECT checks.
 pub(crate) fn predicates(expression: &Expression) -> Vec<(&'static str, &Expression)> {

@@ -2237,24 +2237,21 @@ impl Schema for ScopedSchema<'_> {
 
 type OutputColumns = Vec<(String, DataType)>;
 
-fn table_name(table: &crate::expressions::TableRef) -> String {
-    let mut parts = Vec::new();
-    if let Some(catalog) = &table.catalog {
-        parts.push(crate::binding::identifier_name(catalog));
-    }
-    if let Some(schema) = &table.schema {
-        parts.push(crate::binding::identifier_name(schema));
-    }
-    parts.push(crate::binding::identifier_name(&table.name));
-    parts.join(".")
-}
-
 fn table_columns(schema: &dyn Schema, table: &str) -> OutputColumns {
     schema
         .column_names(table)
         .unwrap_or_default()
         .into_iter()
         .map(|column| {
+            // A mapping returns canonical column names. Quote a case-sensitive
+            // name when carrying it into a new scope so it is not folded again.
+            let column = if !crate::binding::schema_identifier(&column).quoted
+                && normalize_name(&column, schema.dialect(), false, true) != column
+            {
+                crate::binding::identifier_name(&crate::expressions::Identifier::quoted(column))
+            } else {
+                column
+            };
             let data_type = schema
                 .get_column_type(table, &column)
                 .unwrap_or(DataType::Unknown);
@@ -2414,7 +2411,7 @@ fn annotate_relation_source(
 ) {
     match expression {
         Expression::Table(table) => {
-            let source_table = table_name(table);
+            let source_table = crate::binding::schema_table_name(table);
             let mut columns = table_columns(schema, &source_table);
             columns = apply_column_aliases(columns, &table.column_aliases);
             let visible_name = table.alias.as_ref().unwrap_or(&table.name);

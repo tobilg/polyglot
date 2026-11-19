@@ -3,6 +3,54 @@ use crate::function_catalog::{FunctionNameCase, FunctionSignature, HashMapFuncti
 use std::sync::Arc;
 
 #[test]
+fn snowflake_schema_lookups_respect_delimited_identifiers() {
+    let schema = serde_json::from_value(serde_json::json!({"tables": [
+        {"name":"MixedCase","schema":"S","aliases":[r#""DB"."S"."MixedCase""#],
+         "columns":[{"name":r#""Amount""#,"type":"INT"}, {"name":"bare","type":"INT"}]},
+        {"name":r#""a.b""#, "columns":[{"name":"id","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for check_types in [false, true] {
+        let options = SchemaValidationOptions {
+            check_types,
+            ..Default::default()
+        };
+        for (sql, expected) in [
+            (r#"SELECT "Amount", BARE FROM db.s."MixedCase""#, None),
+            (r#"SELECT "Amount" FROM s.mixedcase"#, None),
+            (
+                r#"SELECT bare FROM s.mixedcase WHERE "Amount""#,
+                check_types.then_some("E211"),
+            ),
+            (r#"SELECT nope FROM db.s."MixedCase""#, Some("E201")),
+            (r#"SELECT amount FROM s.t"#, Some("E200")),
+            (r#"SELECT amount FROM s.mixedcase"#, Some("E201")),
+            (r#"SELECT "AMOUNT" FROM s.mixedcase"#, Some("E201")),
+            (r#"SELECT "Bare" FROM s.mixedcase"#, Some("E201")),
+            (r#"SELECT id FROM s."mixedcase""#, Some("E200")),
+            (r#"SELECT id FROM "a.b""#, None),
+            (r#"INSERT INTO s.mixedcase ("Amount") VALUES (1)"#, None),
+            (r#"UPDATE s.mixedcase SET "Amount" = 2"#, None),
+        ] {
+            let result = validate_with_schema(sql, DialectType::Snowflake, &schema, &options);
+            assert_eq!(
+                result.valid,
+                expected.is_none(),
+                "{sql}: {:?}",
+                result.errors
+            );
+            if let Some(code) = expected {
+                assert!(
+                    result.errors.iter().any(|error| error.code == code),
+                    "{sql}: {:?}",
+                    result.errors
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn pivot_operands_resolve_against_the_input_relation() {
     let schema = serde_json::from_value(serde_json::json!({"tables": [
         {"schema":"s","name":"p","columns":[{"name":"k","type":"INT"},{"name":"a","type":"VARCHAR"},{"name":"b","type":"INT"}]},
@@ -900,7 +948,7 @@ fn test_schema_validation_projection_alias_chains_are_bounded() {
     bind_scope_projection_aliases(
         &mut selected,
         &[],
-        &build_resolver_schema(&schema),
+        &mapping_schema_from_validation_schema_with_dialect(&schema, DialectType::Snowflake),
         DialectType::Snowflake,
         true,
         &mut bindings,
