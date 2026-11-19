@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 ReferenceConfidence = Literal["resolved", "ambiguous", "unknown"]
 ProjectionNullability = Literal["non_null", "nullable", "unknown"]
 TransformKind = Literal["direct", "cast", "aggregation", "constant", "expression", "star"]
-ColumnUseContext = Literal["join", "filter", "group", "having", "qualify", "window_partition", "window_order", "window_frame", "order", "aggregate_order", "set_operation_filter"]
+ColumnUseContext = Literal["join", "filter", "group", "having", "qualify", "window_partition", "window_order", "window_frame", "order", "aggregate_order", "set_operation_filter", "table_function_input"]
 FunctionNameCase = Literal["insensitive", "sensitive"]
 _SourceKind = Literal["root", "table", "derived_table", "cte", "virtual", "unknown"]
 

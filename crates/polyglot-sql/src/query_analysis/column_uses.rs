@@ -69,6 +69,7 @@ impl Collector<'_> {
         let query = scope_query(&original.expression);
         self.scan(query, "", &frame, ancestors, filter_branch, true);
         if let Expression::Select(select) = query {
+            self.table_function_inputs(select, &frame, ancestors);
             self.implicit_joins(select, path, &frame, ancestors);
             if select
                 .group_by
@@ -502,6 +503,83 @@ impl Collector<'_> {
             }
         }
         references
+    }
+
+    fn table_function_inputs(
+        &mut self,
+        select: &crate::expressions::Select,
+        frame: &Frame,
+        ancestors: &[&Frame],
+    ) {
+        let mut preceding = HashSet::new();
+        let from = select
+            .from
+            .iter()
+            .flat_map(|from| &from.expressions)
+            .enumerate()
+            .map(|(index, relation)| {
+                (
+                    relation,
+                    "from.expressions",
+                    index,
+                    "",
+                    crate::lineage::relation_source_name(relation),
+                )
+            });
+        let joins = select.joins.iter().enumerate().map(|(index, join)| {
+            (
+                &join.this,
+                "joins",
+                index,
+                ".this",
+                crate::lineage::relation_source_name(&join.this),
+            )
+        });
+        let views = select
+            .lateral_views
+            .iter()
+            .enumerate()
+            .map(|(index, view)| {
+                let name = view
+                    .table_alias
+                    .as_ref()
+                    .or(view.column_aliases.first())
+                    .map(|alias| alias.name.clone());
+                (&view.this, "lateral_views", index, ".this", name)
+            });
+        for (relation, field, index, suffix, name) in from.chain(joins).chain(views) {
+            if let Some((call, depth)) = table_function_call(relation) {
+                let mut owner = frame.clone();
+                owner
+                    .selected
+                    .sources
+                    .retain(|name, _| preceding.contains(name));
+                let path = format!("{field}[{index}]{suffix}{}", ".this".repeat(depth));
+                for_each_child(call, |segments, argument| {
+                    let mut path = append_path(&path, segments);
+                    let value = match argument {
+                        Expression::NamedArgument(named) => {
+                            path.push_str(".value");
+                            &named.value
+                        }
+                        _ => argument,
+                    };
+                    let context = ColumnUseContext::TableFunctionInput;
+                    let references = self.references(value, context, &owner, ancestors);
+                    if !references.is_empty() {
+                        self.facts.push(ColumnUseFact {
+                            context,
+                            scope_path: frame.path.clone(),
+                            expression_path: path,
+                            expression_sql: self.sql(value),
+                            span: expression_span(value),
+                            references,
+                        });
+                    }
+                });
+            }
+            preceding.extend(name);
+        }
     }
 
     fn implicit_groups(

@@ -6,6 +6,76 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn lateral_flatten_inputs_affect_rows_and_generated_values() {
+    use polyglot_sql::ColumnUseContext;
+
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"schema":"s","name":"t","columns":[{"name":"k","type":"INT"},{"name":"items","type":"VARIANT"}]},
+        {"schema":"s","name":"other","columns":[{"name":"items","type":"VARIANT"}]}
+    ]})).unwrap();
+    for (input, tail, schema) in [
+        ("t.items", "", None),
+        ("t.items", "", Some(schema.clone())),
+        ("items", ", s.other later", Some(schema)),
+    ] {
+        let sql = format!(
+            "SELECT t.k, f.value AS v FROM s.t t, LATERAL FLATTEN(input => {input}) f{tail}"
+        );
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect: DialectType::Snowflake,
+                schema,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.column_uses.len(),
+            1,
+            "{sql}: {:?}",
+            analysis.column_uses
+        );
+        let usage = &analysis.column_uses[0];
+        assert_eq!(usage.context, ColumnUseContext::TableFunctionInput);
+        assert_eq!(
+            serde_json::to_value(usage.context).unwrap(),
+            "table_function_input"
+        );
+        assert_eq!(usage.expression_sql, input);
+        assert_eq!(usage.references.len(), 1);
+        let reference = &usage.references[0];
+        assert_eq!(
+            reference.reference.source_name.as_deref(),
+            Some("s.t"),
+            "{sql}"
+        );
+        assert_eq!(reference.reference.column, "items");
+        assert_eq!(
+            reference.reference.confidence,
+            ReferenceConfidence::Resolved
+        );
+        let span = reference.span.unwrap();
+        assert_eq!(&sql[span.start..span.end], input);
+
+        let key = &analysis.projections[0].upstream;
+        assert_eq!(key.len(), 1);
+        assert_eq!(key[0].column, "k");
+        assert_eq!(key[0].path_transform_kind, Some(TransformKind::Direct));
+        assert!(key[0].path_functions.is_empty());
+        let value = &analysis.projections[1].upstream;
+        assert_eq!(value.len(), 1);
+        assert_eq!(value[0].source_name.as_deref(), Some("s.t"));
+        assert_eq!(value[0].column, "items");
+        assert_eq!(
+            value[0].path_transform_kind,
+            Some(TransformKind::Expression)
+        );
+        assert_eq!(value[0].path_functions, ["FLATTEN"]);
+    }
+}
+
+#[test]
 fn group_by_all_reports_only_inferred_grouping_columns() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
         {"name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]}

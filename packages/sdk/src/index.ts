@@ -350,7 +350,8 @@ export type ColumnUseContext =
   | 'window_frame'
   | 'order'
   | 'aggregate_order'
-  | 'set_operation_filter';
+  | 'set_operation_filter'
+  | 'table_function_input';
 
 export interface ColumnUseReferenceFact extends ColumnReferenceFact {
   /** Original occurrence, not the upstream column definition. */

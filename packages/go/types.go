@@ -287,6 +287,7 @@ const (
 	ColumnUseOrder              ColumnUseContext = "order"
 	ColumnUseAggregateOrder     ColumnUseContext = "aggregate_order"
 	ColumnUseSetOperationFilter ColumnUseContext = "set_operation_filter"
+	ColumnUseTableFunctionInput ColumnUseContext = "table_function_input"
 )
 
 // ColumnUseFact groups references by their containing expression. Paths identify

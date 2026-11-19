@@ -2740,7 +2740,7 @@ fn attach_virtual_source_dependencies(
                 depth + 1,
             );
         } else {
-            let non_virtual_sources = non_virtual_source_names_from_from_join(scope);
+            let non_virtual_sources = preceding_non_virtual_sources(scope, source_alias);
             if non_virtual_sources.len() == 1 {
                 resolve_qualified_column(
                     node,
@@ -2759,45 +2759,43 @@ fn attach_virtual_source_dependencies(
     }
 }
 
-fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
-    fn source_name(expr: &Expression) -> Option<String> {
-        match expr {
-            Expression::Table(table) => Some(
-                table
-                    .alias
-                    .as_ref()
-                    .map(|a| a.name.clone())
-                    .unwrap_or_else(|| table.name.name.clone()),
-            ),
-            Expression::Subquery(subquery) => {
-                subquery.alias.as_ref().map(|alias| alias.name.clone())
-            }
-            Expression::Unnest(unnest) => unnest.alias.as_ref().map(|alias| alias.name.clone()),
-            Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
-                Some(alias.alias.name.clone())
-            }
-            Expression::Alias(alias) if is_query_like_relation(&alias.this) => {
-                Some(alias.alias.name.clone())
-            }
-            Expression::Lateral(lateral) => lateral.alias.clone(),
-            Expression::LateralView(lateral_view) => lateral_view
-                .table_alias
+pub(crate) fn relation_source_name(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Table(table) => Some(
+            table
+                .alias
                 .as_ref()
-                .or_else(|| lateral_view.column_aliases.first())
-                .map(|alias| alias.name.clone()),
-            Expression::Pivot(pivot) => Some(pivot_lineage_source_name(
-                &pivot.this,
-                pivot.alias.as_ref().map(|alias| alias.name.as_str()),
-            )),
-            Expression::Unpivot(unpivot) => Some(pivot_lineage_source_name(
-                &unpivot.this,
-                unpivot.alias.as_ref().map(|alias| alias.name.as_str()),
-            )),
-            Expression::Paren(paren) => source_name(&paren.this),
-            _ => None,
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| table.name.name.clone()),
+        ),
+        Expression::Subquery(subquery) => subquery.alias.as_ref().map(|alias| alias.name.clone()),
+        Expression::Unnest(unnest) => unnest.alias.as_ref().map(|alias| alias.name.clone()),
+        Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
+            Some(alias.alias.name.clone())
         }
+        Expression::Alias(alias) if is_query_like_relation(&alias.this) => {
+            Some(alias.alias.name.clone())
+        }
+        Expression::Lateral(lateral) => lateral.alias.clone(),
+        Expression::LateralView(lateral_view) => lateral_view
+            .table_alias
+            .as_ref()
+            .or_else(|| lateral_view.column_aliases.first())
+            .map(|alias| alias.name.clone()),
+        Expression::Pivot(pivot) => Some(pivot_lineage_source_name(
+            &pivot.this,
+            pivot.alias.as_ref().map(|alias| alias.name.as_str()),
+        )),
+        Expression::Unpivot(unpivot) => Some(pivot_lineage_source_name(
+            &unpivot.this,
+            unpivot.alias.as_ref().map(|alias| alias.name.as_str()),
+        )),
+        Expression::Paren(paren) => relation_source_name(&paren.this),
+        _ => None,
     }
+}
 
+fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
     let effective_expr = match &scope.expression {
         Expression::Cte(cte) => &cte.this,
         expr => expr,
@@ -2809,7 +2807,7 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
     if let Expression::Select(select) = effective_expr {
         if let Some(from) = &select.from {
             for expr in &from.expressions {
-                if let Some(name) = source_name(expr) {
+                if let Some(name) = relation_source_name(expr) {
                     if !name.is_empty() && seen.insert(name.clone()) {
                         names.push(name);
                     }
@@ -2820,7 +2818,7 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
             if is_semi_or_anti_join_kind(join.kind) {
                 continue;
             }
-            if let Some(name) = source_name(&join.this) {
+            if let Some(name) = relation_source_name(&join.this) {
                 if !name.is_empty() && seen.insert(name.clone()) {
                     names.push(name);
                 }
@@ -2828,7 +2826,7 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
         }
         for lateral_view in &select.lateral_views {
             if let Some(name) =
-                source_name(&Expression::LateralView(Box::new(lateral_view.clone())))
+                relation_source_name(&Expression::LateralView(Box::new(lateral_view.clone())))
             {
                 if !name.is_empty() && seen.insert(name.clone()) {
                     names.push(name);
@@ -2881,9 +2879,10 @@ fn expressions_equivalent_after_wrappers(left: &Expression, right: &Expression) 
     left == right || effective_scope_expression(left) == effective_scope_expression(right)
 }
 
-fn non_virtual_source_names_from_from_join(scope: &Scope) -> Vec<String> {
+fn preceding_non_virtual_sources(scope: &Scope, source_alias: &str) -> Vec<String> {
     source_names_from_from_join(scope)
         .into_iter()
+        .take_while(|name| name != source_alias)
         .filter(|name| {
             !matches!(
                 scope.sources.get(name).map(|source| source.kind),

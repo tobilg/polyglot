@@ -75,6 +75,8 @@ pub enum ColumnUseContext {
     Order,
     AggregateOrder,
     SetOperationFilter,
+    /// A relation-valued function argument that determines which rows are produced.
+    TableFunctionInput,
 }
 
 /// One resolved dependency of an original column occurrence. Several terminal
@@ -1811,7 +1813,13 @@ fn collect_terminal_references(
     let stepped;
     let path = match path {
         Some(path) if !is_set_operation(&node.expression) => {
-            stepped = path.step(unwrap_projection_alias(&node.expression));
+            let expression = if node.source_kind == SourceKind::Virtual {
+                table_function_call(&node.source).map(|(call, _)| call)
+            } else {
+                None
+            };
+            stepped =
+                path.step(expression.unwrap_or_else(|| unwrap_projection_alias(&node.expression)));
             Some(&stepped)
         }
         path => path,
@@ -1828,6 +1836,26 @@ fn collect_terminal_references(
 
     for child in &node.downstream {
         collect_terminal_references(child, path, refs);
+    }
+}
+
+/// Return the function in relation position and its number of nested `this` fields.
+fn table_function_call(mut expression: &Expression) -> Option<(&Expression, usize)> {
+    let mut depth = 0;
+    loop {
+        expression = match expression {
+            Expression::Alias(alias) => &alias.this,
+            Expression::Paren(paren) => &paren.this,
+            Expression::Lateral(lateral) => &lateral.this,
+            Expression::LateralView(view) => &view.this,
+            Expression::TableFromRows(rows) => &rows.this,
+            Expression::Function(_)
+            | Expression::Unnest(_)
+            | Expression::Explode(_)
+            | Expression::ExplodeOuter(_) => return Some((expression, depth)),
+            _ => return None,
+        };
+        depth += 1;
     }
 }
 
