@@ -3,6 +3,46 @@ use crate::function_catalog::{FunctionNameCase, FunctionSignature, HashMapFuncti
 use std::sync::Arc;
 
 #[test]
+fn pivot_operands_resolve_against_the_input_relation() {
+    let schema = serde_json::from_value(serde_json::json!({"tables": [
+        {"schema":"s","name":"p","columns":[{"name":"k","type":"INT"},{"name":"a","type":"VARCHAR"},{"name":"b","type":"INT"}]},
+        {"schema":"s","name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"},{"name":"b","type":"INT"}]},
+        {"name":"other","columns":[{"name":"nope","type":"INT"}]}
+    ]})).unwrap();
+    for sql in [
+        "SELECT * FROM s.p PIVOT (SUM(b) FOR a IN ('x', 'y'))",
+        "SELECT r.k FROM (SELECT k, a, b FROM s.p) PIVOT (SUM(b) FOR a IN ('x')) AS r",
+        "WITH c AS (SELECT b AS amount, a FROM s.p) SELECT * FROM c PIVOT (SUM(amount) FOR a IN ('x' AS x))",
+        "SELECT k, name, val FROM s.t UNPIVOT (val FOR name IN (a, b))",
+    ] {
+        let result = validate_with_schema(sql, DialectType::Snowflake, &schema, &Default::default());
+        assert!(result.valid, "{sql}: {:?}", result.errors);
+    }
+    for (sql, missing) in [
+        (
+            "SELECT * FROM other CROSS JOIN s.p PIVOT (SUM(nope) FOR a IN ('x'))",
+            "nope",
+        ),
+        ("SELECT * FROM s.p PIVOT (SUM(b) FOR nope IN ('x'))", "nope"),
+        ("SELECT b FROM s.p PIVOT (SUM(b) FOR a IN ('x'))", "b"),
+        (
+            "SELECT * FROM s.t UNPIVOT (val FOR name IN (nope, b))",
+            "nope",
+        ),
+        ("SELECT a FROM s.t UNPIVOT (val FOR name IN (a, b))", "a"),
+    ] {
+        let result =
+            validate_with_schema(sql, DialectType::Snowflake, &schema, &Default::default());
+        assert_eq!(result.errors.len(), 1, "{sql}: {:?}", result.errors);
+        assert_eq!(result.errors[0].code, "E201", "{sql}");
+        assert!(
+            result.errors[0].message.contains(&format!("'{missing}'")),
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn unknown_column_on_catalog_qualified_table() {
     let schema = serde_json::from_value(serde_json::json!({"tables": [
         {"schema": "s", "name": "t", "columns": [{"name":"a","type":"INT"}]},

@@ -3453,15 +3453,54 @@ fn validate_scope_columns(
         .flat_map(|join| join.using.iter().map(|id| lower(&id.name)))
         .collect();
 
-    let input_columns = walk_in_scope(&expression, false).filter_map(|node| match node {
-        Expression::Column(column) => Some((column.as_ref(), OutputNameResolution::InputOnly)),
-        _ => None,
-    });
+    let mut input_columns = Vec::new();
+    for node in crate::scope::walk_in_scope_pruned(&expression, false, |node| {
+        matches!(node, Expression::Pivot(_) | Expression::Unpivot(_))
+    }) {
+        let (source, operands) = match node {
+            Expression::Column(column) => {
+                input_columns.push((column.as_ref(), OutputNameResolution::InputOnly));
+                continue;
+            }
+            Expression::Pivot(pivot) => (
+                &pivot.this,
+                pivot
+                    .expressions
+                    .iter()
+                    .chain(&pivot.fields)
+                    .chain(&pivot.using)
+                    .chain(pivot.group.as_deref())
+                    .chain(pivot.default_on_null.as_deref())
+                    .cloned()
+                    .collect(),
+            ),
+            Expression::Unpivot(unpivot) => (&unpivot.this, unpivot.columns.clone()),
+            _ => continue,
+        };
+        // The operator can read only its own input relation. Resolve these
+        // operands like projections on that relation, including its CTE bindings.
+        let mut input = crate::expressions::Select::new();
+        input.expressions = operands;
+        input.from = Some(crate::expressions::From {
+            expressions: vec![source.clone()],
+        });
+        let input = crate::scope::build_scope_with_ctes(
+            &Expression::Select(Box::new(input)),
+            &scope.cte_sources,
+        );
+        errors.extend(validate_scope_columns(
+            &input,
+            &[],
+            schema_map,
+            resolver_schema,
+            options,
+        ));
+    }
     let order_columns = order_by
         .as_ref()
         .into_iter()
         .flat_map(|order| order_by_validation_columns(order, dialect));
-    for (column, resolution) in input_columns.chain(order_columns) {
+    for (column, resolution) in input_columns.into_iter().chain(order_columns) {
         let output_matches =
             if resolution != OutputNameResolution::InputOnly && column.table.is_none() {
                 let name = normalize_identifier(column.name.clone(), strategy).name;

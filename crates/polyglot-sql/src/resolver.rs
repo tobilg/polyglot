@@ -493,6 +493,8 @@ impl<'a> Resolver<'a> {
                 }
             }
             Expression::Paren(paren) => self.get_source_output_columns(&paren.this),
+            Expression::Pivot(pivot) => self.get_pivot_output_columns(pivot),
+            Expression::Unpivot(unpivot) => self.get_unpivot_output_columns(unpivot),
             _ => Vec::new(),
         }
     }

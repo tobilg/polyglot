@@ -1219,20 +1219,30 @@ pub fn walk_in_scope<'a>(
     expression: &'a Expression,
     bfs: bool,
 ) -> impl Iterator<Item = &'a Expression> {
-    WalkInScopeIter::new(expression, bfs)
+    walk_in_scope_pruned(expression, bfs, |_| false)
+}
+
+/// Visit a boundary node but leave its operands to a separate scope walk.
+pub(crate) fn walk_in_scope_pruned(
+    expression: &Expression,
+    bfs: bool,
+    prune: fn(&Expression) -> bool,
+) -> impl Iterator<Item = &Expression> {
+    WalkInScopeIter::new(expression, bfs, prune)
 }
 
 /// Iterator for walking within a scope
 struct WalkInScopeIter<'a> {
     queue: VecDeque<&'a Expression>,
     bfs: bool,
+    prune: fn(&Expression) -> bool,
 }
 
 impl<'a> WalkInScopeIter<'a> {
-    fn new(expression: &'a Expression, bfs: bool) -> Self {
+    fn new(expression: &'a Expression, bfs: bool, prune: fn(&Expression) -> bool) -> Self {
         let mut queue = VecDeque::new();
         queue.push_back(expression);
-        Self { queue, bfs }
+        Self { queue, bfs, prune }
     }
 
     fn should_stop_at(&self, expr: &Expression, is_root: bool) -> bool {
@@ -1382,6 +1392,10 @@ impl<'a> WalkInScopeIter<'a> {
             Expression::Alias(alias) => {
                 children.push(&alias.this);
             }
+            Expression::PivotAlias(alias) => {
+                // The alias in an IN list names an output.
+                children.push(&alias.this);
+            }
             Expression::Case(case) => {
                 if let Some(operand) = &case.operand {
                     children.push(operand);
@@ -1471,6 +1485,9 @@ impl<'a> Iterator for WalkInScopeIter<'a> {
             self.queue.pop_back()?
         };
 
+        if (self.prune)(expr) {
+            return Some(expr);
+        }
         // Get children that don't cross scope boundaries
         let children = self.get_children(expr);
 
