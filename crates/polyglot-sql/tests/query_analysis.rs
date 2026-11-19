@@ -1709,6 +1709,43 @@ fn path_function_names_preserve_quoted_identity() {
 }
 
 #[test]
+fn qualified_stars_project_direct_using_keys() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]},
+        {"name":"u","columns":[{"name":"k","type":"INT"},{"name":"x","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for join in ["JOIN", "LEFT JOIN", "FULL OUTER JOIN"] {
+        for (star, source) in [("c.*", "t"), ("d.*", "u")] {
+            let sql = format!("SELECT {star} FROM t c {join} u d USING (k)");
+            let analysis = analyze_query(
+                &sql,
+                AnalyzeQueryOptions {
+                    dialect: DialectType::Snowflake,
+                    schema: Some(schema.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(analysis.projections.len(), 2, "{sql}");
+            let key = &analysis.projections[0];
+            assert_eq!(key.name.as_deref(), Some("K"), "{sql}");
+            assert_eq!(key.upstream.len(), 1, "{sql}: {key:?}");
+            assert_eq!(
+                key.upstream[0].source_name.as_deref(),
+                Some(source),
+                "{sql}"
+            );
+            assert_eq!(
+                key.upstream[0].path_transform_kind,
+                Some(TransformKind::Direct),
+                "{sql}"
+            );
+        }
+    }
+}
+
+#[test]
 fn star_modifiers_apply_to_join_using_outputs() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
         {"name": "a", "columns": [{"name": "id", "type": "INT"}, {"name": "av", "type": "INT"}]},

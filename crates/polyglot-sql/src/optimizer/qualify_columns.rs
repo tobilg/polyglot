@@ -1049,7 +1049,6 @@ fn expand_stars(
 ) -> QualifyColumnsResult<()> {
     let mut new_selections: Vec<Expression> = Vec::new();
     let mut has_star = false;
-    let mut coalesced_columns: HashSet<String> = HashSet::new();
 
     // Use ordered source names (not unordered HashMap keys)
     let ordered_sources = get_ordered_source_names(select);
@@ -1071,30 +1070,6 @@ fn expand_stars(
                             return Ok(());
                         }
                         for col_name in &columns {
-                            let normalized = normalize_column_name(col_name, resolver.dialect);
-                            if star.excludes(col_name, resolver.dialect)
-                                || coalesced_columns.contains(&normalized)
-                            {
-                                continue;
-                            }
-                            if let Some(tables) = column_tables.get(&normalized) {
-                                if tables.contains(table_name) {
-                                    coalesced_columns.insert(normalized);
-                                    let coalesce = make_coalesce(col_name, tables);
-                                    if let Some(expanded) =
-                                        star.expand_column(col_name, coalesce, resolver.dialect)
-                                    {
-                                        new_selections.push(match expanded {
-                                            Expression::Alias(_) => expanded,
-                                            _ => Expression::Alias(Box::new(Alias::new(
-                                                expanded,
-                                                Identifier::new(col_name),
-                                            ))),
-                                        });
-                                    }
-                                    continue;
-                                }
-                            }
                             new_selections.extend(star.expand_column(
                                 col_name,
                                 create_qualified_column(col_name, Some(table_name)),
@@ -1103,6 +1078,7 @@ fn expand_stars(
                         }
                     }
                 } else {
+                    let mut coalesced_columns = HashSet::new();
                     for source_name in &ordered_sources {
                         if let Ok(columns) = resolver.get_source_columns(source_name) {
                             if columns.contains(&"*".to_string()) || columns.is_empty() {
@@ -1157,27 +1133,6 @@ fn expand_stars(
                             return Ok(());
                         }
                         for col_name in &columns {
-                            let normalized = normalize_column_name(col_name, resolver.dialect);
-                            if coalesced_columns.contains(&normalized) {
-                                continue;
-                            }
-                            if let Some(tables) = column_tables.get(&normalized) {
-                                if tables.contains(table_name) {
-                                    coalesced_columns.insert(normalized);
-                                    let coalesce = make_coalesce(col_name, tables);
-                                    new_selections.push(Expression::Alias(Box::new(Alias {
-                                        this: coalesce,
-                                        alias: Identifier::new(col_name),
-                                        column_aliases: vec![],
-                                        alias_explicit_as: false,
-                                        alias_keyword: None,
-                                        pre_alias_comments: vec![],
-                                        trailing_comments: vec![],
-                                        inferred_type: None,
-                                    })));
-                                    continue;
-                                }
-                            }
                             new_selections
                                 .push(create_qualified_column(col_name, Some(table_name)));
                         }
@@ -3802,12 +3757,9 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        // b should become COALESCE (since x participates in USING for b)
-        assert!(
-            sql.contains("COALESCE(x.b, y.b)"),
-            "USING column from x.* should become COALESCE: {sql}"
-        );
-        assert!(sql.contains("x.a"), "non-USING column a: {sql}");
+        // The pinned SQLGlot qualify_columns.sql fixture coalesces x.b here.
+        // A qualified star projects only columns of the named relation (#547).
+        assert!(sql.starts_with("SELECT x.a AS a, x.b AS b FROM"), "{sql}");
     }
 
     #[test]
