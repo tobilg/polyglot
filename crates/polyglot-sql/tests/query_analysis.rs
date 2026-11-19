@@ -6,6 +6,31 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn catalog_qualified_cte_star_lineage() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables":[
+        {"schema":"s","name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]},
+        {"schema":"s","name":"u","columns":[{"name":"k","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for source in [r#""db"."s"."t""#, "db.s.t JOIN db.s.u USING (k)"] {
+        let sql = format!("WITH c AS (SELECT * FROM {source}) SELECT a FROM c");
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect: DialectType::DuckDB,
+                schema: Some(schema.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let upstream = &analysis.projections[0].upstream;
+        assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
+        assert_eq!(upstream[0].source_name.as_deref(), Some("db.s.t"), "{sql}");
+        assert_eq!(upstream[0].source_kind, SourceKind::Table, "{sql}");
+    }
+}
+
+#[test]
 fn analyze_query_non_recursive_cte_table_shadowing_473() {
     let schema: ValidationSchema = serde_json::from_value(json!({
         "tables": [{"name": "orders", "columns": [{"name": "id", "type": "BIGINT"}]}]

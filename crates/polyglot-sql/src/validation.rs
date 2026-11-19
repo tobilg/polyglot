@@ -586,7 +586,7 @@ fn type_family_to_data_type(family: TypeFamily) -> DataType {
 }
 
 fn build_resolver_schema(schema: &ValidationSchema) -> MappingSchema {
-    let mut mapping = MappingSchema::new();
+    let mut mapping = MappingSchema::new().with_table_suffix_lookup();
 
     for table in &schema.tables {
         let columns: Vec<(String, DataType)> = table
@@ -639,7 +639,7 @@ pub fn mapping_schema_from_validation_schema_with_dialect(
 ) -> MappingSchema {
     let broad_schema = build_resolver_schema(schema);
     let dialect_impl = Dialect::get(dialect);
-    let mut mapping = MappingSchema::with_dialect(dialect);
+    let mut mapping = MappingSchema::with_dialect(dialect).with_table_suffix_lookup();
 
     for table in &schema.tables {
         let fallback_table = lower(&table.name);

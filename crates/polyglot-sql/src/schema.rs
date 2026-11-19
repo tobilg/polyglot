@@ -116,6 +116,8 @@ pub struct MappingSchema {
     column_order: HashMap<String, Vec<String>>,
     /// Cached depth
     cached_depth: usize,
+    /// Validation schemas register bare names, schema-qualified names, and aliases.
+    match_table_suffixes: bool,
 }
 
 /// A node in the schema tree
@@ -144,6 +146,7 @@ impl MappingSchema {
             visible: HashMap::new(),
             column_order: HashMap::new(),
             cached_depth: 0,
+            match_table_suffixes: false,
         }
     }
 
@@ -161,9 +164,14 @@ impl MappingSchema {
         self
     }
 
+    pub(crate) fn with_table_suffix_lookup(mut self) -> Self {
+        self.match_table_suffixes = true;
+        self
+    }
+
     /// Set visibility for columns in a table
     pub fn set_visible_columns(&mut self, table: &str, columns: &[&str]) {
-        let key = self.normalize_name(table, true);
+        let key = self.parse_table_parts(table).join(".");
         let cols: HashSet<String> = columns
             .iter()
             .map(|c| self.normalize_name(c, false))
@@ -212,8 +220,16 @@ impl MappingSchema {
     }
 
     /// Get the column mapping for a table
-    fn find_table(&self, table: &str) -> SchemaResult<&HashMap<String, ColumnInfo>> {
+    fn find_table(&self, table: &str) -> SchemaResult<(String, &HashMap<String, ColumnInfo>)> {
         let parts = self.parse_table_parts(table);
+        if self.match_table_suffixes {
+            for start in 0..parts.len() {
+                let candidate = &parts[start..];
+                if let Ok(columns) = self.navigate_to_table(candidate) {
+                    return Ok((candidate.join("."), columns));
+                }
+            }
+        }
 
         // Use trie to find table
         let reversed_parts: Vec<_> = parts.iter().rev().map(|s| s.as_str()).collect();
@@ -233,6 +249,7 @@ impl MappingSchema {
             TrieResult::Exists => {
                 // Navigate to the table
                 self.navigate_to_table(&parts)
+                    .map(|cols| (parts.join("."), cols))
             }
         }
     }
@@ -375,11 +392,8 @@ impl Schema for MappingSchema {
     }
 
     fn column_names(&self, table: &str) -> SchemaResult<Vec<String>> {
-        let cols = self.find_table(table)?;
-        let table_key = self.normalize_name(table, true);
-        let ordered_columns = self
-            .column_order
-            .get(&self.parse_table_parts(table).join("."));
+        let (table_key, cols) = self.find_table(table)?;
+        let ordered_columns = self.column_order.get(&table_key);
 
         // Check visibility
         if let Some(visible_cols) = self.visible.get(&table_key) {
@@ -411,7 +425,7 @@ impl Schema for MappingSchema {
     }
 
     fn get_column_type(&self, table: &str, column: &str) -> SchemaResult<DataType> {
-        let cols = self.find_table(table)?;
+        let (_, cols) = self.find_table(table)?;
         let normalized_col = self.normalize_name(column, false);
 
         cols.get(&normalized_col)

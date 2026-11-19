@@ -3,6 +3,26 @@ use crate::function_catalog::{FunctionNameCase, FunctionSignature, HashMapFuncti
 use std::sync::Arc;
 
 #[test]
+fn unknown_column_on_catalog_qualified_table() {
+    let schema = serde_json::from_value(serde_json::json!({"tables": [
+        {"schema": "s", "name": "t", "columns": [{"name":"a","type":"INT"}]},
+        {"name": "other", "aliases": ["db.s.t"], "columns": [{"name":"b","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for (table, present, missing) in [("db.s.t", "b", "a"), ("other_db.s.t", "a", "b")] {
+        for (column, valid) in [(present, true), (missing, false)] {
+            let sql = format!("SELECT {column} FROM {table}");
+            let result =
+                validate_with_schema(&sql, DialectType::DuckDB, &schema, &Default::default());
+            assert_eq!(result.valid, valid, "{sql}: {:?}", result.errors);
+            if !valid {
+                assert!(result.errors.iter().any(|error| error.code == "E201"));
+            }
+        }
+    }
+}
+
+#[test]
 fn values_source_columns_471() {
     let schema = review_schema();
     let options = SchemaValidationOptions {
