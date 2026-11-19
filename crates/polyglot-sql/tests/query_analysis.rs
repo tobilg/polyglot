@@ -6,6 +6,55 @@ use polyglot_sql::{
 use serde_json::json;
 
 #[test]
+fn group_by_all_reports_only_inferred_grouping_columns() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for dialect in [DialectType::Snowflake, DialectType::DuckDB] {
+        for (sql, expected) in [
+            ("SELECT k, SUM(a) FROM t GROUP BY ALL", vec!["k"]),
+            (
+                "SELECT k + 1 AS n, 2 AS literal, SUM(a) AS total FROM t GROUP BY ALL",
+                vec!["k"],
+            ),
+            (
+                "SELECT SUM(a), ROW_NUMBER() OVER (ORDER BY SUM(a)) FROM t GROUP BY ALL",
+                vec![],
+            ),
+            ("SELECT k, SUM(a) FROM t GROUP BY ALL k", vec!["k"]),
+            ("SELECT t.*, COUNT(*) FROM t GROUP BY ALL", vec!["a", "k"]),
+        ] {
+            let analysis = analyze_query(
+                sql,
+                AnalyzeQueryOptions {
+                    dialect,
+                    schema: Some(schema.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let groups: Vec<_> = analysis
+                .column_uses
+                .iter()
+                .filter(|fact| fact.context == polyglot_sql::ColumnUseContext::Group)
+                .collect();
+            assert_eq!(groups.len(), expected.len(), "{dialect}: {sql}: {groups:?}");
+            let mut keys: Vec<_> = groups
+                .iter()
+                .flat_map(|group| &group.references)
+                .map(|r| {
+                    assert_eq!(r.reference.source_name.as_deref(), Some("t"), "{sql}");
+                    r.reference.column.to_ascii_lowercase()
+                })
+                .collect();
+            keys.sort();
+            assert_eq!(keys, expected, "{dialect}: {sql}");
+        }
+    }
+}
+
+#[test]
 fn aggregate_order_columns_are_projection_dependencies() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
         {"name":"t","columns":[{"name":"a","type":"VARCHAR"}]},

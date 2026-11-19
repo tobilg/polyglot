@@ -70,6 +70,13 @@ impl Collector<'_> {
         self.scan(query, "", &frame, ancestors, filter_branch, true);
         if let Expression::Select(select) = query {
             self.implicit_joins(select, path, &frame, ancestors);
+            if select
+                .group_by
+                .as_ref()
+                .is_some_and(|group| group.all == Some(true) && group.expressions.is_empty())
+            {
+                self.implicit_groups(select, prepared, &frame, ancestors);
+            }
         }
 
         let mut ctes = prepared.cte_scopes.clone();
@@ -495,6 +502,60 @@ impl Collector<'_> {
             }
         }
         references
+    }
+
+    fn implicit_groups(
+        &mut self,
+        select: &crate::expressions::Select,
+        prepared: &Scope,
+        frame: &Frame,
+        ancestors: &[&Frame],
+    ) {
+        // Qualification expands stars with their modifiers and USING columns.
+        // For ordinary projections retain the spelling and spans from the SQL.
+        let has_star = select
+            .expressions
+            .iter()
+            .any(|expr| projection_is_star(unwrap_projection_alias(expr)));
+        let projections = match scope_query(&prepared.expression) {
+            Expression::Select(qualified) if has_star => &qualified.expressions,
+            _ => &select.expressions,
+        };
+        for (index, projection) in projections.iter().enumerate() {
+            let key = unwrap_projection_alias(projection);
+            if matches!(key, Expression::Literal(_))
+                || crate::scope::walk_in_scope(key, false).any(|node| {
+                    crate::traversal::is_aggregate(node)
+                        || crate::traversal::is_window_function(node)
+                })
+            {
+                continue;
+            }
+            let references = if projection_is_star(key) {
+                // Without a complete schema the contributing columns are unknown.
+                let Expression::Column(mut column) = Expression::column("*") else {
+                    unreachable!()
+                };
+                column.table = projection_star_table(key).map(Identifier::new);
+                vec![unresolved(&column, ReferenceConfidence::Unknown)]
+            } else {
+                self.references(key, ColumnUseContext::Group, frame, ancestors)
+            };
+            if !references.is_empty() {
+                self.facts.push(ColumnUseFact {
+                    context: ColumnUseContext::Group,
+                    scope_path: frame.path.clone(),
+                    expression_path: if has_star {
+                        "group_by.all".to_string()
+                    } else {
+                        format!("expressions[{index}]")
+                    },
+                    expression_sql: self.sql(key),
+                    span: expression_span(key),
+                    references,
+                });
+            }
+        }
     }
 
     fn implicit_joins(
