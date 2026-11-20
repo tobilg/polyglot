@@ -63,6 +63,16 @@ fn duckdb_strftime_constant_format_expression_first_to_sqlite() {
 }
 
 #[test]
+fn duckdb_strftime_bound_format_to_sqlite() {
+    assert_eq!(
+        duckdb_to_sqlite("SELECT STRFTIME(?, DATE '2024-01-15')"),
+        "SELECT STRFTIME(?, '2024-01-15')"
+    );
+    let out = duckdb_to_sqlite("SELECT STRFTIME(COALESCE(CURRENT_DATE, '2000-01-01'), ?)");
+    assert!(out.starts_with("SELECT STRFTIME(?, "), "{out}");
+}
+
+#[test]
 fn sqlite_strftime_round_trips() {
     let out = transpile(
         "SELECT STRFTIME('%Y-%m', d) FROM t",

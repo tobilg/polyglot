@@ -4238,10 +4238,18 @@ pub(super) fn rewrite(
                                 // SQLite: args[0] = format, args[1] = value
                                 (f.args[1].clone(), &f.args[0])
                             } else if matches!(source, DialectType::DuckDB)
-                                && ((is_constant_string(&f.args[0])
-                                    && !is_constant_string(&f.args[1]))
-                                    || (is_constant_text(&f.args[0])
-                                        && !is_constant_text(&f.args[1])))
+                                && match (is_temporal(&f.args[0]), is_temporal(&f.args[1])) {
+                                    // When exactly one argument is a date or time, it is the
+                                    // value, even if the format is a bound parameter.
+                                    (false, true) => true,
+                                    (true, false) => false,
+                                    _ => {
+                                        (is_constant_string(&f.args[0])
+                                            && !is_constant_string(&f.args[1]))
+                                            || (is_constant_text(&f.args[0])
+                                                && !is_constant_text(&f.args[1]))
+                                    }
+                                }
                             {
                                 // DuckDB also accepts STRFTIME(fmt, val). Its format must be a
                                 // constant and its value a date/timestamp, so a constant string
@@ -4272,6 +4280,53 @@ pub(super) fn rewrite(
                                         if func.name.eq_ignore_ascii_case("CONCAT") =>
                                     {
                                         func.args.iter().all(is_constant_string)
+                                    }
+                                    _ => false,
+                                }
+                            }
+
+                            // An expression whose result is a date, time or timestamp: a
+                            // temporal literal or cast, CURRENT_DATE and the like, or an
+                            // expression that keeps such an operand's type.
+                            fn is_temporal(expr: &Expression) -> bool {
+                                match expr {
+                                    Expression::Literal(lit) => matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::Date(_)
+                                            | crate::expressions::Literal::Time(_)
+                                            | crate::expressions::Literal::Timestamp(_)
+                                            | crate::expressions::Literal::Datetime(_)
+                                    ),
+                                    Expression::Cast(c) => matches!(
+                                        c.to,
+                                        DataType::Date
+                                            | DataType::Time { .. }
+                                            | DataType::Timestamp { .. }
+                                    ),
+                                    Expression::CurrentDate(_)
+                                    | Expression::CurrentTime(_)
+                                    | Expression::CurrentTimestamp(_)
+                                    | Expression::CurrentTimestampLTZ(_)
+                                    | Expression::CurrentDatetime(_)
+                                    | Expression::Localtime(_)
+                                    | Expression::Localtimestamp(_) => true,
+                                    Expression::Function(func) => {
+                                        func.name.eq_ignore_ascii_case("NOW")
+                                            || func.name.eq_ignore_ascii_case("TODAY")
+                                            || func.name.eq_ignore_ascii_case("CURRENT_DATE")
+                                            || func.name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                                    }
+                                    Expression::Paren(p) => is_temporal(&p.this),
+                                    Expression::Add(op) | Expression::Sub(op) => {
+                                        is_temporal(&op.left) || is_temporal(&op.right)
+                                    }
+                                    Expression::Coalesce(v)
+                                    | Expression::Greatest(v)
+                                    | Expression::Least(v) => v.expressions.iter().any(is_temporal),
+                                    Expression::NullIf(b) => is_temporal(&b.this),
+                                    Expression::Case(c) => {
+                                        c.whens.iter().any(|(_, then)| is_temporal(then))
+                                            || c.else_.as_ref().is_some_and(is_temporal)
                                     }
                                     _ => false,
                                 }
