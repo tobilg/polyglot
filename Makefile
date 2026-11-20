@@ -310,6 +310,7 @@ test-rust-verify-core:
 	@cargo test -p polyglot-sql --test duckdb_json_arrow_context
 	@cargo test -p polyglot-sql --test quoted_relation_columns
 	@cargo test -p polyglot-sql --test oracle_flashback
+	@cargo test -p polyglot-sql --test spark_date_trunc_regression
 	@echo ""
 	@echo "=== Generic identity tests ==="
 	@cargo test --test sqlglot_identity test_sqlglot_identity_all -p polyglot-sql -- --nocapture
