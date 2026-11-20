@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.14.3] - 2026-11-20
+
+### Added
+
+- Query analysis reports columns used as table-function arguments under the new
+  `table_function_input` context. For Snowflake `LATERAL FLATTEN(input => t.items)`,
+  the lineage of `VALUE` now records `FLATTEN` as the transformation on `t.items`.
+  Rust callers matching `ColumnUseContext` exhaustively need to handle
+  `TableFunctionInput`. The TypeScript, Python, and Go SDKs expose the new context.
+  ([#553](https://github.com/tobilg/polyglot/issues/553))
+
+### Fixed
+
+- Catalog-qualified table references resolve against shorter names in the supplied
+  schema. Validation reports unknown columns, and `SELECT *` inside a CTE
+  retains lineage to the underlying table.
+  ([#546](https://github.com/tobilg/polyglot/issues/546))
+- A qualified star such as `t.*` in a `JOIN ... USING` traces the join key
+  directly to `t`. An unqualified `*` retains the merged join key.
+  ([#547](https://github.com/tobilg/polyglot/issues/547))
+- Projected columns retain their output names and lineage through CTEs when the
+  projection includes a line or block comment.
+  ([#548](https://github.com/tobilg/polyglot/issues/548))
+- Schema validation checks `PIVOT` and `UNPIVOT` operands against the input
+  relation and resolves outer projections against the resulting columns.
+  ([#549](https://github.com/tobilg/polyglot/issues/549))
+- Schema validation preserves the case of quoted table and column names and
+  applies the dialect’s case-folding rules to unquoted names, including in
+  `INSERT` and `UPDATE` statements.
+  ([#550](https://github.com/tobilg/polyglot/issues/550))
+- Aggregate output lineage includes columns used to order the aggregate’s
+  inputs, including DuckDB’s inline `ORDER BY` and Snowflake’s
+  `WITHIN GROUP (ORDER BY ...)`.
+  ([#551](https://github.com/tobilg/polyglot/issues/551))
+- Query analysis reports the grouping columns inferred by `GROUP BY ALL` in
+  DuckDB and Snowflake, including columns from expanded stars.
+  ([#552](https://github.com/tobilg/polyglot/issues/552))
+
 ## [0.14.2] - 2026-11-18
 
 ### Fixed
@@ -2410,6 +2448,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.14.3]: https://github.com/tobilg/polyglot/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/tobilg/polyglot/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/tobilg/polyglot/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/tobilg/polyglot/compare/v0.13.5...v0.14.0
