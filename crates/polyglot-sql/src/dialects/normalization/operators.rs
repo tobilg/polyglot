@@ -1763,7 +1763,7 @@ fn is_float_cast(expr: &Expression) -> bool {
 
 /// Whether `expr` has an exact decimal type: a CAST to DECIMAL/NUMERIC, or an
 /// expression that keeps such an operand's type (parentheses, sign, arithmetic,
-/// NULLIF, COALESCE, GREATEST/LEAST, ABS, CASE).
+/// NULLIF, COALESCE, GREATEST/LEAST, ABS, CASE, aggregates), or a decimal literal.
 fn is_decimal_typed(expr: &Expression) -> bool {
     match expr {
         Expression::Cast(cast) => match &cast.to {
@@ -1781,8 +1781,16 @@ fn is_decimal_typed(expr: &Expression) -> bool {
         | Expression::Mul(op)
         | Expression::Div(op)
         | Expression::Mod(op) => is_decimal_typed(&op.left) || is_decimal_typed(&op.right),
-        Expression::NullIf(f) => is_decimal_typed(&f.this),
-        Expression::Nullif(f) => is_decimal_typed(&f.this),
+        // A decimal literal such as 2.5 or 0.0 is numeric in PostgreSQL.
+        Expression::Literal(lit) => {
+            matches!(lit.as_ref(), Literal::Number(n) if n.contains(['.', 'e', 'E']))
+        }
+        // NULLIF compares its arguments, so a numeric second argument promotes the first.
+        Expression::NullIf(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
+        Expression::Nullif(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
+        // AVG of integers is numeric; SUM, MIN and MAX keep their argument's type.
+        Expression::Avg(_) => true,
+        Expression::Sum(f) | Expression::Min(f) | Expression::Max(f) => is_decimal_typed(&f.this),
         Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f) => {
             f.expressions.iter().any(is_decimal_typed)
         }
@@ -1790,8 +1798,15 @@ fn is_decimal_typed(expr: &Expression) -> bool {
             c.whens.iter().any(|(_, then)| is_decimal_typed(then))
                 || c.else_.as_ref().is_some_and(is_decimal_typed)
         }
-        Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF") => {
-            f.args.first().is_some_and(is_decimal_typed)
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("AVG") => true,
+        Expression::Function(f)
+            if [
+                "NULLIF", "GREATEST", "LEAST", "COALESCE", "ABS", "ROUND", "SUM", "MIN", "MAX",
+            ]
+            .iter()
+            .any(|name| f.name.eq_ignore_ascii_case(name)) =>
+        {
+            f.args.iter().any(is_decimal_typed)
         }
         _ => false,
     }

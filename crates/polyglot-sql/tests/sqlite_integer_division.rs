@@ -81,6 +81,10 @@ fn decimal_division_from_truncating_dialects_casts() {
             "SELECT CAST((CAST(7 AS DECIMAL)) AS REAL) / 2",
         ),
         (
+            "SELECT 7 / NULLIF(2, 0.0)",
+            "SELECT CAST(7 AS REAL) / NULLIF(2, 0.0)",
+        ),
+        (
             "SELECT 7 / NULLIF(CAST(2 AS NUMERIC), 0)",
             "SELECT CAST(7 AS REAL) / NULLIF(CAST(2 AS DECIMAL), 0)",
         ),
