@@ -194,29 +194,6 @@ impl DialectImpl for SQLiteDialect {
             // Cast transformations for type mapping
             Expression::Cast(c) => self.transform_cast(*c),
 
-            // Div: SQLite has TYPED_DIVISION - wrap left operand in CAST(AS REAL)
-            Expression::Div(mut op) => {
-                // Don't add CAST AS REAL if either operand is already a float literal
-                let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n.contains('.')));
-                let right_is_float_cast = Self::is_float_cast(&op.right);
-                if !Self::is_float_cast(&op.left) && !right_is_float && !right_is_float_cast {
-                    op.left = Expression::Cast(Box::new(crate::expressions::Cast {
-                        this: op.left,
-                        to: crate::expressions::DataType::Float {
-                            precision: None,
-                            scale: None,
-                            real_spelling: true,
-                        },
-                        trailing_comments: Vec::new(),
-                        double_colon_syntax: false,
-                        format: None,
-                        default: None,
-                        inferred_type: None,
-                    }));
-                }
-                Ok(Expression::Div(op))
-            }
-
             // Pass through everything else
             _ => Ok(expr),
         }
@@ -339,22 +316,6 @@ impl SQLiteDialect {
             args.push(characters);
         }
         Expression::Function(Box::new(Function::new(function_name.to_string(), args)))
-    }
-
-    /// Check if an expression is already a CAST to a float type
-    fn is_float_cast(expr: &Expression) -> bool {
-        if let Expression::Cast(cast) = expr {
-            match &cast.to {
-                crate::expressions::DataType::Double { .. }
-                | crate::expressions::DataType::Float { .. } => true,
-                crate::expressions::DataType::Custom { name } => {
-                    name.eq_ignore_ascii_case("REAL") || name.eq_ignore_ascii_case("DOUBLE")
-                }
-                _ => false,
-            }
-        } else {
-            false
-        }
     }
 
     fn transform_function(&self, f: Function) -> Result<Expression> {

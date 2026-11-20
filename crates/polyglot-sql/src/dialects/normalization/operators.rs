@@ -354,30 +354,24 @@ pub(super) fn rewrite(
                 if let Expression::Div(op) = e {
                     let left = op.left;
                     let right = op.right;
-                    // For SQLite: CAST left as REAL but NO NULLIF wrapping
+                    // SQLite: no NULLIF wrapping; the REAL cast is added by
+                    // cast_division_to_real after normalization
                     if matches!(target, DialectType::SQLite) {
-                        let new_left = Expression::Cast(Box::new(Cast {
-                            this: left,
-                            to: DataType::Float {
-                                precision: None,
-                                scale: None,
-                                real_spelling: true,
-                            },
-                            trailing_comments: Vec::new(),
-                            double_colon_syntax: false,
-                            format: None,
-                            default: None,
-                            inferred_type: None,
-                        }));
-                        return Ok(Expression::Div(Box::new(BinaryOp::new(new_left, right))));
+                        return Ok(Expression::Div(Box::new(BinaryOp::new(left, right))));
                     }
-                    // Wrap right in NULLIF(right, 0)
-                    let nullif_right = Expression::Function(Box::new(Function::new(
-                        "NULLIF".to_string(),
-                        vec![right, Expression::number(0)],
-                    )));
+                    // Wrap right in NULLIF(right, 0) unless it already is one
+                    let nullif_right = if matches!(&right, Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF"))
+                    {
+                        right
+                    } else {
+                        Expression::Function(Box::new(Function::new(
+                            "NULLIF".to_string(),
+                            vec![right, Expression::number(0)],
+                        )))
+                    };
                     // For some dialects, also CAST the left side
                     let new_left = match target {
+                        _ if is_float_cast(&left) => left,
                         DialectType::PostgreSQL
                         | DialectType::Redshift
                         | DialectType::Teradata
@@ -1751,6 +1745,102 @@ fn snowflake_regex_inline_flags(flags: Option<&Expression>) -> std::result::Resu
     } else {
         Ok(format!("(?{enabled}-s)"))
     }
+}
+
+/// Whether `expr` is already a CAST to a floating-point type.
+fn is_float_cast(expr: &Expression) -> bool {
+    match expr {
+        Expression::Cast(cast) => match &cast.to {
+            DataType::Double { .. } | DataType::Float { .. } => true,
+            DataType::Custom { name } => {
+                name.eq_ignore_ascii_case("REAL") || name.eq_ignore_ascii_case("DOUBLE")
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether `expr` has an exact decimal type: a CAST to DECIMAL/NUMERIC, or an
+/// expression that keeps such an operand's type (parentheses, sign, arithmetic,
+/// NULLIF, COALESCE, GREATEST/LEAST, ABS, CASE, aggregates), or a decimal literal.
+fn is_decimal_typed(expr: &Expression) -> bool {
+    match expr {
+        Expression::Cast(cast) => match &cast.to {
+            DataType::Decimal { .. } => true,
+            DataType::Custom { name } => {
+                name.eq_ignore_ascii_case("NUMERIC") || name.eq_ignore_ascii_case("DECIMAL")
+            }
+            _ => false,
+        },
+        Expression::Paren(p) => is_decimal_typed(&p.this),
+        Expression::Neg(u) => is_decimal_typed(&u.this),
+        Expression::Abs(f) => is_decimal_typed(&f.this),
+        Expression::Add(op)
+        | Expression::Sub(op)
+        | Expression::Mul(op)
+        | Expression::Div(op)
+        | Expression::Mod(op) => is_decimal_typed(&op.left) || is_decimal_typed(&op.right),
+        // A decimal literal such as 2.5 or 0.0 is numeric in PostgreSQL.
+        Expression::Literal(lit) => {
+            matches!(lit.as_ref(), Literal::Number(n) if n.contains(['.', 'e', 'E']))
+        }
+        // NULLIF compares its arguments, so a numeric second argument promotes the first.
+        Expression::NullIf(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
+        Expression::Nullif(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
+        // AVG of integers is numeric; SUM, MIN and MAX keep their argument's type.
+        Expression::Avg(_) => true,
+        Expression::Sum(f) | Expression::Min(f) | Expression::Max(f) => is_decimal_typed(&f.this),
+        Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f) => {
+            f.expressions.iter().any(is_decimal_typed)
+        }
+        Expression::Case(c) => {
+            c.whens.iter().any(|(_, then)| is_decimal_typed(then))
+                || c.else_.as_ref().is_some_and(is_decimal_typed)
+        }
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("AVG") => true,
+        Expression::Function(f)
+            if [
+                "NULLIF", "GREATEST", "LEAST", "COALESCE", "ABS", "ROUND", "SUM", "MIN", "MAX",
+            ]
+            .iter()
+            .any(|name| f.name.eq_ignore_ascii_case(name)) =>
+        {
+            f.args.iter().any(is_decimal_typed)
+        }
+        _ => false,
+    }
+}
+
+/// Cast the left operand of each `/` to REAL so SQLite divides fractionally,
+/// unless an operand is already a float cast or the right one a float literal.
+/// With `decimal_only`, only division with a DECIMAL cast operand is cast: in
+/// dialects whose integer division truncates, that is the fractional case, but
+/// SQLite stores a whole-number DECIMAL as an integer.
+pub(super) fn cast_division_to_real(expr: Expression, decimal_only: bool) -> Result<Expression> {
+    crate::dialects::transform_recursive(expr, &|e| match e {
+        Expression::Div(mut op) => {
+            let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')));
+            let fractional =
+                !decimal_only || is_decimal_typed(&op.left) || is_decimal_typed(&op.right);
+            if fractional
+                && !is_float_cast(&op.left)
+                && !is_float_cast(&op.right)
+                && !right_is_float
+            {
+                op.left = cast_expr(
+                    op.left,
+                    DataType::Float {
+                        precision: None,
+                        scale: None,
+                        real_spelling: true,
+                    },
+                );
+            }
+            Ok(Expression::Div(op))
+        }
+        _ => Ok(e),
+    })
 }
 
 pub(super) fn cast_expr(this: Expression, to: DataType) -> Expression {
