@@ -64,3 +64,20 @@ fn existing_nullif_denominator_still_casts() {
         );
     }
 }
+
+#[test]
+fn decimal_division_from_truncating_dialects_casts() {
+    for (sql, want) in [
+        (
+            "SELECT CAST(7 AS NUMERIC) / 2",
+            "SELECT CAST(CAST(7 AS DECIMAL) AS REAL) / 2",
+        ),
+        (
+            "SELECT 7 / CAST(2 AS DECIMAL(10, 2))",
+            "SELECT CAST(7 AS REAL) / CAST(2 AS DECIMAL(10, 2))",
+        ),
+    ] {
+        let out = transpile(sql, DialectType::PostgreSQL, DialectType::SQLite).unwrap();
+        assert_eq!(out, vec![want], "{sql}");
+    }
+}

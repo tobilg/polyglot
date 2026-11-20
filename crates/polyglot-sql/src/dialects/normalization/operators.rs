@@ -1761,13 +1761,36 @@ fn is_float_cast(expr: &Expression) -> bool {
     }
 }
 
+/// Whether `expr` is a CAST to an exact decimal type.
+fn is_decimal_cast(expr: &Expression) -> bool {
+    match expr {
+        Expression::Cast(cast) => match &cast.to {
+            DataType::Decimal { .. } => true,
+            DataType::Custom { name } => {
+                name.eq_ignore_ascii_case("NUMERIC") || name.eq_ignore_ascii_case("DECIMAL")
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Cast the left operand of each `/` to REAL so SQLite divides fractionally,
 /// unless an operand is already a float cast or the right one a float literal.
-pub(super) fn cast_division_to_real(expr: Expression) -> Result<Expression> {
+/// With `decimal_only`, only division with a DECIMAL cast operand is cast: in
+/// dialects whose integer division truncates, that is the fractional case, but
+/// SQLite stores a whole-number DECIMAL as an integer.
+pub(super) fn cast_division_to_real(expr: Expression, decimal_only: bool) -> Result<Expression> {
     crate::dialects::transform_recursive(expr, &|e| match e {
         Expression::Div(mut op) => {
             let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')));
-            if !is_float_cast(&op.left) && !is_float_cast(&op.right) && !right_is_float {
+            let fractional =
+                !decimal_only || is_decimal_cast(&op.left) || is_decimal_cast(&op.right);
+            if fractional
+                && !is_float_cast(&op.left)
+                && !is_float_cast(&op.right)
+                && !right_is_float
+            {
                 op.left = cast_expr(
                     op.left,
                     DataType::Float {
