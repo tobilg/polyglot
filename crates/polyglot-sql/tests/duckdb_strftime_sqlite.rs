@@ -45,6 +45,24 @@ fn duckdb_strftime_format_first_to_sqlite() {
 }
 
 #[test]
+fn duckdb_strftime_constant_format_expression_first_to_sqlite() {
+    for format in [
+        "CAST('%Y-%m' AS VARCHAR)",
+        "COALESCE(NULL, '%Y-%m')",
+        "REPLACE('%Y/%m', '/', '-')",
+        "SUBSTR('%Y-%m-%d', 1, 5)",
+        "CASE WHEN 1 = 1 THEN '%Y-%m' ELSE '%Y' END",
+    ] {
+        let out = duckdb_to_sqlite(&format!("SELECT STRFTIME({format}, DATE '2024-01-15')"));
+        assert!(out.ends_with(", '2024-01-15')"), "{format}: {out}");
+        let out = duckdb_to_sqlite(&format!("SELECT STRFTIME({format}, d) FROM t"));
+        assert!(out.ends_with(", d) FROM t"), "{format}: {out}");
+    }
+    let out = duckdb_to_sqlite("SELECT STRFTIME(CAST('2024-01-15' AS DATE), '%Y-%m')");
+    assert!(out.starts_with("SELECT STRFTIME('%Y-%m', "), "{out}");
+}
+
+#[test]
 fn sqlite_strftime_round_trips() {
     let out = transpile(
         "SELECT STRFTIME('%Y-%m', d) FROM t",

@@ -4238,8 +4238,10 @@ pub(super) fn rewrite(
                                 // SQLite: args[0] = format, args[1] = value
                                 (f.args[1].clone(), &f.args[0])
                             } else if matches!(source, DialectType::DuckDB)
-                                && is_constant_string(&f.args[0])
-                                && !is_constant_string(&f.args[1])
+                                && ((is_constant_string(&f.args[0])
+                                    && !is_constant_string(&f.args[1]))
+                                    || (is_constant_text(&f.args[0])
+                                        && !is_constant_text(&f.args[1])))
                             {
                                 // DuckDB also accepts STRFTIME(fmt, val). Its format must be a
                                 // constant and its value a date/timestamp, so a constant string
@@ -4273,6 +4275,38 @@ pub(super) fn rewrite(
                                     }
                                     _ => false,
                                 }
+                            }
+
+                            // A string expression built from constants only, e.g.
+                            // CAST('%Y' AS VARCHAR), COALESCE(NULL, '%Y') or
+                            // REPLACE('%Y/%m', '/', '-'): no columns, a string
+                            // literal somewhere, and nothing date or time typed.
+                            fn is_constant_text(expr: &Expression) -> bool {
+                                use crate::traversal::ExpressionWalk;
+                                !expr.contains(|e| {
+                                    matches!(
+                                        e,
+                                        Expression::Column(_)
+                                            | Expression::Subquery(_)
+                                            | Expression::Interval(_)
+                                    ) || matches!(e, Expression::Literal(lit) if matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::Date(_)
+                                            | crate::expressions::Literal::Time(_)
+                                            | crate::expressions::Literal::Timestamp(_)
+                                            | crate::expressions::Literal::Datetime(_)
+                                    )) || matches!(e, Expression::Cast(c) if matches!(
+                                        c.to,
+                                        DataType::Date
+                                            | DataType::Time { .. }
+                                            | DataType::Timestamp { .. }
+                                    ))
+                                }) && expr.contains(|e| {
+                                    matches!(e, Expression::Literal(lit) if matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::String(_)
+                                    ))
+                                })
                             }
 
                             // Helper to convert C-style format to Java-style
