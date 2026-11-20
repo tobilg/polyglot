@@ -4238,9 +4238,9 @@ pub(super) fn rewrite(
                                 // SQLite: args[0] = format, args[1] = value
                                 (f.args[1].clone(), &f.args[0])
                             } else if matches!(source, DialectType::DuckDB)
-                                && match (is_temporal(&f.args[0]), is_temporal(&f.args[1])) {
-                                    // When exactly one argument is a date or time, it is the
-                                    // value, even if the format is a bound parameter.
+                                && match (is_value_like(&f.args[0]), is_value_like(&f.args[1])) {
+                                    // When exactly one argument is a date, a time or refers to a
+                                    // column, it is the value: DuckDB's format must be constant.
                                     (false, true) => true,
                                     (true, false) => false,
                                     _ => {
@@ -4283,6 +4283,12 @@ pub(super) fn rewrite(
                                     }
                                     _ => false,
                                 }
+                            }
+
+                            fn is_value_like(expr: &Expression) -> bool {
+                                use crate::traversal::ExpressionWalk;
+                                is_temporal(expr)
+                                    || expr.contains(|e| matches!(e, Expression::Column(_)))
                             }
 
                             // An expression whose result is a date, time or timestamp: a

@@ -68,6 +68,10 @@ fn duckdb_strftime_bound_format_to_sqlite() {
         duckdb_to_sqlite("SELECT STRFTIME(?, DATE '2024-01-15')"),
         "SELECT STRFTIME(?, '2024-01-15')"
     );
+    assert_eq!(
+        duckdb_to_sqlite("SELECT STRFTIME(?, d) FROM t"),
+        "SELECT STRFTIME(?, d) FROM t"
+    );
     let out = duckdb_to_sqlite("SELECT STRFTIME(COALESCE(CURRENT_DATE, '2000-01-01'), ?)");
     assert!(out.starts_with("SELECT STRFTIME(?, "), "{out}");
 }
