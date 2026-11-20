@@ -76,6 +76,14 @@ fn decimal_division_from_truncating_dialects_casts() {
             "SELECT 7 / CAST(2 AS DECIMAL(10, 2))",
             "SELECT CAST(7 AS REAL) / CAST(2 AS DECIMAL(10, 2))",
         ),
+        (
+            "SELECT (CAST(7 AS NUMERIC)) / 2",
+            "SELECT CAST((CAST(7 AS DECIMAL)) AS REAL) / 2",
+        ),
+        (
+            "SELECT 7 / NULLIF(CAST(2 AS NUMERIC), 0)",
+            "SELECT CAST(7 AS REAL) / NULLIF(CAST(2 AS DECIMAL), 0)",
+        ),
     ] {
         let out = transpile(sql, DialectType::PostgreSQL, DialectType::SQLite).unwrap();
         assert_eq!(out, vec![want], "{sql}");

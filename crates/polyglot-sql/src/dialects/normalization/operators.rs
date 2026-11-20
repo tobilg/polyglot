@@ -1761,8 +1761,10 @@ fn is_float_cast(expr: &Expression) -> bool {
     }
 }
 
-/// Whether `expr` is a CAST to an exact decimal type.
-fn is_decimal_cast(expr: &Expression) -> bool {
+/// Whether `expr` has an exact decimal type: a CAST to DECIMAL/NUMERIC, or an
+/// expression that keeps such an operand's type (parentheses, sign, arithmetic,
+/// NULLIF, COALESCE, GREATEST/LEAST, ABS, CASE).
+fn is_decimal_typed(expr: &Expression) -> bool {
     match expr {
         Expression::Cast(cast) => match &cast.to {
             DataType::Decimal { .. } => true,
@@ -1771,6 +1773,26 @@ fn is_decimal_cast(expr: &Expression) -> bool {
             }
             _ => false,
         },
+        Expression::Paren(p) => is_decimal_typed(&p.this),
+        Expression::Neg(u) => is_decimal_typed(&u.this),
+        Expression::Abs(f) => is_decimal_typed(&f.this),
+        Expression::Add(op)
+        | Expression::Sub(op)
+        | Expression::Mul(op)
+        | Expression::Div(op)
+        | Expression::Mod(op) => is_decimal_typed(&op.left) || is_decimal_typed(&op.right),
+        Expression::NullIf(f) => is_decimal_typed(&f.this),
+        Expression::Nullif(f) => is_decimal_typed(&f.this),
+        Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f) => {
+            f.expressions.iter().any(is_decimal_typed)
+        }
+        Expression::Case(c) => {
+            c.whens.iter().any(|(_, then)| is_decimal_typed(then))
+                || c.else_.as_ref().is_some_and(is_decimal_typed)
+        }
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF") => {
+            f.args.first().is_some_and(is_decimal_typed)
+        }
         _ => false,
     }
 }
@@ -1785,7 +1807,7 @@ pub(super) fn cast_division_to_real(expr: Expression, decimal_only: bool) -> Res
         Expression::Div(mut op) => {
             let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')));
             let fractional =
-                !decimal_only || is_decimal_cast(&op.left) || is_decimal_cast(&op.right);
+                !decimal_only || is_decimal_typed(&op.left) || is_decimal_typed(&op.right);
             if fractional
                 && !is_float_cast(&op.left)
                 && !is_float_cast(&op.right)
