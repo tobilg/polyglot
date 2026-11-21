@@ -33,8 +33,27 @@ pub(super) fn collect(
 struct Frame<'a> {
     path: String,
     selected: Scope,
-    lineage: &'a ScopedLineage,
+    lineage: &'a LazyLineage<'a>,
     subqueries: Vec<Expression>,
+}
+
+/// The lineage of a scope, built on its first use. Set-operation scopes and
+/// many CTE scopes have no clause uses, and each lineage copies its scope.
+struct LazyLineage<'a> {
+    scope: &'a Scope,
+    inherited_ctes: &'a [&'a Scope],
+    dialect: DialectType,
+    lineage: std::cell::OnceCell<ScopedLineage>,
+}
+
+impl std::ops::Deref for LazyLineage<'_> {
+    type Target = ScopedLineage;
+
+    fn deref(&self) -> &ScopedLineage {
+        self.lineage.get_or_init(|| {
+            ScopedLineage::new(self.scope.clone(), self.inherited_ctes, self.dialect)
+        })
+    }
 }
 
 struct Collector<'a> {
@@ -52,10 +71,15 @@ impl Collector<'_> {
         prepared: &Scope,
         path: &str,
         ancestors: &[&Frame],
-        inherited_ctes: &[Scope],
+        inherited_ctes: &[&Scope],
         filter_branch: bool,
     ) {
-        let lineage = ScopedLineage::new(prepared.clone(), inherited_ctes, self.dialect);
+        let lineage = LazyLineage {
+            scope: prepared,
+            inherited_ctes,
+            dialect: self.dialect,
+            lineage: std::cell::OnceCell::new(),
+        };
         let frame = Frame {
             path: path.to_string(),
             selected: selected_reference_scope(original),
@@ -80,8 +104,11 @@ impl Collector<'_> {
             }
         }
 
-        let mut ctes = prepared.cte_scopes.clone();
-        ctes.extend_from_slice(inherited_ctes);
+        let ctes: Vec<&Scope> = prepared
+            .cte_scopes
+            .iter()
+            .chain(inherited_ctes.iter().copied())
+            .collect();
         let outer: Vec<_> = std::iter::once(&frame)
             .chain(ancestors.iter().copied())
             .collect();
@@ -850,6 +877,26 @@ pub(super) fn collect_uncertain_occurrences(
     schema: &MappingSchema,
     uncertain: &mut HashMap<(usize, usize), ReferenceConfidence>,
 ) {
+    uncertain_in_scope(scope, schema, uncertain);
+    for child in scope
+        .cte_scopes
+        .iter()
+        .chain(&scope.derived_table_scopes)
+        .chain(&scope.subquery_scopes)
+        .chain(&scope.udtf_scopes)
+        .chain(&scope.union_scopes)
+    {
+        collect_uncertain_occurrences(child, schema, uncertain);
+    }
+}
+
+/// `selected` copies the visible CTEs. Its copy ends before the walk of the
+/// children, because a nested set operation is one scope per level.
+fn uncertain_in_scope(
+    scope: &Scope,
+    schema: &MappingSchema,
+    uncertain: &mut HashMap<(usize, usize), ReferenceConfidence>,
+) {
     let selected = selected_reference_scope(scope);
     let mut resolver = Resolver::new(&selected, schema, false);
     let open: Vec<_> = selected
@@ -884,15 +931,5 @@ pub(super) fn collect_uncertain_occurrences(
                 }
             }
         }
-    }
-    for child in scope
-        .cte_scopes
-        .iter()
-        .chain(&scope.derived_table_scopes)
-        .chain(&scope.subquery_scopes)
-        .chain(&scope.udtf_scopes)
-        .chain(&scope.union_scopes)
-    {
-        collect_uncertain_occurrences(child, schema, uncertain);
     }
 }

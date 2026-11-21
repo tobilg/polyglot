@@ -11,7 +11,7 @@ use crate::helper::name_sequence;
 use crate::optimizer::normalize_identifiers::{
     get_normalization_strategy, normalize_identifier, NormalizationStrategy,
 };
-use crate::scope::traverse_scope;
+use crate::scope::for_each_scope;
 use std::collections::{HashMap, HashSet};
 
 /// Options for table qualification
@@ -134,12 +134,16 @@ pub fn qualify_tables(expression: Expression, options: &QualifyTablesOptions) ->
     } else {
         &options.alias_prefix
     };
-    let mut reserved_aliases: HashSet<String> = traverse_scope(&expression)
-        .into_iter()
-        .flat_map(|scope| scope.sources.into_keys())
-        .filter(|name| !name.is_empty())
-        .map(|name| normalize_identifier(Identifier::new(name), strategy).name)
-        .collect();
+    let mut reserved_aliases = HashSet::new();
+    for_each_scope(&expression, |scope| {
+        reserved_aliases.extend(
+            scope
+                .sources
+                .keys()
+                .filter(|name| !name.is_empty())
+                .map(|name| normalize_identifier(Identifier::new(name.clone()), strategy).name),
+        );
+    });
     let mut alias_sequence = name_sequence(alias_prefix);
     let mut next_alias = || loop {
         let candidate = alias_sequence();

@@ -21,6 +21,7 @@ use crate::{parse_one_with_options, ComplexityGuardOptions, Error, ParseOptions,
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 mod column_uses;
 
@@ -229,7 +230,7 @@ pub enum SetOperationBranchRole {
 }
 
 /// High-level kind of transformation performed by a projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransformKind {
     Direct,
@@ -1253,7 +1254,7 @@ fn lineage_uncertainty(
     uncertain: &HashMap<(usize, usize), ReferenceConfidence>,
 ) -> Option<ReferenceConfidence> {
     combine_uncertainty(
-        node.walk()
+        node.walk_unique()
             .filter_map(|node| expression_uncertainty(&node.expression, uncertain)),
     )
 }
@@ -1800,15 +1801,24 @@ fn terminal_references_from_lineage(
     path: Option<&PathTransform>,
 ) -> Vec<ColumnReferenceFact> {
     let mut refs = Vec::new();
-    collect_terminal_references(node, path, &mut refs);
+    collect_terminal_references(node, path, &mut HashSet::new(), &mut refs);
     dedupe_column_refs(refs)
 }
 
 fn collect_terminal_references(
     node: &LineageNode,
     path: Option<&PathTransform>,
+    visited: &mut HashSet<(*const LineageNode, Option<PathTransform>)>,
     refs: &mut Vec<ColumnReferenceFact>,
 ) {
+    // A shared trace seen again on an equal path only repeats references
+    // that dedupe_column_refs merges without change.
+    if let Some(shared) = &node.shared {
+        if !visited.insert((Arc::as_ptr(shared), path.cloned())) {
+            return;
+        }
+    }
+    let node = node.resolved();
     // A set-operation node only routes to its branches; each branch is a step.
     let stepped;
     let path = match path {
@@ -1835,7 +1845,7 @@ fn collect_terminal_references(
     }
 
     for child in &node.downstream {
-        collect_terminal_references(child, path, refs);
+        collect_terminal_references(child, path, visited, refs);
     }
 }
 
@@ -1860,7 +1870,7 @@ fn table_function_call(mut expression: &Expression) -> Option<(&Expression, usiz
 }
 
 /// The transforms on one lineage path, from the projection output to a source column.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct PathTransform {
     dialect: DialectType,
     kind: TransformKind,

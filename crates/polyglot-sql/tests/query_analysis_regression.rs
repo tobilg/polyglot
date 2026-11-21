@@ -416,3 +416,135 @@ fn re_aliased_join_groups_preserve_dependencies_and_scope_boundaries() {
         }
     }
 }
+
+#[test]
+fn ctes_that_read_the_previous_cte_twice_stay_linear() {
+    use polyglot_sql::scope::SourceKind;
+    use polyglot_sql::{ColumnUseContext, ReferenceConfidence};
+
+    // Each CTE reads the previous CTE in two branches. A separate trace per
+    // reference doubled the lineage at each level, so depth 24 did not finish.
+    const DEPTH: usize = 24;
+    for (branch, b_kind, b_functions) in [
+        (
+            "SELECT * FROM {cte}",
+            TransformKind::Direct,
+            Vec::<&str>::new(),
+        ),
+        (
+            "SELECT a, UPPER(b) AS b, c FROM {cte} WHERE a > 0",
+            TransformKind::Expression,
+            vec!["UPPER"],
+        ),
+    ] {
+        let mut ctes = vec!["c0 AS (SELECT a, b, c FROM t)".to_string()];
+        for level in 1..=DEPTH {
+            let previous = format!("c{}", level - 1);
+            let second = branch.replace("{cte}", &previous);
+            ctes.push(format!(
+                "c{level} AS (SELECT * FROM {previous} UNION ALL {second})"
+            ));
+        }
+        let sql = format!("WITH {} SELECT * FROM c{DEPTH}", ctes.join(", "));
+        let analysis = analyze_query(
+            &sql,
+            AnalyzeQueryOptions {
+                dialect: DialectType::Snowflake,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(analysis.ctes.len(), DEPTH + 1, "{branch}");
+        for (projection, column) in analysis.projections.iter().zip(["a", "b", "c"]) {
+            assert_eq!(projection.name.as_deref(), Some(column), "{branch}");
+            assert_eq!(projection.upstream.len(), 1, "{branch}");
+            let reference = &projection.upstream[0];
+            assert_eq!(reference.table.as_deref(), Some("t"), "{branch}");
+            assert_eq!(reference.column, column, "{branch}");
+            assert_eq!(reference.source_kind, SourceKind::Table, "{branch}");
+            assert_eq!(
+                reference.confidence,
+                ReferenceConfidence::Resolved,
+                "{branch}"
+            );
+        }
+        assert_eq!(analysis.projections.len(), 3, "{branch}");
+
+        // Paths through both branches merge into one reference.
+        let b = &analysis.projections[1].upstream[0];
+        assert_eq!(b.path_transform_kind, Some(b_kind), "{branch}");
+        assert_eq!(b.path_functions, b_functions, "{branch}");
+
+        let filters: Vec<_> = analysis
+            .column_uses
+            .iter()
+            .filter(|fact| fact.context == ColumnUseContext::Filter)
+            .collect();
+        let expected_filters = if branch.contains("WHERE") { DEPTH } else { 0 };
+        assert_eq!(filters.len(), expected_filters, "{branch}");
+        for filter in filters {
+            assert_eq!(filter.references.len(), 1, "{branch}");
+            let reference = &filter.references[0].reference;
+            assert_eq!(reference.table.as_deref(), Some("t"), "{branch}");
+            assert_eq!(reference.column, "a", "{branch}");
+        }
+    }
+}
+
+#[test]
+fn a_union_of_many_filtered_ctes_stays_small() {
+    use polyglot_sql::scope::SourceKind;
+    use polyglot_sql::ColumnUseContext;
+
+    // A UNION ALL of N CTEs is N nested scopes. A copy of the visible CTE
+    // scopes and of the union operands at each level grew as N^3.
+    // 48 stays below MAX_LINEAGE_DEPTH.
+    const BRANCHES: usize = 48;
+    let mut ctes = vec!["src AS (SELECT a, b, c FROM t)".to_string()];
+    for i in 0..BRANCHES {
+        ctes.push(format!(
+            "b{i} AS (SELECT a, UPPER(b) AS b, c FROM src WHERE a = {i})"
+        ));
+    }
+    let branches: Vec<_> = (0..BRANCHES)
+        .map(|i| format!("SELECT * FROM b{i}"))
+        .collect();
+    ctes.push(format!("u AS ({})", branches.join(" UNION ALL ")));
+    let sql = format!("WITH {} SELECT * FROM u", ctes.join(", "));
+    let analysis = analyze_query(
+        &sql,
+        AnalyzeQueryOptions {
+            dialect: DialectType::Snowflake,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(analysis.ctes.len(), BRANCHES + 2);
+    assert_eq!(analysis.projections.len(), 3);
+    for (projection, column) in analysis.projections.iter().zip(["a", "b", "c"]) {
+        assert_eq!(projection.name.as_deref(), Some(column));
+        assert_eq!(projection.upstream.len(), 1);
+        let reference = &projection.upstream[0];
+        assert_eq!(reference.table.as_deref(), Some("t"));
+        assert_eq!(reference.column, column);
+        assert_eq!(reference.source_kind, SourceKind::Table);
+    }
+    let b = &analysis.projections[1].upstream[0];
+    assert_eq!(b.path_transform_kind, Some(TransformKind::Expression));
+    assert_eq!(b.path_functions, vec!["UPPER"]);
+
+    let filters: Vec<_> = analysis
+        .column_uses
+        .iter()
+        .filter(|fact| fact.context == ColumnUseContext::Filter)
+        .collect();
+    assert_eq!(filters.len(), BRANCHES);
+    for filter in filters {
+        assert_eq!(filter.references.len(), 1);
+        let reference = &filter.references[0].reference;
+        assert_eq!(reference.table.as_deref(), Some("t"));
+        assert_eq!(reference.column, "a");
+    }
+}
