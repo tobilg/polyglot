@@ -1137,7 +1137,7 @@ impl ScopedLineage {
 
 #[cfg(feature = "generate")]
 impl ScopedLineage {
-    pub(crate) fn new(scope: Scope, inherited_ctes: &[Scope], dialect: DialectType) -> Self {
+    pub(crate) fn new(scope: Scope, inherited_ctes: &[&Scope], dialect: DialectType) -> Self {
         let visible_ctes = scope.cte_sources.clone();
         let (mut context, root) = LineageScopeContext::from_scope(scope);
         context.conservative = true;
@@ -1152,7 +1152,7 @@ impl ScopedLineage {
                         .iter()
                         .any(|id| context.scope(*id).expression == cte_scope.expression)
                 {
-                    ctes.push(context.insert_scope(cte_scope.clone()));
+                    ctes.push(context.insert_scope((*cte_scope).clone()));
                 }
             }
         }
@@ -1614,6 +1614,41 @@ fn set_branch_metadata(expression: &Expression, ordinal: usize) -> SetBranch {
     }
 }
 
+/// A set operation without its operands. Analysis reads only the kind and the
+/// clauses of the whole operation; each branch has a node of its own. A copy
+/// of the operands at each level of a long `UNION ALL` grows quadratically.
+fn set_operation_shell(expression: &Expression) -> Expression {
+    macro_rules! shell {
+        ($variant:ident, $op:expr) => {
+            Expression::$variant(Box::new(crate::expressions::$variant {
+                left: Expression::null(),
+                right: Expression::null(),
+                all: $op.all,
+                distinct: $op.distinct,
+                with: $op.with.clone(),
+                order_by: $op.order_by.clone(),
+                limit: $op.limit.clone(),
+                offset: $op.offset.clone(),
+                distribute_by: $op.distribute_by.clone(),
+                sort_by: $op.sort_by.clone(),
+                cluster_by: $op.cluster_by.clone(),
+                by_name: $op.by_name,
+                side: $op.side.clone(),
+                kind: $op.kind.clone(),
+                corresponding: $op.corresponding,
+                strict: $op.strict,
+                on_columns: $op.on_columns.clone(),
+            }))
+        };
+    }
+    match expression {
+        Expression::Union(op) => shell!(Union, op),
+        Expression::Intersect(op) => shell!(Intersect, op),
+        Expression::Except(op) => shell!(Except, op),
+        other => other.clone(),
+    }
+}
+
 fn handle_set_operation(
     column: &ColumnRef<'_>,
     context: &LineageScopeContext,
@@ -1664,7 +1699,13 @@ fn handle_set_operation(
             .unwrap_or_else(|| format!("_{col_index}")),
     };
 
-    let mut node = if context.include_source_queries {
+    let mut node = if context.conservative {
+        LineageNode::new(
+            &col_name,
+            set_operation_shell(scope_expr),
+            Expression::null(),
+        )
+    } else if context.include_source_queries {
         LineageNode::new(&col_name, scope_expr.clone(), scope_expr.clone())
     } else {
         LineageNode::new(&col_name, Expression::null(), Expression::null())
