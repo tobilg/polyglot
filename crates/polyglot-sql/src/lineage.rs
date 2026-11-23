@@ -19,8 +19,9 @@ use crate::scope::{
 };
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// The ordered output description of a query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +131,75 @@ impl LineageNode {
     }
 }
 
+/// During analysis, repeated references can share a trace. Public lineage
+/// materializes its downstream tree only when handing it to the caller.
+#[derive(Debug, Clone)]
+pub(crate) struct TraceNode {
+    data: LineageNode,
+    pub(crate) downstream: Vec<TraceNode>,
+    pub(crate) shared: Option<Arc<TraceNode>>,
+}
+
+impl std::ops::Deref for TraceNode {
+    type Target = LineageNode;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl std::ops::DerefMut for TraceNode {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+impl TraceNode {
+    fn new(name: impl Into<String>, expression: Expression, source: Expression) -> Self {
+        Self {
+            data: LineageNode::new(name, expression, source),
+            downstream: Vec::new(),
+            shared: None,
+        }
+    }
+
+    fn into_public(mut self) -> LineageNode {
+        self.data.downstream = self.downstream.into_iter().map(Self::into_public).collect();
+        self.data
+    }
+
+    fn sharing(trace: &Arc<Self>) -> Self {
+        Self {
+            data: trace.data.clone(),
+            downstream: Vec::new(),
+            shared: Some(trace.clone()),
+        }
+    }
+    /// The node with its subtree: this node, or the shared trace it stands for.
+    pub(crate) fn resolved(&self) -> &TraceNode {
+        self.shared.as_deref().unwrap_or(self)
+    }
+
+    /// Enter each shared trace only once.
+    #[cfg(feature = "generate")]
+    pub(crate) fn walk_unique(&self) -> impl Iterator<Item = &TraceNode> {
+        let mut seen = HashSet::new();
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            while let Some(node) = stack.pop() {
+                if let Some(shared) = &node.shared {
+                    if !seen.insert(Arc::as_ptr(shared)) {
+                        continue;
+                    }
+                }
+                let node = node.resolved();
+                stack.extend(node.downstream.iter().rev());
+                return Some(node);
+            }
+            None
+        })
+    }
+}
+
 fn source_kind_for_scope_context(
     scope: &Scope,
     source_name: &str,
@@ -167,7 +237,7 @@ fn source_kind_for_scope_context_with_type(
 }
 
 fn apply_scope_context(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     scope: &Scope,
     source_name: &str,
     reference_node_name: &str,
@@ -178,7 +248,7 @@ fn apply_scope_context(
 }
 
 fn apply_scope_context_with_type(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     scope: &Scope,
     scope_type: ScopeType,
     source_name: &str,
@@ -1081,6 +1151,21 @@ struct LineageScopeContext<'a> {
     /// Usage analysis must not claim undeclared qualifiers as physical tables.
     conservative: bool,
     include_source_queries: bool,
+    /// Analysis traces each CTE column once and shares the result. A copy per
+    /// reference grows exponentially when CTEs read an earlier CTE twice.
+    cte_traces: Option<RefCell<HashMap<CteTraceKey, Option<Arc<TraceNode>>>>>,
+}
+
+/// All inputs of one CTE column trace.
+#[derive(PartialEq, Eq, Hash)]
+struct CteTraceKey {
+    scope: ScopeId,
+    column: String,
+    parent_name: String,
+    source_name: String,
+    trim_selects: bool,
+    cte_scopes: Vec<ScopeId>,
+    depth: usize,
 }
 
 /// Reuse the lineage resolver for analysis of non-output column occurrences.
@@ -1133,6 +1218,7 @@ impl<'a> ScopedLineage<'a> {
             &self.ctes,
             0,
         )
+        .map(TraceNode::into_public)
     }
 }
 
@@ -1140,13 +1226,14 @@ impl<'a> ScopedLineage<'a> {
 impl<'a> ScopedLineage<'a> {
     pub(crate) fn new(
         scope: Scope,
-        inherited_ctes: &[Scope],
+        inherited_ctes: &[&Scope],
         dialect: DialectType,
         schema: Option<&'a dyn Schema>,
     ) -> Self {
         let visible_ctes = scope.cte_sources.clone();
         let (mut context, root) = LineageScopeContext::from_scope(scope, schema);
         context.conservative = true;
+        context.cte_traces = Some(RefCell::new(HashMap::new()));
         let mut ctes = context.indexed(root).cte_scopes.clone();
         for cte_scope in inherited_ctes {
             if let Expression::Cte(cte) = &cte_scope.expression {
@@ -1157,7 +1244,7 @@ impl<'a> ScopedLineage<'a> {
                         .iter()
                         .any(|id| context.scope(*id).expression == cte_scope.expression)
                 {
-                    ctes.push(context.insert_scope(cte_scope.clone()));
+                    ctes.push(context.insert_scope((*cte_scope).clone()));
                 }
             }
         }
@@ -1169,8 +1256,8 @@ impl<'a> ScopedLineage<'a> {
         }
     }
 
-    pub(crate) fn column(&self, source: &str, column: &str) -> LineageNode {
-        let mut node = LineageNode::new(
+    pub(crate) fn column(&self, source: &str, column: &str) -> TraceNode {
+        let mut node = TraceNode::new(
             column,
             Expression::qualified_column(source, column),
             Expression::Null(crate::expressions::Null),
@@ -1190,7 +1277,7 @@ impl<'a> ScopedLineage<'a> {
         node
     }
 
-    pub(crate) fn pivot_input(&self, source: &Expression, column: &str) -> LineageNode {
+    pub(crate) fn pivot_input(&self, source: &Expression, column: &str) -> TraceNode {
         self.pivot_input_reference(
             source,
             &SimpleColumnRef {
@@ -1204,15 +1291,15 @@ impl<'a> ScopedLineage<'a> {
         &self,
         source: &Expression,
         entry: &Expression,
-    ) -> Vec<LineageNode> {
+    ) -> Vec<TraceNode> {
         unpivot_entry_columns(entry)
             .iter()
             .map(|column| self.pivot_input_reference(source, column))
             .collect()
     }
 
-    fn pivot_input_reference(&self, source: &Expression, column: &SimpleColumnRef) -> LineageNode {
-        let mut node = LineageNode::new(
+    fn pivot_input_reference(&self, source: &Expression, column: &SimpleColumnRef) -> TraceNode {
+        let mut node = TraceNode::new(
             &column.column,
             Expression::column(&column.column),
             Expression::Null(crate::expressions::Null),
@@ -1231,7 +1318,7 @@ impl<'a> ScopedLineage<'a> {
         node
     }
 
-    pub(crate) fn output(&self, ordinal: usize) -> Result<LineageNode> {
+    pub(crate) fn output(&self, ordinal: usize) -> Result<TraceNode> {
         to_node_inner(
             ColumnRef::Index(ordinal),
             &self.context,
@@ -1253,7 +1340,7 @@ impl<'a> ScopedLineage<'a> {
         )
     }
 
-    pub(crate) fn subquery_output(&self, index: usize) -> Result<LineageNode> {
+    pub(crate) fn subquery_output(&self, index: usize) -> Result<TraceNode> {
         let scope_id = *self
             .context
             .indexed(self.root)
@@ -1282,6 +1369,7 @@ impl<'a> LineageScopeContext<'a> {
             schema,
             conservative: false,
             include_source_queries: true,
+            cte_traces: None,
         };
         let root = context.insert_scope(scope);
         (context, root)
@@ -1350,6 +1438,7 @@ fn to_node(
         &[],
         0,
     )
+    .map(TraceNode::into_public)
 }
 
 fn to_node_inner(
@@ -1363,7 +1452,7 @@ fn to_node_inner(
     trim_selects: bool,
     ancestor_cte_scopes: &[ScopeId],
     depth: usize,
-) -> Result<LineageNode> {
+) -> Result<TraceNode> {
     if depth > MAX_LINEAGE_DEPTH {
         return Err(Error::internal(format!(
             "lineage recursion depth exceeded (>{MAX_LINEAGE_DEPTH}) — possible circular CTE reference for scope '{scope_name}'"
@@ -1451,7 +1540,7 @@ fn to_node_inner(
     };
 
     // 4. Create the lineage node
-    let mut node = LineageNode::new(&column_name, select_expr.clone(), node_source);
+    let mut node = TraceNode::new(&column_name, select_expr.clone(), node_source);
     apply_scope_context(&mut node, scope, source_name, reference_node_name);
 
     // 5. Star handling — add downstream for each source
@@ -1477,7 +1566,7 @@ fn to_node_inner(
                 }
             }
 
-            let mut child = LineageNode::new(
+            let mut child = TraceNode::new(
                 format!("{}.*", name),
                 Expression::Star(crate::expressions::Star {
                     ilike: None,
@@ -1683,6 +1772,41 @@ fn set_branch_metadata(expression: &Expression, ordinal: usize) -> SetBranch {
     }
 }
 
+/// A set operation without its operands. Analysis reads only the kind and the
+/// clauses of the whole operation; each branch has a node of its own. A copy
+/// of the operands at each level of a long `UNION ALL` grows quadratically.
+fn set_operation_shell(expression: &Expression) -> Expression {
+    macro_rules! shell {
+        ($variant:ident, $op:expr) => {
+            Expression::$variant(Box::new(crate::expressions::$variant {
+                left: Expression::null(),
+                right: Expression::null(),
+                all: $op.all,
+                distinct: $op.distinct,
+                with: $op.with.clone(),
+                order_by: $op.order_by.clone(),
+                limit: $op.limit.clone(),
+                offset: $op.offset.clone(),
+                distribute_by: $op.distribute_by.clone(),
+                sort_by: $op.sort_by.clone(),
+                cluster_by: $op.cluster_by.clone(),
+                by_name: $op.by_name,
+                side: $op.side.clone(),
+                kind: $op.kind.clone(),
+                corresponding: $op.corresponding,
+                strict: $op.strict,
+                on_columns: $op.on_columns.clone(),
+            }))
+        };
+    }
+    match expression {
+        Expression::Union(op) => shell!(Union, op),
+        Expression::Intersect(op) => shell!(Intersect, op),
+        Expression::Except(op) => shell!(Except, op),
+        other => other.clone(),
+    }
+}
+
 fn handle_set_operation(
     column: &ColumnRef<'_>,
     context: &LineageScopeContext,
@@ -1696,7 +1820,7 @@ fn handle_set_operation(
     trim_selects: bool,
     ancestor_cte_scopes: &[ScopeId],
     depth: usize,
-) -> Result<LineageNode> {
+) -> Result<TraceNode> {
     let scope = context.scope(scope_id);
     let trace_wildcard_by_name =
         matches!(column, ColumnRef::Name(name) if normalize_column_name(name, dialect) == "*");
@@ -1733,10 +1857,16 @@ fn handle_set_operation(
             .unwrap_or_else(|| format!("_{col_index}")),
     };
 
-    let mut node = if context.include_source_queries {
-        LineageNode::new(&col_name, scope_expr.clone(), scope_expr.clone())
+    let mut node = if context.conservative {
+        TraceNode::new(
+            &col_name,
+            set_operation_shell(scope_expr),
+            Expression::null(),
+        )
+    } else if context.include_source_queries {
+        TraceNode::new(&col_name, scope_expr.clone(), scope_expr.clone())
     } else {
-        LineageNode::new(&col_name, Expression::null(), Expression::null())
+        TraceNode::new(&col_name, Expression::null(), Expression::null())
     };
     if let Some(scope_type) = scope_type_override {
         apply_scope_context_with_type(
@@ -1835,8 +1965,59 @@ fn merge_resolution_reason(
 // Column resolution helpers
 // ---------------------------------------------------------------------------
 
+/// Trace one CTE column. With a trace cache, equal calls share one trace.
+fn trace_cte_column(
+    context: &LineageScopeContext,
+    dialect: Option<DialectType>,
+    scope: ScopeId,
+    column: &str,
+    parent_name: &str,
+    source_name: &str,
+    trim_selects: bool,
+    cte_scopes: &[ScopeId],
+    depth: usize,
+) -> Option<TraceNode> {
+    let trace = || {
+        to_node_inner(
+            ColumnRef::Name(column),
+            context,
+            scope,
+            dialect,
+            parent_name,
+            source_name,
+            parent_name,
+            trim_selects,
+            cte_scopes,
+            depth,
+        )
+        .ok()
+    };
+    let Some(cache) = &context.cte_traces else {
+        return trace();
+    };
+    let key = CteTraceKey {
+        scope,
+        column: column.to_owned(),
+        parent_name: parent_name.to_owned(),
+        source_name: source_name.to_owned(),
+        trim_selects,
+        cte_scopes: cte_scopes.to_vec(),
+        depth,
+    };
+    let cached = cache.borrow().get(&key).cloned();
+    let shared = match cached {
+        Some(shared) => shared,
+        None => {
+            let shared = trace().map(Arc::new);
+            cache.borrow_mut().insert(key, shared.clone());
+            shared
+        }
+    };
+    shared.as_ref().map(TraceNode::sharing)
+}
+
 fn resolve_qualified_column(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -1903,14 +2084,13 @@ fn resolve_qualified_column(
         if let Some(child_scope_id) =
             find_child_scope_in(context, all_cte_scopes, scope_id, effective_table)
         {
-            if let Ok(child) = to_node_inner(
-                ColumnRef::Name(col_name),
+            if let Some(child) = trace_cte_column(
                 context,
-                child_scope_id,
                 dialect,
+                child_scope_id,
+                col_name,
                 parent_name,
                 effective_table,
-                parent_name,
                 trim_selects,
                 all_cte_scopes,
                 depth + 1,
@@ -1990,7 +2170,7 @@ fn resolve_qualified_column(
 }
 
 fn attach_pivot_dependencies(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -2035,7 +2215,7 @@ fn attach_pivot_dependencies(
         None => Vec::new(),
     };
     let mut step = aggregation.map(|aggregation| {
-        LineageNode::new(node.name.clone(), aggregation.clone(), node.source.clone())
+        TraceNode::new(node.name.clone(), aggregation.clone(), node.source.clone())
     });
     let target = step.as_mut().unwrap_or(&mut *node);
     for col_ref in input_columns.iter().chain(&field_columns) {
@@ -2056,7 +2236,7 @@ fn attach_pivot_dependencies(
 }
 
 fn attach_unpivot_dependencies(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -2069,7 +2249,7 @@ fn attach_unpivot_dependencies(
     let normalized = normalize_column_name(col_name, dialect);
     if normalized == normalize_column_name(&unpivot.name_column.name, dialect) {
         // The generated name identifies the IN-list entry. It has no input value.
-        let mut label = LineageNode::new(
+        let mut label = TraceNode::new(
             col_name,
             Expression::Identifier(unpivot.name_column.clone()),
             Expression::Null(crate::expressions::Null),
@@ -2387,7 +2567,7 @@ fn unpivot_entry_columns(expr: &Expression) -> Vec<SimpleColumnRef> {
 }
 
 fn attach_pivot_input_column(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -2454,7 +2634,7 @@ fn attach_pivot_input_column(
                 return;
             };
             let child = if let Some(table) = &col_ref.table {
-                let mut child_node = LineageNode::new(
+                let mut child_node = TraceNode::new(
                     &col_ref.column,
                     subquery.this.clone(),
                     subquery.this.clone(),
@@ -2548,7 +2728,7 @@ fn resolve_cte_alias(scope: &Scope, name: &str) -> Option<String> {
 }
 
 fn resolve_unqualified_column(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -2598,7 +2778,7 @@ fn resolve_unqualified_column(
     }
 
     // Multiple sources — can't resolve without schema info, add unqualified node
-    let child = LineageNode::new(
+    let child = TraceNode::new(
         col_name.to_string(),
         Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(col_name.to_string()),
@@ -2743,7 +2923,7 @@ fn lateral_view_output_columns(
 }
 
 fn attach_virtual_source_dependencies(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     context: &LineageScopeContext,
     scope_id: ScopeId,
     dialect: Option<DialectType>,
@@ -3693,8 +3873,8 @@ fn find_derived_scope_for_query(
 }
 
 /// Create a terminal lineage node for a table.column reference.
-fn make_table_column_node(table: &str, column: &str) -> LineageNode {
-    let mut node = LineageNode::new(
+fn make_table_column_node(table: &str, column: &str) -> TraceNode {
+    let mut node = TraceNode::new(
         format!("{}.{}", table, column),
         Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(column.to_string()),
@@ -3724,7 +3904,7 @@ fn table_name_from_table_ref(table_ref: &crate::expressions::TableRef) -> String
 }
 
 fn apply_source_info_context(
-    node: &mut LineageNode,
+    node: &mut TraceNode,
     source_key: &str,
     source_info: &ScopeSourceInfo,
 ) {
@@ -3744,12 +3924,12 @@ fn make_table_column_node_from_source(
     source_key: &str,
     column: &str,
     source_info: &ScopeSourceInfo,
-) -> LineageNode {
+) -> TraceNode {
     let lineage_name = source_info.lineage_name.as_deref().unwrap_or(source_key);
     let inferred_type = (source_info.kind == SourceKind::Virtual)
         .then(|| virtual_source_column_type(source_info, column))
         .flatten();
-    let mut node = LineageNode::new(
+    let mut node = TraceNode::new(
         format!("{}.{}", lineage_name, column),
         Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(column.to_string()),

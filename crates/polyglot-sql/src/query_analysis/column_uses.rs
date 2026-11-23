@@ -30,11 +30,36 @@ pub(super) fn collect(
 }
 
 #[derive(Clone)]
-struct Frame<'a> {
+struct Frame<'a, 'schema> {
     path: String,
     selected: Scope,
-    lineage: &'a ScopedLineage<'a>,
+    lineage: &'a LazyLineage<'a, 'schema>,
     subqueries: Vec<Expression>,
+}
+
+/// The lineage of a scope, built on its first use. Set-operation scopes and
+/// many CTE scopes have no clause uses, and each lineage copies its scope.
+struct LazyLineage<'a, 'schema> {
+    scope: &'a Scope,
+    inherited_ctes: &'a [&'a Scope],
+    dialect: DialectType,
+    schema: &'schema MappingSchema,
+    lineage: std::cell::OnceCell<ScopedLineage<'schema>>,
+}
+
+impl<'a, 'schema> std::ops::Deref for LazyLineage<'a, 'schema> {
+    type Target = ScopedLineage<'schema>;
+
+    fn deref(&self) -> &Self::Target {
+        self.lineage.get_or_init(|| {
+            ScopedLineage::new(
+                self.scope.clone(),
+                self.inherited_ctes,
+                self.dialect,
+                Some(self.schema),
+            )
+        })
+    }
 }
 
 struct Collector<'a> {
@@ -45,22 +70,23 @@ struct Collector<'a> {
     guard: Option<ComplexityGuardOptions>,
 }
 
-impl Collector<'_> {
+impl<'schema> Collector<'schema> {
     fn scope(
         &mut self,
         original: &Scope,
         prepared: &Scope,
         path: &str,
-        ancestors: &[&Frame],
-        inherited_ctes: &[Scope],
+        ancestors: &[&Frame<'_, 'schema>],
+        inherited_ctes: &[&Scope],
         filter_branch: bool,
     ) {
-        let lineage = ScopedLineage::new(
-            prepared.clone(),
+        let lineage = LazyLineage {
+            scope: prepared,
             inherited_ctes,
-            self.dialect,
-            Some(self.schema),
-        );
+            dialect: self.dialect,
+            schema: self.schema,
+            lineage: std::cell::OnceCell::new(),
+        };
         let frame = Frame {
             path: path.to_string(),
             selected: selected_reference_scope(original),
@@ -86,8 +112,11 @@ impl Collector<'_> {
             }
         }
 
-        let mut ctes = prepared.cte_scopes.clone();
-        ctes.extend_from_slice(inherited_ctes);
+        let ctes: Vec<&Scope> = prepared
+            .cte_scopes
+            .iter()
+            .chain(inherited_ctes.iter().copied())
+            .collect();
         let outer: Vec<_> = std::iter::once(&frame)
             .chain(ancestors.iter().copied())
             .collect();
@@ -157,8 +186,8 @@ impl Collector<'_> {
         &mut self,
         expression: &Expression,
         expression_path: &str,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
         filter_branch: bool,
         root: bool,
     ) {
@@ -263,8 +292,8 @@ impl Collector<'_> {
         &self,
         expression: &Expression,
         context: ColumnUseContext,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
     ) -> Vec<ColumnUseReferenceFact> {
         if context == ColumnUseContext::SetOperationFilter
             && projection_is_star(unwrap_projection_alias(expression))
@@ -353,8 +382,8 @@ impl Collector<'_> {
         &self,
         column: &Column,
         context: ColumnUseContext,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
     ) -> Vec<ColumnUseReferenceFact> {
         let mut folded;
         let column = if self.dialect == DialectType::Snowflake && !column.name.quoted {
@@ -507,7 +536,7 @@ impl Collector<'_> {
 
     fn lineage_references(
         &self,
-        node: &LineageNode,
+        node: &TraceNode,
         span: Option<QuerySourceSpan>,
         unqualified: bool,
     ) -> Vec<ColumnUseReferenceFact> {
@@ -526,8 +555,8 @@ impl Collector<'_> {
     fn table_function_inputs(
         &mut self,
         select: &crate::expressions::Select,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
     ) {
         let mut preceding = HashSet::new();
         let from = select
@@ -600,7 +629,7 @@ impl Collector<'_> {
         }
     }
 
-    fn pivot_column_uses(&mut self, prepared: &Scope, frame: &Frame) {
+    fn pivot_column_uses(&mut self, prepared: &Scope, frame: &Frame<'_, 'schema>) {
         let Expression::Select(select) = scope_query(&prepared.expression) else {
             return;
         };
@@ -673,8 +702,8 @@ impl Collector<'_> {
         &mut self,
         select: &crate::expressions::Select,
         prepared: &Scope,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
     ) {
         // Qualification expands stars with their modifiers and USING columns.
         // For ordinary projections retain the spelling and spans from the SQL.
@@ -722,8 +751,8 @@ impl Collector<'_> {
         &mut self,
         select: &crate::expressions::Select,
         scope_path: &str,
-        frame: &Frame,
-        ancestors: &[&Frame],
+        frame: &Frame<'_, 'schema>,
+        ancestors: &[&Frame<'_, 'schema>],
     ) {
         let mut left = Vec::new();
         if let Some(from) = &select.from {
@@ -901,7 +930,7 @@ fn unresolved(column: &Column, confidence: ReferenceConfidence) -> ColumnUseRefe
 }
 
 fn use_references(
-    node: &LineageNode,
+    node: &TraceNode,
     span: Option<QuerySourceSpan>,
     unqualified: bool,
 ) -> Vec<ColumnUseReferenceFact> {
@@ -928,6 +957,26 @@ fn merged_join_column(expression: &Expression, column: &str) -> bool {
 }
 
 pub(super) fn collect_uncertain_occurrences(
+    scope: &Scope,
+    schema: &MappingSchema,
+    uncertain: &mut HashMap<(usize, usize), ReferenceConfidence>,
+) {
+    uncertain_in_scope(scope, schema, uncertain);
+    for child in scope
+        .cte_scopes
+        .iter()
+        .chain(&scope.derived_table_scopes)
+        .chain(&scope.subquery_scopes)
+        .chain(&scope.udtf_scopes)
+        .chain(&scope.union_scopes)
+    {
+        collect_uncertain_occurrences(child, schema, uncertain);
+    }
+}
+
+/// `selected` copies the visible CTEs. Its copy ends before the walk of the
+/// children, because a nested set operation is one scope per level.
+fn uncertain_in_scope(
     scope: &Scope,
     schema: &MappingSchema,
     uncertain: &mut HashMap<(usize, usize), ReferenceConfidence>,
@@ -966,15 +1015,5 @@ pub(super) fn collect_uncertain_occurrences(
                 }
             }
         }
-    }
-    for child in scope
-        .cte_scopes
-        .iter()
-        .chain(&scope.derived_table_scopes)
-        .chain(&scope.subquery_scopes)
-        .chain(&scope.udtf_scopes)
-        .chain(&scope.union_scopes)
-    {
-        collect_uncertain_occurrences(child, schema, uncertain);
     }
 }

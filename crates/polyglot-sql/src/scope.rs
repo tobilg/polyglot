@@ -1600,6 +1600,15 @@ where
 /// # Returns
 /// A vector of all scopes found
 pub fn traverse_scope(expression: &Expression) -> Vec<Scope> {
+    let mut scopes = Vec::new();
+    for_each_scope(expression, |scope| scopes.push(scope.clone()));
+    scopes
+}
+
+/// Visit the scopes of `traverse_scope` in the same order, without a copy.
+/// A copy of a scope holds its child scopes, so the copies of a nested set
+/// operation grow quadratically.
+pub(crate) fn for_each_scope(expression: &Expression, visit: impl FnMut(&Scope)) {
     match expression {
         Expression::Select(_)
         | Expression::Union(_)
@@ -1607,10 +1616,12 @@ pub fn traverse_scope(expression: &Expression) -> Vec<Scope> {
         | Expression::Except(_)
         | Expression::Prepare(_)
         | Expression::CreateTable(_) => {
-            let root = build_scope(expression);
-            root.traverse().into_iter().cloned().collect()
+            build_scope(expression)
+                .traverse()
+                .into_iter()
+                .for_each(visit);
         }
-        _ => Vec::new(),
+        _ => {}
     }
 }
 

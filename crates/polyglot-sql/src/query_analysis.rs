@@ -8,7 +8,7 @@
 use crate::ast_transforms::get_output_column_names_for_dialect;
 use crate::dialects::{Dialect, DialectType};
 use crate::expressions::{DataType, Expression, Identifier, JoinKind, TableRef, With};
-use crate::lineage::{LineageNode, ScopedLineage};
+use crate::lineage::{ScopedLineage, TraceNode};
 use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_schema_aware_expression;
 use crate::schema::{MappingSchema, Schema};
@@ -21,6 +21,7 @@ use crate::{parse_one_with_options, ComplexityGuardOptions, Error, ParseOptions,
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 mod column_uses;
 
@@ -229,7 +230,7 @@ pub enum SetOperationBranchRole {
 }
 
 /// High-level kind of transformation performed by a projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransformKind {
     Direct,
@@ -1287,11 +1288,11 @@ fn combine_uncertainty(
 }
 
 fn lineage_uncertainty(
-    node: &LineageNode,
+    node: &TraceNode,
     uncertain: &HashMap<(usize, usize), ReferenceConfidence>,
 ) -> Option<ReferenceConfidence> {
     combine_uncertainty(
-        node.walk()
+        node.walk_unique()
             .filter_map(|node| expression_uncertainty(&node.expression, uncertain)),
     )
 }
@@ -1834,19 +1835,28 @@ impl NullabilityContext<'_> {
 
 /// Pass a path to report the transforms of each reference on its lineage path.
 fn terminal_references_from_lineage(
-    node: &LineageNode,
+    node: &TraceNode,
     path: Option<&PathTransform>,
 ) -> Vec<ColumnReferenceFact> {
     let mut refs = Vec::new();
-    collect_terminal_references(node, path, &mut refs);
+    collect_terminal_references(node, path, &mut HashSet::new(), &mut refs);
     dedupe_column_refs(refs)
 }
 
 fn collect_terminal_references(
-    node: &LineageNode,
+    node: &TraceNode,
     path: Option<&PathTransform>,
+    visited: &mut HashSet<(*const TraceNode, Option<PathTransform>)>,
     refs: &mut Vec<ColumnReferenceFact>,
 ) {
+    // A shared trace seen again on an equal path only repeats references
+    // that dedupe_column_refs merges without change.
+    if let Some(shared) = &node.shared {
+        if !visited.insert((Arc::as_ptr(shared), path.cloned())) {
+            return;
+        }
+    }
+    let node = node.resolved();
     // A set-operation node only routes to its branches; each branch is a step.
     let stepped;
     let path = match path {
@@ -1873,7 +1883,7 @@ fn collect_terminal_references(
     }
 
     for child in &node.downstream {
-        collect_terminal_references(child, path, refs);
+        collect_terminal_references(child, path, visited, refs);
     }
 }
 
@@ -1898,7 +1908,7 @@ fn table_function_call(mut expression: &Expression) -> Option<(&Expression, usiz
 }
 
 /// The transforms on one lineage path, from the projection output to a source column.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct PathTransform {
     dialect: DialectType,
     kind: TransformKind,
@@ -2046,7 +2056,7 @@ fn combine_transform_kinds(left: TransformKind, right: TransformKind) -> Transfo
     }
 }
 
-fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnReferenceFact> {
+fn column_reference_from_lineage_node(node: &TraceNode) -> Option<ColumnReferenceFact> {
     match &node.expression {
         Expression::Column(column) => {
             let source_name = non_empty_string(node.source_name.clone());
@@ -2090,7 +2100,7 @@ fn column_reference_from_lineage_node(node: &LineageNode) -> Option<ColumnRefere
     }
 }
 
-fn lineage_node_table(node: &LineageNode) -> Option<String> {
+fn lineage_node_table(node: &TraceNode) -> Option<String> {
     match &node.source {
         Expression::Table(table) => Some(table_name(table)),
         _ => None,
