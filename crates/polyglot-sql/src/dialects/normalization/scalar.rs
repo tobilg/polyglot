@@ -4292,10 +4292,138 @@ pub(super) fn rewrite(
                             let (val, fmt_expr) = if matches!(source, DialectType::SQLite) {
                                 // SQLite: args[0] = format, args[1] = value
                                 (f.args[1].clone(), &f.args[0])
+                            } else if matches!(source, DialectType::DuckDB)
+                                && match (is_value_like(&f.args[0]), is_value_like(&f.args[1])) {
+                                    // When exactly one argument is a date, a time or refers to a
+                                    // column, it is the value: DuckDB's format must be constant.
+                                    (false, true) => true,
+                                    (true, false) => false,
+                                    _ => {
+                                        (is_constant_string(&f.args[0])
+                                            && !is_constant_string(&f.args[1]))
+                                            || (is_constant_text(&f.args[0])
+                                                && !is_constant_text(&f.args[1]))
+                                    }
+                                }
+                            {
+                                // DuckDB also accepts STRFTIME(fmt, val). Its format must be a
+                                // constant and its value a date/timestamp, so a constant string
+                                // in first position is the format.
+                                (f.args[1].clone(), &f.args[0])
                             } else {
                                 // DuckDB and others: args[0] = value, args[1] = format
                                 (f.args[0].clone(), &f.args[1])
                             };
+
+                            // A string literal, or a concatenation of string literals
+                            fn is_constant_string(expr: &Expression) -> bool {
+                                match expr {
+                                    Expression::Literal(lit) => matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::String(_)
+                                    ),
+                                    Expression::Paren(p) => is_constant_string(&p.this),
+                                    Expression::DPipe(d) => {
+                                        is_constant_string(&d.this)
+                                            && is_constant_string(&d.expression)
+                                    }
+                                    Expression::Concat(op) => {
+                                        is_constant_string(&op.left)
+                                            && is_constant_string(&op.right)
+                                    }
+                                    Expression::Function(func)
+                                        if func.name.eq_ignore_ascii_case("CONCAT") =>
+                                    {
+                                        func.args.iter().all(is_constant_string)
+                                    }
+                                    _ => false,
+                                }
+                            }
+
+                            fn is_value_like(expr: &Expression) -> bool {
+                                use crate::traversal::ExpressionWalk;
+                                is_temporal(expr)
+                                    || expr.contains(|e| matches!(e, Expression::Column(_)))
+                            }
+
+                            // An expression whose result is a date, time or timestamp: a
+                            // temporal literal or cast, CURRENT_DATE and the like, or an
+                            // expression that keeps such an operand's type.
+                            fn is_temporal(expr: &Expression) -> bool {
+                                match expr {
+                                    Expression::Literal(lit) => matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::Date(_)
+                                            | crate::expressions::Literal::Time(_)
+                                            | crate::expressions::Literal::Timestamp(_)
+                                            | crate::expressions::Literal::Datetime(_)
+                                    ),
+                                    Expression::Cast(c) => matches!(
+                                        c.to,
+                                        DataType::Date
+                                            | DataType::Time { .. }
+                                            | DataType::Timestamp { .. }
+                                    ),
+                                    Expression::CurrentDate(_)
+                                    | Expression::CurrentTime(_)
+                                    | Expression::CurrentTimestamp(_)
+                                    | Expression::CurrentTimestampLTZ(_)
+                                    | Expression::CurrentDatetime(_)
+                                    | Expression::Localtime(_)
+                                    | Expression::Localtimestamp(_) => true,
+                                    Expression::Function(func) => {
+                                        func.name.eq_ignore_ascii_case("NOW")
+                                            || func.name.eq_ignore_ascii_case("TODAY")
+                                            || func.name.eq_ignore_ascii_case("CURRENT_DATE")
+                                            || func.name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                                    }
+                                    Expression::Paren(p) => is_temporal(&p.this),
+                                    Expression::Add(op) | Expression::Sub(op) => {
+                                        is_temporal(&op.left) || is_temporal(&op.right)
+                                    }
+                                    Expression::Coalesce(v)
+                                    | Expression::Greatest(v)
+                                    | Expression::Least(v) => v.expressions.iter().any(is_temporal),
+                                    Expression::NullIf(b) => is_temporal(&b.this),
+                                    Expression::Case(c) => {
+                                        c.whens.iter().any(|(_, then)| is_temporal(then))
+                                            || c.else_.as_ref().is_some_and(is_temporal)
+                                    }
+                                    _ => false,
+                                }
+                            }
+
+                            // A string expression built from constants only, e.g.
+                            // CAST('%Y' AS VARCHAR), COALESCE(NULL, '%Y') or
+                            // REPLACE('%Y/%m', '/', '-'): no columns, a string
+                            // literal somewhere, and nothing date or time typed.
+                            fn is_constant_text(expr: &Expression) -> bool {
+                                use crate::traversal::ExpressionWalk;
+                                !expr.contains(|e| {
+                                    matches!(
+                                        e,
+                                        Expression::Column(_)
+                                            | Expression::Subquery(_)
+                                            | Expression::Interval(_)
+                                    ) || matches!(e, Expression::Literal(lit) if matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::Date(_)
+                                            | crate::expressions::Literal::Time(_)
+                                            | crate::expressions::Literal::Timestamp(_)
+                                            | crate::expressions::Literal::Datetime(_)
+                                    )) || matches!(e, Expression::Cast(c) if matches!(
+                                        c.to,
+                                        DataType::Date
+                                            | DataType::Time { .. }
+                                            | DataType::Timestamp { .. }
+                                    ))
+                                }) && expr.contains(|e| {
+                                    matches!(e, Expression::Literal(lit) if matches!(
+                                        lit.as_ref(),
+                                        crate::expressions::Literal::String(_)
+                                    ))
+                                })
+                            }
 
                             // Helper to convert C-style format to Java-style
                             fn c_to_java_format(fmt: &str) -> String {
@@ -4481,6 +4609,13 @@ pub(super) fn rewrite(
                                             vec![val, fmt_expr.clone()],
                                         ))))
                                     }
+                                }
+                                // SQLite takes the format first: STRFTIME(fmt, val)
+                                DialectType::SQLite => {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "STRFTIME".to_string(),
+                                        vec![fmt_expr.clone(), val],
+                                    ))))
                                 }
                                 _ => Ok(Expression::Function(f)),
                             }
