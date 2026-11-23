@@ -3226,6 +3226,15 @@ impl Dialect {
         sql: &str,
         complexity_guard: ComplexityGuardOptions,
     ) -> Result<Vec<Expression>> {
+        self.parse_tracking_placeholders(sql, complexity_guard, false)
+    }
+
+    fn parse_tracking_placeholders(
+        &self,
+        sql: &str,
+        complexity_guard: ComplexityGuardOptions,
+        track: bool,
+    ) -> Result<Vec<Expression>> {
         enforce_input(sql, &complexity_guard)?;
         let source: Arc<str> = Arc::from(sql);
         let (tokens, token_guard_stats) = self.tokenizer.tokenize_for_parser(&source)?;
@@ -3235,6 +3244,7 @@ impl Dialect {
             ..Default::default()
         };
         let mut parser = Parser::with_parser_tokens(tokens, token_guard_stats, config, source);
+        parser.track_placeholder_positions = track;
         parser.parse()
     }
 
@@ -3767,7 +3777,10 @@ impl Dialect {
         {
             self.reject_pgvector_distance_operators_for_sqlite(sql)?;
         }
-        let expressions = self.parse_with_guard(sql, opts.complexity_guard)?;
+        let track = self.dialect_type == DialectType::DuckDB
+            && target == DialectType::SQLite
+            && sql.contains('?');
+        let expressions = self.parse_tracking_placeholders(sql, opts.complexity_guard, track)?;
         let generic_identity =
             self.dialect_type == DialectType::Generic && target == DialectType::Generic;
 
@@ -3784,6 +3797,7 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
+                let expr = if track { normalization::sqlite_placeholder_indices(expr)? } else { expr };
                 // Reject unsupported source semantics before normalization can
                 // erase them. This AST-only pass shares conversion decisions with
                 // the generator and never renders throwaway SQL.

@@ -86,3 +86,23 @@ fn sqlite_strftime_round_trips() {
     .unwrap();
     assert_eq!(out, vec!["SELECT STRFTIME('%Y-%m', d) FROM t"]);
 }
+
+#[test]
+fn swapping_arguments_preserves_statement_bindings() {
+    let sql = "SELECT ?, STRFTIME(NULLIF(DATE '2024-01-15', ?), ?), '?', ?; SELECT STRFTIME(NULLIF(DATE '2024-02-01', ?), ?)";
+    assert_eq!(
+        transpile(sql, DialectType::DuckDB, DialectType::SQLite).unwrap(),
+        [
+            "SELECT ?1, STRFTIME(?3, NULLIF('2024-01-15', ?2)), '?', ?4",
+            "SELECT STRFTIME(?2, NULLIF('2024-02-01', ?1))",
+        ]
+    );
+}
+
+#[test]
+fn format_first_bindings_keep_their_positions() {
+    assert_eq!(
+        duckdb_to_sqlite("SELECT STRFTIME(?, NULLIF(d, ?)) FROM t"),
+        "SELECT STRFTIME(?, NULLIF(d, ?)) FROM t"
+    );
+}

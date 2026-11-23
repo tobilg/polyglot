@@ -554,6 +554,7 @@ pub static RESERVED_TOKENS: LazyLock<HashSet<TokenType>> = LazyLock::new(|| {
 pub struct Parser {
     tokens: Vec<ParserToken>,
     current: usize,
+    pub(crate) track_placeholder_positions: bool,
     config: ParserConfig,
     /// Original source SQL (used for preserving exact text in Command expressions)
     source: Option<Arc<str>>,
@@ -705,6 +706,7 @@ impl Parser {
             pending_leading_comments: Vec::new(),
             guards_checked: false,
             token_guard_stats: None,
+            track_placeholder_positions: false,
             if_expr_ruled_out: HashSet::new(),
             parsing_duckdb_json_path: false,
             recursion: Arc::default(),
@@ -723,6 +725,7 @@ impl Parser {
             pending_leading_comments: Vec::new(),
             guards_checked: false,
             token_guard_stats: None,
+            track_placeholder_positions: false,
             if_expr_ruled_out: HashSet::new(),
             parsing_duckdb_json_path: false,
             recursion: Arc::default(),
@@ -744,6 +747,7 @@ impl Parser {
             pending_leading_comments: Vec::new(),
             guards_checked: false,
             token_guard_stats: None,
+            track_placeholder_positions: false,
             if_expr_ruled_out: HashSet::new(),
             parsing_duckdb_json_path: false,
             recursion: Arc::default(),
@@ -768,6 +772,7 @@ impl Parser {
             pending_leading_comments: Vec::new(),
             guards_checked: false,
             token_guard_stats: Some(token_guard_stats),
+            track_placeholder_positions: false,
             if_expr_ruled_out: HashSet::new(),
             parsing_duckdb_json_path: false,
             recursion: Arc::default(),
@@ -7802,7 +7807,7 @@ impl Parser {
                 // emits TokenType::Parameter for '?'; we map it to a
                 // Placeholder AST node so it roundtrips as a bind parameter.
                 self.skip();
-                Expression::Placeholder(Placeholder { index: None })
+                self.consumed_placeholder()
             } else if self.check(TokenType::Dollar) {
                 // $foo style variable - Dollar followed by identifier
                 self.skip(); // consume $
@@ -26439,7 +26444,7 @@ impl Parser {
             // Handle ? placeholder as source (Snowflake Python connector bind params)
             if self.check(TokenType::Parameter) {
                 self.skip(); // consume ?
-                files.push(Expression::Placeholder(Placeholder { index: None }));
+                files.push(self.consumed_placeholder());
             }
             // Check for subquery: FROM (SELECT ...)
             else if self.check(TokenType::LParen) {
@@ -26492,7 +26497,7 @@ impl Parser {
                 // Handle ? placeholder in file location list
                 if self.check(TokenType::Parameter) {
                     self.skip();
-                    files.push(Expression::Placeholder(Placeholder { index: None }));
+                    files.push(self.consumed_placeholder());
                     continue;
                 }
                 // For COPY INTO ... FROM table_name, handle dotted table references
@@ -26900,7 +26905,7 @@ impl Parser {
 
         // Placeholder ? (used by Snowflake Python connector for bind parameters)
         if self.match_token(TokenType::Parameter) {
-            return Ok(Expression::Placeholder(Placeholder { index: None }));
+            return Ok(self.consumed_placeholder());
         }
 
         Err(self.parse_error("Expected value for COPY parameter"))
@@ -27497,7 +27502,7 @@ impl Parser {
 
         // Parse target stage (@stage_name, ? placeholder, quoted '@stage', or dollar-quoted $$@%"stage"$$)
         let target = if self.match_token(TokenType::Parameter) {
-            Expression::Placeholder(Placeholder { index: None })
+            self.consumed_placeholder()
         } else if self.check(TokenType::String) || self.check(TokenType::DollarString) {
             // Quoted stage: '@SYSTEM$BIND/path' or $$@%"table"$$
             let tok = self.advance()?;
@@ -37998,9 +38003,10 @@ impl Parser {
 
         // ?:: placeholder cast (QDColon token = ? + :: fused by tokenizer)
         if self.match_token(TokenType::QDColon) {
+            let placeholder = self.consumed_placeholder();
             let data_type = self.parse_data_type_for_cast()?;
             return Ok(Expression::Cast(Box::new(Cast {
-                this: Expression::Placeholder(Placeholder { index: None }),
+                this: placeholder,
                 to: data_type,
                 trailing_comments: Vec::new(),
                 double_colon_syntax: true,
@@ -38029,7 +38035,7 @@ impl Parser {
                 return self.maybe_parse_subscript(result);
             } else {
                 // Plain ? placeholder
-                return Ok(Expression::Placeholder(Placeholder { index: None }));
+                return Ok(self.consumed_placeholder());
             }
         }
 
@@ -61802,12 +61808,20 @@ impl Parser {
         }
     }
 
+    fn consumed_placeholder(&self) -> Expression {
+        Expression::Placeholder(Placeholder {
+            index: self
+                .track_placeholder_positions
+                .then_some(self.current as u32),
+        })
+    }
+
     /// parse_placeholder - Parse placeholder token (? or :name)
     /// Python: if self._match_set(self.PLACEHOLDER_PARSERS): return placeholder
     pub fn parse_placeholder(&mut self) -> Result<Option<Expression>> {
         // Match positional placeholder (?)
         if self.match_token(TokenType::Placeholder) {
-            return Ok(Some(Expression::Placeholder(Placeholder { index: None })));
+            return Ok(Some(self.consumed_placeholder()));
         }
         // Match colon placeholder (:name) - handled by Parameter token
         if self.match_token(TokenType::Parameter) {

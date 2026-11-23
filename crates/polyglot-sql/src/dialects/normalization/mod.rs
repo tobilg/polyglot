@@ -4218,3 +4218,41 @@ pub(super) fn prepare_source_formats(
         Ok(Expression::Function(f))
     })
 }
+
+/// Assign SQLite bind slots in source-token order before STRFTIME can reorder
+/// its arguments. A single bind, or binds in only one argument, keep plain '?'.
+pub(super) fn sqlite_placeholder_indices(expr: Expression) -> Result<Expression> {
+    use crate::traversal::ExpressionWalk;
+    let placeholder = |e: &Expression| matches!(e, Expression::Placeholder(_));
+    let mut positions = Vec::new();
+    let mut reordered = false;
+    for node in expr.dfs() {
+        match node {
+            Expression::Placeholder(p) => positions.extend(p.index),
+            Expression::Function(f)
+                if f.name.eq_ignore_ascii_case("STRFTIME") && f.args.len() == 2 =>
+            {
+                reordered |= f.args.iter().all(|arg| arg.contains(placeholder))
+                    && !scalar::duckdb_strftime_format_first(&f.args[0], &f.args[1]);
+            }
+            _ => {}
+        }
+    }
+    if positions.is_empty() {
+        return Ok(expr);
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    crate::traversal::transform_all(expr, &|mut node| {
+        if let Expression::Placeholder(p) = &mut node {
+            p.index = p.index.and_then(|pos| {
+                if reordered {
+                    positions.binary_search(&pos).ok().map(|i| i as u32 + 1)
+                } else {
+                    None
+                }
+            });
+        }
+        Ok(node)
+    })
+}
