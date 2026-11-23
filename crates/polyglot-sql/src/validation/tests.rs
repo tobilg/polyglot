@@ -527,6 +527,22 @@ fn review_dialect_aliases_and_quoting() {
 fn review_semantic_errors_are_scope_local_and_opt_in() {
     for (sql, code) in [
         ("SELECT quantity AS n, SUM(active) FROM items", "E230"),
+        (
+            "SELECT quantity, COUNT(*) FROM items GROUP BY ALL HAVING active",
+            "E230",
+        ),
+        (
+            "SELECT COUNT(*) FROM items GROUP BY ALL ORDER BY quantity",
+            "E230",
+        ),
+        (
+            "SELECT * EXCLUDE (quantity) FROM items GROUP BY ALL HAVING quantity > 0",
+            "E230",
+        ),
+        (
+            "SELECT quantity, LISTAGG(name, ',') WITHIN GROUP (ORDER BY quantity) FROM items",
+            "E230",
+        ),
         ("SELECT quantity FROM items WHERE SUM(quantity)>0", "E231"),
         ("SELECT SUM(SUM(quantity)) FROM items", "E231"),
         (
@@ -558,6 +574,11 @@ fn review_semantic_errors_are_scope_local_and_opt_in() {
         );
     }
     for sql in [
+        "SELECT LISTAGG(name, ',') WITHIN GROUP (ORDER BY quantity) FROM items",
+        "SELECT active, LISTAGG(name, ',') WITHIN GROUP (ORDER BY quantity) FROM items GROUP BY active",
+        "SELECT quantity, COUNT(*) FROM items GROUP BY ALL HAVING quantity > 0",
+        "SELECT quantity + 1 AS n, COUNT(*) FROM items GROUP BY ALL HAVING n > 0",
+        "SELECT *, COUNT(*) FROM items GROUP BY ALL HAVING quantity > 0",
         "SELECT SUM(quantity) OVER(), quantity FROM items",
         "SELECT quantity, (SELECT SUM(quantity) FROM other) FROM items",
         "SELECT quantity, SUM(SUM(quantity)) OVER() FROM items GROUP BY quantity",
@@ -2500,6 +2521,38 @@ fn test_validate_with_schema_type_check_non_strict_warnings() {
 }
 
 #[test]
+fn in_subquery_projection_width() {
+    let schema = base_schema();
+    let options = SchemaValidationOptions {
+        check_types: true,
+        ..Default::default()
+    };
+    for (predicate, valid) in [
+        ("id IN (SELECT id FROM users)", true),
+        ("id NOT IN (SELECT id, age FROM users)", false),
+        (
+            "id IN (SELECT id, age FROM users UNION ALL SELECT id, age FROM users)",
+            false,
+        ),
+        ("id IN (SELECT u.* FROM users u)", false),
+        ("(id, age) IN (SELECT id, age FROM users)", true),
+        ("(id, age) IN (SELECT id, age, name FROM users)", false),
+    ] {
+        let sql = format!("SELECT id FROM users WHERE {predicate}");
+        let result = validate_with_schema(&sql, DialectType::Snowflake, &schema, &options);
+        assert_eq!(result.valid, valid, "{sql}: {:?}", result.errors);
+        assert_eq!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.code == validation_codes::E_INCOMPATIBLE_COMPARISON_TYPES),
+            !valid,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
 fn test_validate_with_schema_type_check_setop_arity_mismatch() {
     let schema = base_schema();
     let opts = SchemaValidationOptions {
@@ -2750,4 +2803,28 @@ fn schema_validation_propagates_complexity_guard_to_both_parses() {
         assert!(!invalid.valid);
         assert!(invalid.errors.iter().any(|error| error.code == "E201"));
     }
+}
+
+#[test]
+fn snowflake_table_function_aliases_are_visible() {
+    let schema = serde_json::from_value(serde_json::json!({"tables": [
+        {"name":"t","schema":"s","columns":[{"name":"k","type":"INT"},{"name":"items","type":"VARIANT"}]}
+    ]})).unwrap();
+    let options = SchemaValidationOptions::default();
+    for sql in [
+        "SELECT t.k, f.value FROM s.t t, LATERAL FLATTEN(input => t.items) f",
+        "SELECT t.k, f.value FROM s.t t, TABLE(FLATTEN(input => t.items)) f",
+        "SELECT t.k, f.value FROM s.t t CROSS JOIN TABLE(FLATTEN(input => t.items)) f",
+        "SELECT s.value FROM TABLE(SPLIT_TO_TABLE('x,y', ',')) s",
+    ] {
+        let result = validate_with_schema(sql, DialectType::Snowflake, &schema, &options);
+        assert!(result.valid, "{sql}: {:?}", result.errors);
+    }
+    let result = validate_with_schema(
+        "SELECT missing.value FROM TABLE(SPLIT_TO_TABLE('x,y', ',')) s",
+        DialectType::Snowflake,
+        &schema,
+        &options,
+    );
+    assert!(result.errors.iter().any(|e| e.code == "E222"));
 }

@@ -463,6 +463,7 @@ fn is_plain_star(expression: &Expression) -> bool {
     matches!(
         expression,
         Expression::Star(Star {
+            ilike: None,
             table: None,
             except: None,
             replace: None,
@@ -475,6 +476,7 @@ fn is_plain_star(expression: &Expression) -> bool {
 
 fn plain_star_expression() -> Expression {
     Expression::Star(Star {
+        ilike: None,
         table: None,
         except: None,
         replace: None,

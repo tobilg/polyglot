@@ -1592,6 +1592,7 @@ impl TSQLDialect {
 
         let mut select = Select::new();
         select.expressions = vec![Expression::Star(Star {
+            ilike: None,
             table: None,
             except: None,
             replace: None,

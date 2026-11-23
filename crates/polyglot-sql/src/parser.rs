@@ -4306,6 +4306,7 @@ impl Parser {
         } else {
             // No explicit SELECT means SELECT *
             vec![Expression::Star(crate::expressions::Star {
+                ilike: None,
                 table: None,
                 except: None,
                 replace: None,
@@ -24597,6 +24598,7 @@ impl Parser {
             };
             Expression::Select(Box::new(Select {
                 expressions: vec![Expression::Star(Star {
+                    ilike: None,
                     table: None,
                     except: None,
                     replace: None,
@@ -36118,6 +36120,7 @@ impl Parser {
                 if count_expr.distinct {
                     let this_expr = count_expr.this.clone().unwrap_or_else(|| {
                         Expression::Star(crate::expressions::Star {
+                            ilike: None,
                             table: None,
                             except: None,
                             replace: None,
@@ -36338,6 +36341,7 @@ impl Parser {
                         // Create an ILike expression with Star as left side
                         Expression::ILike(Box::new(LikeOp {
                             left: Expression::Star(Star {
+                                ilike: None,
                                 table: None,
                                 except: None,
                                 replace: None,
@@ -37150,6 +37154,7 @@ impl Parser {
                     let arg = if self.check(TokenType::Star) {
                         self.skip(); // consume *
                         Expression::Star(Star {
+                            ilike: None,
                             table: None,
                             except: None,
                             replace: None,
@@ -40583,6 +40588,7 @@ impl Parser {
                 let distinct = self.match_token(TokenType::Distinct);
                 let args = if self.match_token(TokenType::Star) {
                     vec![Expression::Star(Star {
+                        ilike: None,
                         table: None,
                         except: None,
                         replace: None,
@@ -49072,12 +49078,23 @@ impl Parser {
         table: Option<Identifier>,
         star_trailing_comments: Vec<String>,
     ) -> Result<Star> {
+        let snowflake = self.config.dialect == Some(crate::dialects::DialectType::Snowflake);
+        let ilike = if snowflake && self.match_token(TokenType::ILike) {
+            Some(self.expect_string()?)
+        } else {
+            None
+        };
+        if ilike.is_some() && self.check(TokenType::Exclude) {
+            return Err(self.parse_error("ILIKE and EXCLUDE cannot be combined on a star"));
+        }
         let mut except = None;
         let mut replace = None;
         let mut rename = None;
 
         // Parse EXCLUDE / EXCEPT clause
-        if self.match_token(TokenType::Exclude) || self.match_token(TokenType::Except) {
+        if self.match_token(TokenType::Exclude)
+            || (ilike.is_none() && self.match_token(TokenType::Except))
+        {
             // ClickHouse: EXCEPT STRICT col1, col2 (STRICT is optional modifier)
             let _ = self.match_text_seq(&["STRICT"]);
             let mut columns = Vec::new();
@@ -49173,7 +49190,11 @@ impl Parser {
             rename = Some(renames);
         }
 
+        if snowflake && self.check(TokenType::ILike) {
+            return Err(self.parse_error("ILIKE must be the first star modifier"));
+        }
         Ok(Star {
+            ilike,
             table,
             except,
             replace,
@@ -59423,6 +59444,7 @@ impl Parser {
                     })));
                 } else if self.match_token(TokenType::Star) {
                     elements.push(Expression::Star(crate::expressions::Star {
+                        ilike: None,
                         table: None,
                         except: None,
                         replace: None,
@@ -59518,6 +59540,7 @@ impl Parser {
                     })));
                 } else if self.match_token(TokenType::Star) {
                     elements.push(Expression::Star(crate::expressions::Star {
+                        ilike: None,
                         table: None,
                         except: None,
                         replace: None,
@@ -59529,6 +59552,7 @@ impl Parser {
                     // Spark/Databricks: UPDATE SET * (update all columns)
                     if self.match_token(TokenType::Star) {
                         elements.push(Expression::Star(crate::expressions::Star {
+                            ilike: None,
                             table: None,
                             except: None,
                             replace: None,
@@ -61622,6 +61646,7 @@ impl Parser {
         match expressions {
             Some(expr) => Ok(Some(expr)),
             None => Ok(Some(Expression::Star(Star {
+                ilike: None,
                 table: None,
                 except: None,
                 replace: None,
@@ -64769,6 +64794,10 @@ impl Parser {
             return Ok(None);
         }
 
+        if self.config.dialect == Some(crate::dialects::DialectType::Snowflake) {
+            return Ok(Some(Expression::Star(self.parse_star_modifiers(None)?)));
+        }
+
         // Parse optional EXCEPT/EXCLUDE columns
         let except = self.parse_star_except()?;
 
@@ -64779,6 +64808,7 @@ impl Parser {
         let rename = self.parse_star_rename()?;
 
         Ok(Some(Expression::Star(Star {
+            ilike: None,
             table: None,
             except,
             replace,
@@ -64818,6 +64848,7 @@ impl Parser {
         let pattern = self.parse_bitwise_or()?;
         let except = self.parse_star_except()?;
         let left = Expression::Star(Star {
+            ilike: None,
             table: None,
             except,
             replace: None,
@@ -65046,6 +65077,7 @@ impl Parser {
         let rename: Option<Vec<(Identifier, Identifier)>> = None; // Complex to extract from expressions
 
         Ok(Some(Expression::Star(Star {
+            ilike: None,
             table: None,
             except,
             replace,
@@ -67938,6 +67970,7 @@ impl Parser {
                 // Create a SELECT * FROM <table>
                 let mut select_struct = Select::new();
                 select_struct.expressions = vec![Expression::Star(Star {
+                    ilike: None,
                     table: None,
                     except: None,
                     replace: None,

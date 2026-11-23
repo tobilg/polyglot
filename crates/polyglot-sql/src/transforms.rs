@@ -1496,7 +1496,7 @@ fn eliminate_qualify_select(expr: Expression) -> Result<Expression> {
             {
                 let mut expanded = Vec::new();
                 for expr in std::mem::take(&mut inner.expressions) {
-                    if matches!(&expr, Expression::Star(star) if star.except.is_none() && star.replace.is_none() && star.rename.is_none())
+                    if matches!(&expr, Expression::Star(star) if star.ilike.is_none() && star.except.is_none() && star.replace.is_none() && star.rename.is_none())
                     {
                         expanded.extend(names.iter().cloned().map(named_column));
                     } else {
@@ -6242,6 +6242,7 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
                 // Build SELECT * FROM (UNION) AS _l_0 ORDER BY ... LIMIT ...
                 let mut select = Select::default();
                 select.expressions = vec![Expression::Star(Star {
+                    ilike: None,
                     table: None,
                     except: None,
                     replace: None,

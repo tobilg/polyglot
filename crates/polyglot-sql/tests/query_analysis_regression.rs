@@ -416,3 +416,292 @@ fn re_aliased_join_groups_preserve_dependencies_and_scope_boundaries() {
         }
     }
 }
+
+#[test]
+fn snowflake_function_stars_read_source_columns() {
+    let analysis = analyze_query(
+        "SELECT OBJECT_CONSTRUCT(*) AS obj, HASH(*) AS h, OBJECT_CONSTRUCT(t.*) AS q, COUNT(*) AS n FROM s.t",
+        AnalyzeQueryOptions {
+            dialect: DialectType::Snowflake,
+            schema: Some(serde_json::from_value(serde_json::json!({"tables": [
+                {"name":"t", "schema":"s", "columns":[{"name":"k","type":"INT"},{"name":"v","type":"INT"}]}
+            ]})).unwrap()),
+            ..Default::default()
+        },
+    ).unwrap();
+    for projection in &analysis.projections[..3] {
+        let mut names = projection
+            .upstream
+            .iter()
+            .map(|r| {
+                assert_eq!(r.source_name.as_deref(), Some("s.t"));
+                assert_eq!(r.path_transform_kind, Some(TransformKind::Expression));
+                r.column.as_str()
+            })
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["K", "V"], "{:?}", projection.name);
+    }
+    assert!(analysis.projections[3].upstream.is_empty());
+}
+
+#[test]
+fn snowflake_analysis_preserves_distinct_column_identifiers() {
+    let schema = serde_json::from_value(serde_json::json!({"tables": [
+        {"name":"T","schema":"S","columns":[{"name":"ID","type":"INT"},{"name":"\"id\"","type":"INT"}]}
+    ]})).unwrap();
+    for schema in [Some(schema), None] {
+        let nested = analyze_query(
+            r#"WITH c AS (SELECT id, "id" FROM s.t) SELECT c.id, c."id" FROM c"#,
+            AnalyzeQueryOptions {
+                dialect: DialectType::Snowflake,
+                schema: schema.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for (p, expected) in nested.projections.iter().zip(["ID", "id"]) {
+            assert_eq!(p.upstream.len(), 1);
+            assert_eq!(p.upstream[0].source_name.as_deref(), Some("s.t"));
+            assert_eq!(p.upstream[0].column, expected);
+        }
+        let analysis = analyze_query(
+            r#"SELECT id, "id", id AS total, "id" AS "Total", id + "id" AS both_ids FROM s.t WHERE id > "id""#,
+            AnalyzeQueryOptions {dialect: DialectType::Snowflake, schema, ..Default::default()},
+        ).unwrap();
+        for (p, (output, input)) in analysis.projections.iter().zip([
+            ("ID", "ID"),
+            ("id", "id"),
+            ("TOTAL", "ID"),
+            ("Total", "id"),
+        ]) {
+            assert_eq!(p.name.as_deref(), Some(output));
+            assert_eq!(p.upstream.len(), 1);
+            assert_eq!(p.upstream[0].column, input, "{output}");
+        }
+        let mut columns = analysis.projections[4]
+            .upstream
+            .iter()
+            .map(|r| r.column.as_str())
+            .collect::<Vec<_>>();
+        columns.sort_unstable();
+        assert_eq!(columns, ["ID", "id"]);
+        let mut columns = analysis.column_uses[0]
+            .references
+            .iter()
+            .map(|r| r.reference.column.as_str())
+            .collect::<Vec<_>>();
+        columns.sort_unstable();
+        assert_eq!(columns, ["ID", "id"]);
+    }
+}
+
+#[test]
+fn pivot_reports_implicit_group_keys() {
+    use polyglot_sql::ColumnUseContext;
+    let schema: polyglot_sql::ValidationSchema = serde_json::from_value(serde_json::json!({"tables": [
+        {"name":"t","schema":"s","columns":[{"name":"k","type":"INT"},{"name":"status","type":"VARCHAR"},{"name":"amount","type":"INT"},{"name":"c","type":"INT"}]}
+    ]})).unwrap();
+    for (sql, expected) in [
+        ("SELECT * FROM (SELECT k, status, amount FROM s.t) PIVOT(SUM(amount) FOR status IN ('placed', 'shipped'))", vec!["K"]),
+        ("WITH q AS (SELECT k AS key_alias, status, amount FROM s.t) SELECT 1 FROM q PIVOT(SUM(amount) FOR status IN (ANY))", vec!["K"]),
+        ("SELECT 1 FROM s.t PIVOT(SUM(amount) FOR status IN ('placed'))", vec!["C","K"]),
+        ("SELECT * FROM (SELECT status, amount FROM s.t) PIVOT(SUM(amount) FOR status IN ('placed'))", vec![]),
+    ] {
+        let result = analyze_query(sql, AnalyzeQueryOptions { dialect: DialectType::Snowflake, schema: Some(schema.clone()), ..Default::default() }).unwrap();
+        let mut columns = Vec::new();
+        for fact in result.column_uses.iter().filter(|f| f.context == ColumnUseContext::Group) {
+            assert!(fact.span.is_none());
+            assert_eq!(fact.references.len(), 1, "{sql}: {fact:?}");
+            let r = &fact.references[0].reference;
+            assert_eq!(r.source_name.as_deref(), Some("s.t"), "{sql}");
+            columns.push(r.column.as_str());
+        }
+        columns.sort_unstable();
+        assert_eq!(columns, expected, "{sql}");
+    }
+}
+
+#[test]
+fn unpivot_labels_and_null_filter_have_separate_dependencies() {
+    use polyglot_sql::ColumnUseContext;
+    for dialect in [DialectType::Snowflake, DialectType::DuckDB] {
+        for mode in ["", "EXCLUDE NULLS", "INCLUDE NULLS"] {
+            let sql = format!("SELECT k, metric, val FROM (SELECT k, amount, c FROM s.t) UNPIVOT {mode} (val FOR metric IN (amount AS revenue, c))");
+            let result = analyze_query(
+                &sql,
+                AnalyzeQueryOptions {
+                    dialect,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(result.projections[1].upstream.is_empty(), "{sql}");
+            let mut values: Vec<_> = result.projections[2]
+                .upstream
+                .iter()
+                .map(|r| r.column.to_ascii_lowercase())
+                .collect();
+            values.sort();
+            assert_eq!(values, ["amount", "c"]);
+            let filters: Vec<_> = result
+                .column_uses
+                .iter()
+                .filter(|u| u.context == ColumnUseContext::Filter)
+                .collect();
+            if mode == "INCLUDE NULLS" {
+                assert!(filters.is_empty());
+            } else {
+                let mut columns: Vec<_> = filters
+                    .iter()
+                    .flat_map(|f| &f.references)
+                    .map(|r| {
+                        assert_eq!(r.reference.source_name.as_deref(), Some("s.t"));
+                        r.reference.column.to_ascii_lowercase()
+                    })
+                    .collect();
+                columns.sort();
+                assert_eq!(columns, values, "{sql}");
+            }
+        }
+    }
+}
+
+#[test]
+fn snowflake_star_ilike_filters_before_other_modifiers() {
+    let dialect = DialectType::Snowflake;
+    let schema: polyglot_sql::ValidationSchema = serde_json::from_value(serde_json::json!({"tables": [
+        {"name":"t","columns":[{"name":"a1","type":"INT"},{"name":"a2","type":"INT"},{"name":"abc","type":"INT"},{"name":"b","type":"INT"}]}
+    ]})).unwrap();
+    for (sql, expected) in [
+        ("SELECT * ILIKE '%A%' FROM t", vec!["A1", "A2", "ABC"]),
+        (
+            "SELECT t.* ILIKE 'A_' RENAME (a1 AS x) FROM t",
+            vec!["X", "A2"],
+        ),
+        (
+            "SELECT * ILIKE 'a_' REPLACE (b AS a1) FROM t",
+            vec!["A1", "A2"],
+        ),
+    ] {
+        let expr = parse_one_statement(sql, dialect);
+        let emitted = generate(&expr, dialect).unwrap();
+        assert!(emitted.contains(" ILIKE "), "{emitted}");
+        for sql in [sql, emitted.as_str()] {
+            let analysis = analyze_query(
+                sql,
+                AnalyzeQueryOptions {
+                    dialect,
+                    schema: Some(schema.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                analysis.star_projections[0].expanded_columns, expected,
+                "{sql}"
+            );
+            assert_eq!(
+                analysis
+                    .projections
+                    .iter()
+                    .map(|p| p.name.as_deref().unwrap())
+                    .collect::<Vec<_>>(),
+                expected,
+                "{sql}"
+            );
+            if sql.contains("REPLACE") {
+                assert_eq!(analysis.projections[0].upstream[0].column, "B");
+            }
+        }
+    }
+    for sql in [
+        "SELECT * ILIKE '%a%' EXCLUDE b FROM t",
+        "SELECT t.* EXCLUDE b ILIKE '%a%' FROM t",
+        "SELECT * ILIKE b FROM t",
+    ] {
+        assert!(parse(sql, dialect).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn snowflake_output_headings_for_expressions_and_pivot_values() {
+    let schema = serde_json::from_value(serde_json::json!({"tables":[{"name":"t","columns":[
+        {"name":"k","type":"INT"},{"name":"a","type":"INT"},{"name":"b","type":"VARCHAR"}]}]}))
+    .unwrap();
+    let options = AnalyzeQueryOptions {
+        dialect: DialectType::Snowflake,
+        schema: Some(schema),
+        ..Default::default()
+    };
+    for (sql, names) in [
+        (
+            "SELECT a * 2, UPPER(b), a, a FROM t",
+            vec!["A * 2", "UPPER(B)", "A", "A"],
+        ),
+        (
+            "SELECT * FROM (SELECT k,b,a FROM t) PIVOT (SUM(a) FOR b IN ('x', 'y'))",
+            vec!["K", "'x'", "'y'"],
+        ),
+    ] {
+        let analysis = analyze_query(sql, options.clone()).unwrap();
+        assert_eq!(
+            analysis
+                .projections
+                .iter()
+                .map(|p| p.name.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            names,
+            "{sql}"
+        );
+    }
+    let analysis = analyze_query(
+        r#"WITH c AS (SELECT a * 2 FROM t) SELECT "A * 2" FROM c"#,
+        options,
+    )
+    .unwrap();
+    assert_eq!(analysis.projections[0].upstream[0].column, "A");
+}
+
+#[test]
+fn snowflake_table_function_stars_expand_in_declared_order() {
+    let schema = serde_json::from_value(serde_json::json!({"tables":[{"name":"t","columns":[
+        {"name":"items","type":"VARIANT"},{"name":"b","type":"VARCHAR"}]}]}))
+    .unwrap();
+    for schema in [Some(schema), None] {
+        for (source, names) in [
+            (
+                "t, LATERAL FLATTEN(input => t.items) f",
+                vec!["SEQ", "KEY", "PATH", "INDEX", "VALUE", "THIS"],
+            ),
+            (
+                "t, LATERAL SPLIT_TO_TABLE(t.b, ',') f",
+                vec!["SEQ", "INDEX", "VALUE"],
+            ),
+            (
+                "TABLE(SPLIT_TO_TABLE('a,b', ',')) f",
+                vec!["SEQ", "INDEX", "VALUE"],
+            ),
+        ] {
+            let sql = format!("SELECT f.* FROM {source}");
+            let analysis = analyze_query(
+                &sql,
+                AnalyzeQueryOptions {
+                    dialect: DialectType::Snowflake,
+                    schema: schema.clone(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                analysis
+                    .projections
+                    .iter()
+                    .map(|p| p.name.as_deref().unwrap())
+                    .collect::<Vec<_>>(),
+                names,
+                "{sql}"
+            );
+        }
+    }
+}

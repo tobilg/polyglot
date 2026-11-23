@@ -1984,6 +1984,16 @@ fn are_assignment_compatible(target: TypeFamily, source: TypeFamily) -> bool {
     }
 }
 
+fn projection_wildcard(expr: &Expression) -> bool {
+    match expr {
+        Expression::Star(_) | Expression::BracedWildcard(_) => true,
+        Expression::Column(column) => column.name.name == "*",
+        Expression::Alias(alias) => projection_wildcard(&alias.this),
+        Expression::Annotated(annotated) => projection_wildcard(&annotated.this),
+        _ => false,
+    }
+}
+
 fn projection_families(
     query: &Expression,
     schema_map: &HashMap<String, TableSchemaEntry>,
@@ -2027,12 +2037,11 @@ fn projection_families(
         };
     }
     match query {
+        Expression::Select(select) if select.kind.as_deref() == Some("STRUCT") => {
+            Some(vec![TypeFamily::Struct])
+        }
         Expression::Select(select) => {
-            if select
-                .expressions
-                .iter()
-                .any(|e| matches!(e, Expression::Star(_) | Expression::BracedWildcard(_)))
-            {
+            if select.expressions.iter().any(projection_wildcard) {
                 return None;
             }
             let context = collect_type_check_context(query, schema_map);
@@ -2480,6 +2489,32 @@ fn check_types(
             }
             Expression::In(in_expr) => {
                 let this_family = infer_expression_type_family(&in_expr.this, schema_map, &context);
+                if let Some(outputs) = in_expr
+                    .query
+                    .as_ref()
+                    .and_then(|query| projection_families(query, schema_map, dialect))
+                {
+                    let left = crate::scope::scope_query(&in_expr.this);
+                    let width = match left {
+                        Expression::Tuple(tuple) => tuple.expressions.len(),
+                        Expression::Function(f) if f.name.eq_ignore_ascii_case("ROW") => {
+                            f.args.len()
+                        }
+                        // A composite value may match a single composite output or a row.
+                        _ if this_family == TypeFamily::Struct => continue,
+                        _ => 1,
+                    };
+                    let possible_composite = width > 1
+                        && matches!(
+                            outputs.as_slice(),
+                            [TypeFamily::Struct | TypeFamily::Unknown]
+                        );
+                    if width != outputs.len() && !possible_composite {
+                        errors.push(type_issue(strict, validation_codes::E_INCOMPATIBLE_COMPARISON_TYPES,
+                            validation_codes::W_IMPLICIT_CAST_COMPARISON,
+                            format!("IN compares {width} column(s) with a subquery returning {} column(s)", outputs.len())));
+                    }
+                }
                 for value in &in_expr.expressions {
                     let item_family = infer_expression_type_family(value, schema_map, &context);
                     if !are_comparable(this_family, item_family) {
@@ -3932,10 +3967,8 @@ pub fn validate_with_schema(
                 matches!(
                     node,
                     Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_)
-                )
-            }) && statement
-                .dfs()
-                .any(|node| matches!(node, Expression::Star(_)))
+                ) || matches!(node, Expression::In(predicate) if predicate.query.is_some())
+            }) && statement.dfs().any(projection_wildcard)
             {
                 if let Ok(qualified) = crate::optimizer::qualify_schema_aware_expression(
                     statement.clone(),

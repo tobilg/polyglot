@@ -272,6 +272,39 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
     expression = crate::binding::bind_lambdas(expression, options.dialect);
     let original_expression = expression.clone();
 
+    // Lineage carries column names across scopes as strings. Fold each input
+    // while it still has its quote bit, retaining the original AST for clause SQL.
+    if options.dialect == DialectType::Snowflake {
+        expression = crate::traversal::transform_all(expression, &|mut expr| {
+            match &mut expr {
+                Expression::Column(column) if !column.name.quoted => {
+                    column.name.name.make_ascii_uppercase();
+                }
+                Expression::Select(select) => {
+                    for projection in &mut select.expressions {
+                        if let Expression::Alias(alias) = projection {
+                            if !alias.alias.quoted {
+                                alias.alias.name.make_ascii_uppercase();
+                            }
+                        } else if projection_name(projection).is_none() {
+                            let heading = Dialect::get(options.dialect)
+                                .generate_with_guard(projection, options.complexity_guard)?;
+                            let value = std::mem::replace(
+                                projection,
+                                Expression::Null(crate::expressions::Null),
+                            );
+                            *projection = Expression::Alias(Box::new(
+                                crate::expressions::Alias::new(value, Identifier::quoted(heading)),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(expr)
+        })?;
+    }
+
     let mapping_schema = options
         .schema
         .as_ref()
@@ -450,7 +483,7 @@ impl AnalysisSchemaInfo {
 }
 
 struct NullabilityContext<'a> {
-    lineage: RefCell<HashMap<*const Scope, ScopedLineage>>,
+    lineage: RefCell<HashMap<*const Scope, ScopedLineage<'a>>>,
     output_types: RefCell<crate::optimizer::set_operation_types::OutputResolver>,
     schema: Option<&'a AnalysisSchemaInfo>,
     mapping_schema: Option<&'a MappingSchema>,
@@ -1119,9 +1152,14 @@ fn projection_fact(
     let is_star = projection_is_star(inner);
     let kind = transform_kind(inner);
     let mut lineage = nullability_context.lineage.borrow_mut();
-    let prepared = lineage
-        .entry(scope as *const Scope)
-        .or_insert_with(|| ScopedLineage::new(scope.clone(), &[], dialect));
+    let prepared = lineage.entry(scope as *const Scope).or_insert_with(|| {
+        ScopedLineage::new(
+            scope.clone(),
+            &[],
+            dialect,
+            nullability_context.mapping_schema.map(|s| s as &dyn Schema),
+        )
+    });
     // A traced node whose leaves are constants has no upstream columns.
     let mut upstream = prepared
         .output(index)

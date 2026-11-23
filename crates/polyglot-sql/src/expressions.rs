@@ -1864,6 +1864,7 @@ impl Expression {
     /// Create a wildcard star (`*`) expression with no EXCEPT/REPLACE/RENAME modifiers.
     pub fn star() -> Self {
         Expression::Star(Star {
+            ilike: None,
             table: None,
             except: None,
             replace: None,
@@ -3718,6 +3719,9 @@ impl TableRef {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Star {
+    /// Case-insensitive SQL pattern selecting Snowflake wildcard columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ilike: Option<String>,
     /// Optional table qualifier (e.g. `t` in `t.*`).
     pub table: Option<Identifier>,
     /// EXCLUDE / EXCEPT columns (DuckDB, BigQuery, Snowflake)
@@ -3732,6 +3736,36 @@ pub struct Star {
     /// Source position span
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
+}
+
+#[cfg(feature = "semantic")]
+fn star_ilike_matches(pattern: &str, name: &str) -> bool {
+    let name: Vec<char> = name.to_lowercase().chars().collect();
+    // matches[i] tracks whether the pattern consumed so far matches name[..i].
+    let mut matches = vec![false; name.len() + 1];
+    matches[0] = true;
+    let pattern = pattern.to_lowercase();
+    let mut chars = pattern.chars();
+    while let Some(token) = chars.next() {
+        if token == '%' {
+            for i in 1..matches.len() {
+                matches[i] |= matches[i - 1];
+            }
+        } else {
+            let literal = if token == '\\' {
+                Some(chars.next().unwrap_or(token))
+            } else if token == '_' {
+                None
+            } else {
+                Some(token)
+            };
+            for i in (1..matches.len()).rev() {
+                matches[i] = matches[i - 1] && literal.is_none_or(|c| c == name[i - 1]);
+            }
+            matches[0] = false;
+        }
+    }
+    matches[name.len()]
 }
 
 impl Star {
@@ -3752,6 +3786,10 @@ impl Star {
             let mut replacement = replacement.clone();
             if let Some(alias) = renamed {
                 replacement.alias = alias;
+            } else if dialect == Some(crate::dialects::DialectType::Snowflake)
+                && !replacement.alias.quoted
+            {
+                replacement.alias.name.make_ascii_uppercase();
             }
             return Some(Expression::Alias(Box::new(replacement)));
         }
@@ -3775,6 +3813,13 @@ impl Star {
         name: &str,
         dialect: Option<crate::dialects::DialectType>,
     ) -> bool {
+        if self
+            .ilike
+            .as_ref()
+            .is_some_and(|pattern| !star_ilike_matches(pattern, name))
+        {
+            return true;
+        }
         self.except
             .iter()
             .flatten()

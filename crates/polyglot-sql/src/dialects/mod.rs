@@ -4304,6 +4304,7 @@ impl Dialect {
                             // Build COUNT_BIG(...) as an AggregateFunction
                             let args = if c.star {
                                 vec![Expression::Star(crate::expressions::Star {
+                                    ilike: None,
                                     table: None,
                                     except: None,
                                     replace: None,
@@ -9855,6 +9856,7 @@ impl Dialect {
 
         // Outer: SELECT ARRAY_AGG(*) FROM (inner_subquery)
         let star = Expression::Star(Star {
+            ilike: None,
             table: None,
             except: None,
             replace: None,

@@ -10,10 +10,9 @@ use crate::error::{ColumnResolutionReason, ColumnResolutionTarget};
 use crate::expressions::{
     DataType, Expression, Identifier, JoinKind, NamedWindow, Select, Star, With,
 };
-#[cfg(feature = "generate")]
-use crate::generator::Generator;
 use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_schema_aware_expression;
+use crate::resolver::pivot_generated_output_columns;
 use crate::schema::{normalize_name, Schema};
 use crate::scope::{
     build_scope, find_all_in_scope, Scope, ScopeType, SourceInfo as ScopeSourceInfo, SourceKind,
@@ -258,7 +257,13 @@ pub fn lineage(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let prepared = prepare_lineage_expression(sql, None, dialect, false)?;
-    lineage_from_column_ref(ColumnRef::Name(column), &prepared, dialect, trim_selects)
+    lineage_from_column_ref(
+        ColumnRef::Name(column),
+        &prepared,
+        None,
+        dialect,
+        trim_selects,
+    )
 }
 
 /// Build the lineage graph for the column at a zero-based output ordinal.
@@ -269,7 +274,13 @@ pub fn lineage_at(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let prepared = prepare_lineage_expression(sql, None, dialect, false)?;
-    lineage_from_column_ref(ColumnRef::Index(ordinal), &prepared, dialect, trim_selects)
+    lineage_from_column_ref(
+        ColumnRef::Index(ordinal),
+        &prepared,
+        None,
+        dialect,
+        trim_selects,
+    )
 }
 
 /// Build the lineage graph for a column in a SQL query using optional schema metadata.
@@ -295,7 +306,13 @@ pub fn lineage_with_schema(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let prepared = prepare_lineage_expression(sql, schema, dialect, true)?;
-    lineage_from_column_ref(ColumnRef::Name(column), &prepared, dialect, trim_selects)
+    lineage_from_column_ref(
+        ColumnRef::Name(column),
+        &prepared,
+        schema,
+        dialect,
+        trim_selects,
+    )
 }
 
 /// Build schema-aware lineage for the column at a zero-based output ordinal.
@@ -307,7 +324,13 @@ pub fn lineage_at_with_schema(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let prepared = prepare_lineage_expression(sql, schema, dialect, true)?;
-    lineage_from_column_ref(ColumnRef::Index(ordinal), &prepared, dialect, trim_selects)
+    lineage_from_column_ref(
+        ColumnRef::Index(ordinal),
+        &prepared,
+        schema,
+        dialect,
+        trim_selects,
+    )
 }
 
 /// Return the ordered output description of a query.
@@ -360,11 +383,12 @@ fn prepare_lineage_expression(
 fn lineage_from_column_ref(
     column: ColumnRef<'_>,
     sql: &Expression,
+    schema: Option<&dyn Schema>,
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let scope = build_scope(sql);
-    to_node(column, scope, dialect, "", "", "", trim_selects)
+    to_node(column, scope, schema, dialect, "", "", "", trim_selects)
 }
 
 fn lineage_normalized_expression(sql: &Expression) -> Expression {
@@ -483,7 +507,13 @@ pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
     let resolved_cte_columns = {
         let with = match query_with_mut(expr) {
             Some(with) => with,
-            None => return,
+            None => {
+                // Fixed table-function outputs are known even without a catalog or CTE.
+                if schema.is_none() {
+                    rewrite_stars_in_query(expr, &HashMap::new(), None);
+                }
+                return;
+            }
         };
         let is_recursive_with = with.recursive;
         let mut resolved_cte_columns: HashMap<String, Vec<String>> = HashMap::new();
@@ -727,6 +757,14 @@ fn expand_star_from_sources(
                 if src.transforms_columns {
                     return None;
                 }
+                if !src.declared_columns.is_empty() {
+                    expanded.extend(
+                        src.declared_columns
+                            .iter()
+                            .map(|c| (src.alias.clone(), c.clone())),
+                    );
+                    return Some(expanded);
+                }
                 // Try CTE first
                 if let Some(cols) = resolved_ctes.get(&src.normalized) {
                     expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
@@ -751,7 +789,14 @@ fn expand_star_from_sources(
             if src.transforms_columns {
                 return None;
             }
-            if let Some(cols) = resolved_ctes.get(&src.normalized) {
+            if !src.declared_columns.is_empty() {
+                expanded.extend(
+                    src.declared_columns
+                        .iter()
+                        .map(|c| (src.alias.clone(), c.clone())),
+                );
+                any_expanded = true;
+            } else if let Some(cols) = resolved_ctes.get(&src.normalized) {
                 expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
                 any_expanded = true;
             } else if let Some(cols) = lookup_schema_columns(schema, &src.fq_name) {
@@ -820,6 +865,7 @@ struct SourceInfo {
     fq_name: String,
     /// PIVOT/UNPIVOT outputs cannot be expanded using the input relation's columns.
     transforms_columns: bool,
+    declared_columns: Vec<String>,
 }
 
 /// Extract source info (alias, normalized CTE name, fully-qualified name) from a
@@ -835,6 +881,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 normalized: normalize_cte_name(alias),
                 fq_name: alias.name.clone(),
                 transforms_columns: false,
+                declared_columns: Vec::new(),
             }
         }
 
@@ -845,6 +892,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 normalized: alias.to_lowercase(),
                 fq_name: alias.to_string(),
                 transforms_columns: false,
+                declared_columns: Vec::new(),
             }
         }
 
@@ -871,6 +919,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     normalized,
                     fq_name,
                     transforms_columns: false,
+                    declared_columns: Vec::new(),
                 })
             }
             Expression::Subquery(s) => {
@@ -884,6 +933,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     normalized,
                     fq_name,
                     transforms_columns: false,
+                    declared_columns: Vec::new(),
                 })
             }
             Expression::Unnest(u) => u.alias.as_ref().map(virtual_source_info),
@@ -893,7 +943,18 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
             Expression::Alias(a) if is_query_like_relation(&a.this) => {
                 Some(virtual_source_info(&a.alias))
             }
-            Expression::Lateral(lateral) => lateral.alias.as_deref().map(named_virtual_source_info),
+            Expression::Lateral(lateral) => {
+                let mut source = named_virtual_source_info(lateral.alias.as_deref()?);
+                source.declared_columns = crate::resolver::lateral_output_columns(lateral);
+                Some(source)
+            }
+            Expression::Alias(alias)
+                if crate::scope::table_function_argument(&alias.this).is_some() =>
+            {
+                let mut source = virtual_source_info(&alias.alias);
+                source.declared_columns = crate::resolver::alias_output_columns(alias);
+                Some(source)
+            }
             Expression::LateralView(lateral_view) => lateral_view
                 .table_alias
                 .as_ref()
@@ -910,6 +971,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     normalized: alias.to_lowercase(),
                     fq_name: alias,
                     transforms_columns: true,
+                    declared_columns: Vec::new(),
                 })
             }
             Expression::Unpivot(unpivot) => {
@@ -923,6 +985,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     normalized: alias.to_lowercase(),
                     fq_name: alias,
                     transforms_columns: true,
+                    declared_columns: Vec::new(),
                 })
             }
             Expression::Paren(p) => extract_source(&p.this),
@@ -1012,7 +1075,8 @@ struct IndexedScope {
     union_scopes: Vec<ScopeId>,
 }
 
-struct LineageScopeContext {
+struct LineageScopeContext<'a> {
+    schema: Option<&'a dyn Schema>,
     scopes: Vec<IndexedScope>,
     /// Usage analysis must not claim undeclared qualifiers as physical tables.
     conservative: bool,
@@ -1023,24 +1087,24 @@ struct LineageScopeContext {
 /// The caller selects the lexical owner and checks ambiguous/open sources first.
 /// This keeps CTE, derived-table, virtual-source and set-operation tracing shared
 /// with projection lineage, without manufacturing SELECT projections.
-pub(crate) struct ScopedLineage {
-    context: LineageScopeContext,
+pub(crate) struct ScopedLineage<'a> {
+    context: LineageScopeContext<'a>,
     root: ScopeId,
     ctes: Vec<ScopeId>,
     dialect: Option<DialectType>,
 }
 
-impl ScopedLineage {
+impl<'a> ScopedLineage<'a> {
     /// Prepare and scope `sql` once, for the lineage of many output columns.
     /// Each column gets the result of `lineage_with_schema` (with a schema)
     /// or `lineage` (without one).
     pub(crate) fn for_query(
         sql: &Expression,
-        schema: Option<&dyn Schema>,
+        schema: Option<&'a dyn Schema>,
         dialect: Option<DialectType>,
     ) -> Result<Self> {
         let prepared = prepare_lineage_expression(sql, schema, dialect, schema.is_some())?;
-        let (context, root) = LineageScopeContext::from_scope(build_scope(&prepared));
+        let (context, root) = LineageScopeContext::from_scope(build_scope(&prepared), schema);
         Ok(Self {
             context,
             root,
@@ -1073,10 +1137,15 @@ impl ScopedLineage {
 }
 
 #[cfg(feature = "generate")]
-impl ScopedLineage {
-    pub(crate) fn new(scope: Scope, inherited_ctes: &[Scope], dialect: DialectType) -> Self {
+impl<'a> ScopedLineage<'a> {
+    pub(crate) fn new(
+        scope: Scope,
+        inherited_ctes: &[Scope],
+        dialect: DialectType,
+        schema: Option<&'a dyn Schema>,
+    ) -> Self {
         let visible_ctes = scope.cte_sources.clone();
-        let (mut context, root) = LineageScopeContext::from_scope(scope);
+        let (mut context, root) = LineageScopeContext::from_scope(scope, schema);
         context.conservative = true;
         let mut ctes = context.indexed(root).cte_scopes.clone();
         for cte_scope in inherited_ctes {
@@ -1113,6 +1182,47 @@ impl ScopedLineage {
             self.dialect,
             source,
             column,
+            column,
+            false,
+            &self.ctes,
+            0,
+        );
+        node
+    }
+
+    pub(crate) fn pivot_input(&self, source: &Expression, column: &str) -> LineageNode {
+        self.pivot_input_reference(
+            source,
+            &SimpleColumnRef {
+                table: None,
+                column: column.to_owned(),
+            },
+        )
+    }
+
+    pub(crate) fn unpivot_entry_inputs(
+        &self,
+        source: &Expression,
+        entry: &Expression,
+    ) -> Vec<LineageNode> {
+        unpivot_entry_columns(entry)
+            .iter()
+            .map(|column| self.pivot_input_reference(source, column))
+            .collect()
+    }
+
+    fn pivot_input_reference(&self, source: &Expression, column: &SimpleColumnRef) -> LineageNode {
+        let mut node = LineageNode::new(
+            &column.column,
+            Expression::column(&column.column),
+            Expression::Null(crate::expressions::Null),
+        );
+        attach_pivot_input_column(
+            &mut node,
+            &self.context,
+            self.root,
+            self.dialect,
+            source,
             column,
             false,
             &self.ctes,
@@ -1165,10 +1275,11 @@ impl ScopedLineage {
     }
 }
 
-impl LineageScopeContext {
-    fn from_scope(scope: Scope) -> (Self, ScopeId) {
+impl<'a> LineageScopeContext<'a> {
+    fn from_scope(scope: Scope, schema: Option<&'a dyn Schema>) -> (Self, ScopeId) {
         let mut context = Self {
             scopes: Vec::new(),
+            schema,
             conservative: false,
             include_source_queries: true,
         };
@@ -1219,13 +1330,14 @@ impl LineageScopeContext {
 fn to_node(
     column: ColumnRef<'_>,
     scope: Scope,
+    schema: Option<&dyn Schema>,
     dialect: Option<DialectType>,
     scope_name: &str,
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    let (context, scope_id) = LineageScopeContext::from_scope(scope);
+    let (context, scope_id) = LineageScopeContext::from_scope(scope, schema);
     to_node_inner(
         column,
         &context,
@@ -1270,10 +1382,17 @@ fn to_node_inner(
     let effective_expr = effective_scope_expression(scope_expr);
     // A CTE's explicit output names replace its projection names by ordinal.
     // Resolve that boundary before unwrapping, including unnamed expressions.
+    // Snowflake analysis folds column and output names before building this scope.
+    let stored_names = context.conservative && dialect == Some(DialectType::Snowflake);
     let alias_ordinal = match (scope_expr, &column) {
         (Expression::Cte(cte), ColumnRef::Name(name)) if !cte.columns.is_empty() => {
             cte.columns.iter().position(|alias| {
-                normalize_column_name(&alias.name, dialect) == normalize_column_name(name, dialect)
+                if stored_names {
+                    crate::set_operation::identifier_key(alias, dialect) == *name
+                } else {
+                    normalize_column_name(&alias.name, dialect)
+                        == normalize_column_name(name, dialect)
+                }
             })
         }
         _ => None,
@@ -1313,7 +1432,7 @@ fn to_node_inner(
         context
             .indexed(scope_id)
             .output_index
-            .get_or_init(|| OutputIndex::new(select, dialect))
+            .get_or_init(|| OutputIndex::new(select, dialect, stored_names))
             .find(select, lookup_column, dialect)?
     } else {
         find_select_expr(effective_expr, lookup_column, dialect)?
@@ -1361,6 +1480,7 @@ fn to_node_inner(
             let mut child = LineageNode::new(
                 format!("{}.*", name),
                 Expression::Star(crate::expressions::Star {
+                    ilike: None,
                     table: star.table.clone(),
                     except: None,
                     replace: None,
@@ -1400,7 +1520,13 @@ fn to_node_inner(
     }
 
     // 7. Column references — trace each column to its source
-    let col_refs = find_column_refs_in_expr_with_select(&select_expr, effective_expr, dialect);
+    let col_refs = find_column_refs_in_expr_with_select(
+        &select_expr,
+        effective_expr,
+        dialect,
+        scope,
+        context.schema,
+    );
     for col_ref in col_refs {
         let col_name = &col_ref.column;
         if let Some(ref table_id) = col_ref.table {
@@ -1418,12 +1544,20 @@ fn to_node_inner(
                 depth,
             );
         } else {
-            if let Some(alias_expr) =
-                find_prior_select_alias_expr(effective_expr, &select_expr, col_name, dialect)
-            {
-                for alias_ref in
-                    find_column_refs_in_expr_with_select(&alias_expr, effective_expr, dialect)
-                {
+            if let Some(alias_expr) = find_prior_select_alias_expr(
+                effective_expr,
+                &select_expr,
+                col_name,
+                dialect,
+                stored_names,
+            ) {
+                for alias_ref in find_column_refs_in_expr_with_select(
+                    &alias_expr,
+                    effective_expr,
+                    dialect,
+                    scope,
+                    context.schema,
+                ) {
                     if let Some(ref table_id) = alias_ref.table {
                         resolve_qualified_column(
                             &mut node,
@@ -1932,8 +2066,19 @@ fn attach_unpivot_dependencies(
     all_cte_scopes: &[ScopeId],
     depth: usize,
 ) -> bool {
-    let mapping = unpivot_column_mapping(unpivot, dialect);
     let normalized = normalize_column_name(col_name, dialect);
+    if normalized == normalize_column_name(&unpivot.name_column.name, dialect) {
+        // The generated name identifies the IN-list entry. It has no input value.
+        let mut label = LineageNode::new(
+            col_name,
+            Expression::Identifier(unpivot.name_column.clone()),
+            Expression::Null(crate::expressions::Null),
+        );
+        label.source_kind = SourceKind::Virtual;
+        node.downstream.push(label);
+        return true;
+    }
+    let mapping = unpivot_column_mapping(unpivot, dialect);
     let Some(input_columns) = mapping.get(&normalized) else {
         // A column outside the UNPIVOT passes through from the input.
         let unpivoted = unpivot
@@ -2154,84 +2299,11 @@ fn pivot_excluded_source_columns(
         .collect()
 }
 
-fn pivot_generated_output_columns(
-    pivot: &crate::expressions::Pivot,
-    _dialect: Option<DialectType>,
-) -> Vec<String> {
-    let fields = pivot_field_output_names(pivot);
-    if fields.is_empty() {
-        return Vec::new();
-    }
-
-    let aggregations = pivot_aggregation_expressions(pivot);
-    if aggregations.is_empty() {
-        return Vec::new();
-    }
-
-    let needs_suffix = aggregations.len() > 1;
-    let mut outputs = Vec::new();
-    for field in fields {
-        for aggregation in aggregations {
-            if let Some(suffix) = pivot_aggregation_output_suffix(aggregation, needs_suffix) {
-                outputs.push(format!("{field}_{suffix}"));
-            } else {
-                outputs.push(field.clone());
-            }
-        }
-    }
-    outputs
-}
-
 fn pivot_aggregation_expressions(pivot: &crate::expressions::Pivot) -> &[Expression] {
     if pivot.using.is_empty() {
         &pivot.expressions
     } else {
         &pivot.using
-    }
-}
-
-fn pivot_aggregation_output_suffix(expr: &Expression, needs_suffix: bool) -> Option<String> {
-    match expr {
-        Expression::Alias(alias) => Some(alias.alias.name.clone()),
-        _ if needs_suffix => pivot_generated_aggregation_suffix(expr),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "generate")]
-fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
-    Generator::sql(expr).ok().map(|sql| sql.to_lowercase())
-}
-
-#[cfg(not(feature = "generate"))]
-fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
-    pivot_expr_output_name(expr).or_else(|| Some(expr.variant_name().to_string()))
-}
-
-fn pivot_field_output_names(pivot: &crate::expressions::Pivot) -> Vec<String> {
-    let mut names = Vec::new();
-    for field in &pivot.fields {
-        if let Expression::In(in_expr) = field {
-            for expr in &in_expr.expressions {
-                if let Some(name) = pivot_expr_output_name(expr) {
-                    names.push(name);
-                }
-            }
-        }
-    }
-    names
-}
-
-fn pivot_expr_output_name(expr: &Expression) -> Option<String> {
-    match expr {
-        Expression::PivotAlias(alias) => pivot_expr_output_name(&alias.alias),
-        Expression::Alias(alias) => Some(alias.alias.name.clone()),
-        Expression::Identifier(identifier) => Some(identifier.name.clone()),
-        Expression::Column(column) => Some(column.name.name.clone()),
-        Expression::Literal(literal) => Some(literal.value_str().to_string()),
-        Expression::Var(var) => Some(var.this.clone()),
-        Expression::Tuple(tuple) => tuple.expressions.first().and_then(pivot_expr_output_name),
-        _ => None,
     }
 }
 
@@ -2269,12 +2341,10 @@ fn unpivot_column_mapping(
                 .map(|column| column.name.clone()),
         )
         .collect();
-    let mut all_input_columns = Vec::new();
     let mut value_input_columns: Vec<Vec<SimpleColumnRef>> = vec![Vec::new(); value_columns.len()];
 
     for entry in &unpivot.columns {
         let columns = unpivot_entry_columns(entry);
-        all_input_columns.extend(columns.clone());
         if columns.len() == value_columns.len() {
             for (idx, col_ref) in columns.into_iter().enumerate() {
                 value_input_columns[idx].push(col_ref);
@@ -2287,10 +2357,6 @@ fn unpivot_column_mapping(
     }
 
     let mut mapping = HashMap::new();
-    mapping.insert(
-        normalize_column_name(&unpivot.name_column.name, dialect),
-        all_input_columns.clone(),
-    );
     for (idx, value_column) in value_columns.iter().enumerate() {
         mapping.insert(
             normalize_column_name(value_column, dialect),
@@ -2661,14 +2727,8 @@ fn alias_output_columns(
     }
 }
 
-fn lateral_output_columns(
-    lateral: &crate::expressions::Lateral,
-) -> Box<dyn Iterator<Item = String> + '_> {
-    if lateral.column_aliases.is_empty() {
-        default_virtual_output_columns(&lateral.this)
-    } else {
-        Box::new(lateral.column_aliases.iter().cloned())
-    }
+fn lateral_output_columns(lateral: &crate::expressions::Lateral) -> std::vec::IntoIter<String> {
+    crate::resolver::lateral_output_columns(lateral).into_iter()
 }
 
 fn lateral_view_output_columns(
@@ -2680,23 +2740,6 @@ fn lateral_view_output_columns(
             .iter()
             .map(|column| column.name.clone()),
     )
-}
-
-fn default_virtual_output_columns(expr: &Expression) -> Box<dyn Iterator<Item = String> + '_> {
-    match expr {
-        Expression::Unnest(unnest) => Box::new(unnest_output_columns(unnest)),
-        Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
-            alias_output_columns(alias)
-        }
-        Expression::Function(function) if function.name.eq_ignore_ascii_case("FLATTEN") => {
-            Box::new(
-                ["seq", "key", "path", "index", "value", "this"]
-                    .into_iter()
-                    .map(String::from),
-            )
-        }
-        _ => Box::new(std::iter::empty()),
-    }
 }
 
 fn attach_virtual_source_dependencies(
@@ -2956,14 +2999,16 @@ fn leftmost_output_select(expression: &Expression) -> Option<&Select> {
 /// One output lookup table per immutable scope. Duplicate names remain
 /// ambiguous even when multiple outputs originate in the same projection.
 struct OutputIndex {
+    stored_names: bool,
     names: HashMap<String, Option<usize>>,
     ordinals: Vec<usize>,
     wildcard_start: Option<usize>,
 }
 
 impl OutputIndex {
-    fn new(select: &Select, dialect: Option<DialectType>) -> Self {
+    fn new(select: &Select, dialect: Option<DialectType>, stored_names: bool) -> Self {
         let mut index = Self {
+            stored_names,
             names: HashMap::new(),
             ordinals: Vec::new(),
             wildcard_start: None,
@@ -2974,7 +3019,11 @@ impl OutputIndex {
                     if ordinal.is_some() {
                         index.ordinals.push(entry.projection_index);
                     }
-                    Some(normalize_column_name(&name, dialect))
+                    Some(if stored_names {
+                        name
+                    } else {
+                        normalize_column_name(&name, dialect)
+                    })
                 }
                 OutputColumn::Unnamed { ordinal } => {
                     if ordinal.is_some() {
@@ -3008,7 +3057,12 @@ impl OutputIndex {
     ) -> Result<Expression> {
         match column {
             ColumnRef::Name(name) => {
-                match self.names.get(&normalize_column_name(name, dialect)) {
+                let key = if self.stored_names {
+                    name.to_string()
+                } else {
+                    normalize_column_name(name, dialect)
+                };
+                match self.names.get(&key) {
                     Some(Some(index)) => return Ok(select.expressions[*index].clone()),
                     Some(None) => {
                         return Err(name_resolution_error(
@@ -3321,6 +3375,7 @@ fn find_prior_select_alias_expr(
     target_expr: &Expression,
     alias_name: &str,
     dialect: Option<DialectType>,
+    stored_names: bool,
 ) -> Option<Expression> {
     let Expression::Select(select) = scope_expr else {
         return None;
@@ -3333,7 +3388,12 @@ fn find_prior_select_alias_expr(
         }
 
         if let Expression::Alias(alias) = expr {
-            if normalize_column_name(&alias.alias.name, dialect) == normalized_alias {
+            let matches = if stored_names {
+                alias.alias.name == alias_name
+            } else {
+                normalize_column_name(&alias.alias.name, dialect) == normalized_alias
+            };
+            if matches {
                 return Some(alias.this.clone());
             }
         }
@@ -3722,7 +3782,7 @@ fn find_column_refs_in_expr(
     dialect: Option<DialectType>,
 ) -> Vec<SimpleColumnRef> {
     let mut refs = Vec::new();
-    collect_column_refs(expr, dialect, &mut refs, None);
+    collect_column_refs(expr, dialect, &mut refs, None, None);
     refs
 }
 
@@ -3730,13 +3790,21 @@ fn find_column_refs_in_expr_with_select(
     expr: &Expression,
     select_expr: &Expression,
     dialect: Option<DialectType>,
+    scope: &Scope,
+    schema: Option<&dyn Schema>,
 ) -> Vec<SimpleColumnRef> {
     let named_windows = match select_expr {
         Expression::Select(select) => select.windows.as_deref(),
         _ => None,
     };
     let mut refs = Vec::new();
-    collect_column_refs(expr, dialect, &mut refs, named_windows);
+    collect_column_refs(
+        expr,
+        dialect,
+        &mut refs,
+        named_windows,
+        Some((scope, schema)),
+    );
     refs
 }
 
@@ -3755,6 +3823,7 @@ fn collect_column_refs(
     dialect: Option<DialectType>,
     refs: &mut Vec<SimpleColumnRef>,
     named_windows: Option<&[NamedWindow]>,
+    sources: Option<(&Scope, Option<&dyn Schema>)>,
 ) {
     let mut stack: Vec<&Expression> = vec![expr];
 
@@ -3963,6 +4032,52 @@ fn collect_column_refs(
                 crate::ast_children::for_each_child(aggregate, |_, child| stack.push(child));
             }
 
+            Expression::Function(func)
+                if dialect == Some(DialectType::Snowflake)
+                    && ["OBJECT_CONSTRUCT", "HASH", "OBJECT_CONSTRUCT_KEEP_NULL"]
+                        .iter()
+                        .any(|name| func.name.eq_ignore_ascii_case(name)) =>
+            {
+                for arg in &func.args {
+                    let (qualifier, star) = match arg {
+                        Expression::Star(star) => (star.table.as_ref(), Some(star)),
+                        Expression::Column(c) if c.name.name == "*" && !c.name.quoted => {
+                            (c.table.as_ref(), None)
+                        }
+                        _ => {
+                            stack.push(arg);
+                            continue;
+                        }
+                    };
+                    if let Some((scope, schema)) = sources {
+                        let empty =
+                            crate::schema::MappingSchema::with_dialect(DialectType::Snowflake);
+                        let mut resolver =
+                            crate::resolver::Resolver::new(scope, schema.unwrap_or(&empty), false);
+                        for table in source_names_from_from_join(scope) {
+                            if qualifier.is_some_and(|q| {
+                                if q.quoted {
+                                    q.name != table
+                                } else {
+                                    !q.name.eq_ignore_ascii_case(&table)
+                                }
+                            }) {
+                                continue;
+                            }
+                            for column in resolver.get_source_columns(&table).unwrap_or_default() {
+                                if column != "*"
+                                    && !star.is_some_and(|s| s.excludes(&column, dialect))
+                                {
+                                    refs.push(SimpleColumnRef {
+                                        table: Some(Identifier::new(&table)),
+                                        column,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Expression::Function(func) => {
                 for arg in &func.args {
                     stack.push(arg);
@@ -4597,7 +4712,7 @@ mod tests {
                 let Expression::Select(select) = expression else {
                     unreachable!()
                 };
-                let index = OutputIndex::new(&select, Some(dialect));
+                let index = OutputIndex::new(&select, Some(dialect), false);
                 for name in ["a", "b", "x", "*", "MiXeD", "missing"] {
                     assert_eq!(
                         index
@@ -7880,7 +7995,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
     #[test]
     fn test_lineage_pivot_output_reads_aggregation_and_field() {
         let expr = parse_dialect(
-            "SELECT order_id, card FROM (SELECT order_id, method, amount FROM payments) \
+            "SELECT order_id, \"'card'\" AS card FROM (SELECT order_id, method, amount FROM payments) \
              PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
             DialectType::Snowflake,
         );

@@ -1872,7 +1872,7 @@ fn test_analyze_query_pivot_over_cte_470() {
                     .unwrap()
                     .iter()
                     .any(|reference| reference["table"] == "staged_orders"
-                        && reference["column"] == "customer_id"));
+                        && reference["column"] == "CUSTOMER_ID"));
             }
         }
     }

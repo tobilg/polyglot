@@ -436,6 +436,7 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
                             }));
                         let mut new_select = crate::expressions::Select::new();
                         new_select.expressions = vec![Expression::Star(crate::expressions::Star {
+                            ilike: None,
                             table: None,
                             except: None,
                             replace: None,
@@ -490,6 +491,7 @@ pub(super) fn normalize_root(expression: Expression, context: &NormalizationCont
                         };
                         let mut anchor = Select::new();
                         anchor.expressions = vec![Expression::Star(Star {
+                            ilike: None,
                             table: None,
                             except: None,
                             replace: None,
@@ -766,6 +768,7 @@ pub(super) fn rewrite(
                         // Build: SELECT * FROM b LIMIT 0
                         let select = Expression::Select(Box::new(crate::expressions::Select {
                             expressions: vec![Expression::Star(crate::expressions::Star {
+                                ilike: None,
                                 table: None,
                                 except: None,
                                 replace: None,
@@ -811,6 +814,7 @@ pub(super) fn rewrite(
                         // Build: SELECT TOP 0 * INTO a FROM b AS temp
                         let select = Expression::Select(Box::new(crate::expressions::Select {
                             expressions: vec![Expression::Star(crate::expressions::Star {
+                                ilike: None,
                                 table: None,
                                 except: None,
                                 replace: None,

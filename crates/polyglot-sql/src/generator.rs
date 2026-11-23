@@ -5285,6 +5285,7 @@ impl Generator {
 
                 // Build the outer select: SELECT * EXCLUDE (cols) FROM (inner)
                 let star = Expression::Star(crate::expressions::Star {
+                    ilike: None,
                     table: None,
                     except: Some(
                         exclude
@@ -7828,6 +7829,7 @@ impl Generator {
         let mut outer_select = Select {
             vertica: None,
             expressions: vec![Expression::Star(Star {
+                ilike: None,
                 table: None,
                 except: None,
                 replace: None,
@@ -19146,6 +19148,13 @@ impl Generator {
             self.write(".");
         }
         self.write("*");
+
+        if let Some(pattern) = &star.ilike {
+            self.write_space();
+            self.write_keyword("ILIKE");
+            self.write_space();
+            self.generate_literal(&Literal::String(pattern.clone()))?;
+        }
 
         // Generate EXCLUDE/EXCEPT clause based on dialect
         if let Some(except) = &star.except {

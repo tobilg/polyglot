@@ -182,6 +182,7 @@ fn wrap_table_in_subquery(table: TableRef, alias_name: &str) -> Expression {
     // Build: SELECT * FROM <table>
     let inner_select = Select::new()
         .column(Expression::Star(Star {
+            ilike: None,
             table: None,
             except: None,
             replace: None,

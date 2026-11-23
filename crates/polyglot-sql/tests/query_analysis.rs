@@ -50,7 +50,7 @@ fn lateral_flatten_inputs_affect_rows_and_generated_values() {
             Some("s.t"),
             "{sql}"
         );
-        assert_eq!(reference.reference.column, "items");
+        assert_eq!(reference.reference.column, "ITEMS");
         assert_eq!(
             reference.reference.confidence,
             ReferenceConfidence::Resolved
@@ -60,13 +60,13 @@ fn lateral_flatten_inputs_affect_rows_and_generated_values() {
 
         let key = &analysis.projections[0].upstream;
         assert_eq!(key.len(), 1);
-        assert_eq!(key[0].column, "k");
+        assert_eq!(key[0].column, "K");
         assert_eq!(key[0].path_transform_kind, Some(TransformKind::Direct));
         assert!(key[0].path_functions.is_empty());
         let value = &analysis.projections[1].upstream;
         assert_eq!(value.len(), 1);
         assert_eq!(value[0].source_name.as_deref(), Some("s.t"));
-        assert_eq!(value[0].column, "items");
+        assert_eq!(value[0].column, "ITEMS");
         assert_eq!(
             value[0].path_transform_kind,
             Some(TransformKind::Expression)
@@ -204,7 +204,7 @@ fn commented_columns_keep_their_output_names_and_lineage() {
             )
             .unwrap();
             let output = &analysis.projections[0];
-            assert_eq!(output.name.as_deref(), Some("a"), "{sql}");
+            assert_eq!(output.name.as_deref(), Some("A"), "{sql}");
             assert_eq!(output.upstream.len(), 1, "{sql}");
             assert_eq!(
                 output.upstream[0].source_name.as_deref(),
@@ -809,6 +809,25 @@ fn analyze_query_column_uses_resolve_chained_ctes_and_correlated_scopes() {
             .iter()
             .any(|fact| fact.scope_path == "root.ctes[1]"));
     }
+}
+
+#[test]
+fn scalar_subquery_filters_identify_their_parent_projection() {
+    let subquery = "(SELECT MAX(id) FROM customers WHERE id > 0)";
+    let sql = format!("SELECT id, {subquery} AS first, 1 + {subquery} AS second FROM orders");
+    let analysis = column_use_analysis(&sql, true);
+    let paths: Vec<_> = analysis
+        .column_uses
+        .iter()
+        .map(|fact| fact.scope_path.as_str())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "root.expressions[1].subqueries[0]",
+            "root.expressions[2].subqueries[1]"
+        ]
+    );
 }
 
 #[test]
@@ -1920,6 +1939,54 @@ fn path_function_names_preserve_quoted_identity() {
 }
 
 #[test]
+fn outer_join_using_traces_the_preserved_key() {
+    let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
+        {"name":"t","columns":[{"name":"k","type":"INT"}]},
+        {"name":"u","columns":[{"name":"k","type":"INT"}]},
+        {"name":"v","columns":[{"name":"k","type":"INT"}]}
+    ]}))
+    .unwrap();
+    for dialect in [DialectType::Snowflake, DialectType::DuckDB] {
+        for (joins, sources) in [
+            ("LEFT JOIN u USING(k)", vec!["t"]),
+            ("RIGHT JOIN u USING(k)", vec!["u"]),
+            ("FULL JOIN u USING(k)", vec!["t", "u"]),
+            ("RIGHT JOIN u USING(k) LEFT JOIN v USING(k)", vec!["u"]),
+            ("FULL JOIN u USING(k) LEFT JOIN v USING(k)", vec!["t", "u"]),
+        ] {
+            for selection in ["k", "*"] {
+                let sql = format!("SELECT {selection} FROM t {joins}");
+                let analysis = analyze_query(
+                    &sql,
+                    AnalyzeQueryOptions {
+                        dialect,
+                        schema: Some(schema.clone()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(analysis.projections.len(), 1, "{sql}");
+                let upstream = &analysis.projections[0].upstream;
+                let mut actual: Vec<_> = upstream
+                    .iter()
+                    .map(|r| r.source_name.as_deref().unwrap())
+                    .collect();
+                actual.sort_unstable();
+                assert_eq!(actual, sources, "{sql}");
+                if sources.len() == 1 {
+                    assert_eq!(
+                        upstream[0].path_transform_kind,
+                        Some(TransformKind::Direct),
+                        "{sql}"
+                    );
+                }
+                assert_eq!(analysis.column_uses[0].references.len(), 2, "{sql}");
+            }
+        }
+    }
+}
+
+#[test]
 fn qualified_stars_project_direct_using_keys() {
     let schema: ValidationSchema = serde_json::from_value(json!({"tables": [
         {"name":"t","columns":[{"name":"k","type":"INT"},{"name":"a","type":"INT"}]},
@@ -2030,7 +2097,7 @@ fn star_exclusion_matches_escaped_qualified_identifiers() {
     )
     .unwrap();
     assert_eq!(analysis.projections.len(), 1, "{:?}", analysis.projections);
-    assert_eq!(analysis.projections[0].name.as_deref(), Some("keep"));
+    assert_eq!(analysis.projections[0].name.as_deref(), Some("KEEP"));
 }
 
 #[test]
@@ -2225,17 +2292,19 @@ fn analyze_query_reports_name_aligned_set_operation_outputs() {
         )
         .unwrap_or_else(|error| panic!("analysis failed for {dialect:?}: {error}"));
 
-        assert_eq!(
-            analysis.set_operations[0].output_columns,
-            vec!["left_value", "right_value"]
-        );
+        let expected = if dialect == DialectType::Snowflake {
+            ["LEFT_VALUE", "RIGHT_VALUE"]
+        } else {
+            ["left_value", "right_value"]
+        };
+        assert_eq!(analysis.set_operations[0].output_columns, expected);
         assert_eq!(
             analysis
                 .projections
                 .iter()
                 .map(|projection| projection.name.as_deref())
                 .collect::<Vec<_>>(),
-            vec![Some("left_value"), Some("right_value")]
+            expected.map(Some)
         );
         assert!(analysis
             .projections
@@ -3518,7 +3587,7 @@ fn analyze_query_resolves_snowflake_identifier_tables() {
         );
         let upstream = &analysis.projections[0].upstream;
         assert_eq!(upstream.len(), 1, "{sql}: {upstream:?}");
-        assert_eq!(upstream[0].column, "id", "{sql}");
+        assert_eq!(upstream[0].column, "ID", "{sql}");
         assert_eq!(
             upstream[0].confidence,
             ReferenceConfidence::Resolved,

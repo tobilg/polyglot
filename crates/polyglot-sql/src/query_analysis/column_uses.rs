@@ -33,7 +33,7 @@ pub(super) fn collect(
 struct Frame<'a> {
     path: String,
     selected: Scope,
-    lineage: &'a ScopedLineage,
+    lineage: &'a ScopedLineage<'a>,
     subqueries: Vec<Expression>,
 }
 
@@ -55,7 +55,12 @@ impl Collector<'_> {
         inherited_ctes: &[Scope],
         filter_branch: bool,
     ) {
-        let lineage = ScopedLineage::new(prepared.clone(), inherited_ctes, self.dialect);
+        let lineage = ScopedLineage::new(
+            prepared.clone(),
+            inherited_ctes,
+            self.dialect,
+            Some(self.schema),
+        );
         let frame = Frame {
             path: path.to_string(),
             selected: selected_reference_scope(original),
@@ -71,6 +76,7 @@ impl Collector<'_> {
         if let Expression::Select(select) = query {
             self.table_function_inputs(select, &frame, ancestors);
             self.implicit_joins(select, path, &frame, ancestors);
+            self.pivot_column_uses(prepared, &frame);
             if select
                 .group_by
                 .as_ref()
@@ -131,10 +137,14 @@ impl Collector<'_> {
                 });
                 let lateral_outer: Vec<_> =
                     lateral.iter().chain(ancestors.iter().copied()).collect();
+                let child_path = match child.parent_projection {
+                    Some(projection) => format!("{path}.expressions[{projection}].{kind}[{index}]"),
+                    None => format!("{path}.{kind}[{index}]"),
+                };
                 self.scope(
                     child,
                     qualified,
-                    &format!("{path}.{kind}[{index}]"),
+                    &child_path,
                     if correlated { &outer } else { &lateral_outer },
                     &ctes,
                     is_filter,
@@ -346,6 +356,14 @@ impl Collector<'_> {
         frame: &Frame,
         ancestors: &[&Frame],
     ) -> Vec<ColumnUseReferenceFact> {
+        let mut folded;
+        let column = if self.dialect == DialectType::Snowflake && !column.name.quoted {
+            folded = column.clone();
+            folded.name.name.make_ascii_uppercase();
+            &folded
+        } else {
+            column
+        };
         let span = column.span.or(column.name.span).map(source_span);
         let mut local = Resolver::new(&frame.selected, self.schema, false);
         if let Some(qualifier) = &column.table {
@@ -582,6 +600,75 @@ impl Collector<'_> {
         }
     }
 
+    fn pivot_column_uses(&mut self, prepared: &Scope, frame: &Frame) {
+        let Expression::Select(select) = scope_query(&prepared.expression) else {
+            return;
+        };
+        let resolver = Resolver::new(prepared, self.schema, false);
+        let from = select
+            .from
+            .iter()
+            .flat_map(|from| &from.expressions)
+            .enumerate()
+            .map(|(i, relation)| (relation, "from.expressions", i, ""));
+        let joins = select
+            .joins
+            .iter()
+            .enumerate()
+            .map(|(i, join)| (&join.this, "joins", i, ".this"));
+        for (relation, field, index, suffix) in from.chain(joins) {
+            if let Expression::Unpivot(unpivot) = relation {
+                if unpivot.include_nulls != Some(true) {
+                    for (entry_index, entry) in unpivot.columns.iter().enumerate() {
+                        let operand = match entry {
+                            Expression::PivotAlias(alias) => &alias.this,
+                            other => other,
+                        };
+                        let references = frame
+                            .lineage
+                            .unpivot_entry_inputs(&unpivot.this, operand)
+                            .iter()
+                            .flat_map(|node| {
+                                self.lineage_references(node, expression_span(operand), true)
+                            })
+                            .collect();
+                        self.facts.push(ColumnUseFact {
+                            context: ColumnUseContext::Filter,
+                            scope_path: frame.path.clone(),
+                            expression_path: format!(
+                                "{field}[{index}]{suffix}.columns[{entry_index}]"
+                            ),
+                            expression_sql: self.sql(operand),
+                            span: expression_span(operand),
+                            references,
+                        });
+                    }
+                }
+                continue;
+            }
+            let Expression::Pivot(pivot) = relation else {
+                continue;
+            };
+            if pivot.unpivot || pivot.group.is_some() {
+                continue;
+            }
+            for key in resolver
+                .pivot_implicit_group_columns(pivot)
+                .unwrap_or_default()
+            {
+                let node = frame.lineage.pivot_input(&pivot.this, &key);
+                self.facts.push(ColumnUseFact {
+                    context: ColumnUseContext::Group,
+                    scope_path: frame.path.clone(),
+                    expression_path: format!("{field}[{index}]{suffix}"),
+                    expression_sql: key,
+                    span: None,
+                    references: self.lineage_references(&node, None, true),
+                });
+            }
+        }
+    }
+
     fn implicit_groups(
         &mut self,
         select: &crate::expressions::Select,
@@ -601,12 +688,7 @@ impl Collector<'_> {
         };
         for (index, projection) in projections.iter().enumerate() {
             let key = unwrap_projection_alias(projection);
-            if matches!(key, Expression::Literal(_))
-                || crate::scope::walk_in_scope(key, false).any(|node| {
-                    crate::traversal::is_aggregate(node)
-                        || crate::traversal::is_window_function(node)
-                })
-            {
+            if !crate::scope::implicit_group_key(key) {
                 continue;
             }
             let references = if projection_is_star(key) {

@@ -513,12 +513,12 @@ fn apply_output_column_names(
     }
 }
 
-fn input_fields_for_output(
+fn input_fields_for_output<'a>(
     query: &Expression,
-    lineage: &mut Option<Result<lineage::ScopedLineage>>,
+    lineage: &mut Option<Result<lineage::ScopedLineage<'a>>>,
     output_field: &OutputField,
     options: &OpenLineageOptions,
-    schema: Option<&dyn Schema>,
+    schema: Option<&'a dyn Schema>,
     warnings: &mut Vec<OpenLineageWarning>,
 ) -> Result<Vec<OpenLineageInputField>> {
     if let Some(table) = &output_field.star_source_table {
@@ -1688,8 +1688,8 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
                 "SELECT * FROM (SELECT order_id, method, amount FROM s.payments) \
                  PIVOT (SUM(amount) FOR method IN ('card', 'coupon')) AS p",
                 vec![
-                    ("card", vec!["amount", "method"]),
-                    ("coupon", vec!["amount", "method"]),
+                    ("'card'", vec!["amount", "method"]),
+                    ("'coupon'", vec!["amount", "method"]),
                     ("order_id", vec!["order_id"]),
                 ],
             ),
@@ -1698,7 +1698,7 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
                  UNPIVOT (name_value FOR name_kind IN (first_name, last_name))",
                 vec![
                     ("customer_id", vec!["customer_id"]),
-                    ("name_kind", vec!["first_name", "last_name"]),
+                    ("name_kind", vec![]),
                     ("name_value", vec!["first_name", "last_name"]),
                 ],
             ),

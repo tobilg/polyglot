@@ -4,6 +4,58 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.14.4] - 2026-11-22
+
+### Added
+
+- Snowflake wildcard projections support `ILIKE` patterns, including qualified
+  stars such as `t.* ILIKE 'sales_%'`. Query analysis applies the pattern before
+  `REPLACE` and `RENAME` when expanding known columns.
+  ([#561](https://github.com/tobilg/polyglot/issues/561))
+
+### Changed
+
+- Column-use facts inside a scalar subquery in the select list now identify the
+  containing projection in `scopePath`. For example, a subquery in the second
+  projection reports `root.expressions[1].subqueries[0]`.
+  ([#562](https://github.com/tobilg/polyglot/issues/562))
+
+### Fixed
+
+- Snowflake lineage traces wildcard inputs to `OBJECT_CONSTRUCT` and `HASH`
+  back to their source columns, including qualified inputs such as `t.*`.
+  ([#556](https://github.com/tobilg/polyglot/issues/556))
+- Snowflake schema validation resolves columns through aliases on
+  `TABLE(FLATTEN(...))` and `TABLE(SPLIT_TO_TABLE(...))`. Query analysis
+  expands qualified stars over these functions in their declared column order,
+  including in lateral queries without a supplied schema.
+  ([#557](https://github.com/tobilg/polyglot/issues/557), [#567](https://github.com/tobilg/polyglot/issues/567))
+- Snowflake query analysis folds unquoted column names and aliases to uppercase
+  and preserves quoted names, so `id` and `"id"` retain distinct lineage through CTEs.
+  ([#558](https://github.com/tobilg/polyglot/issues/558))
+- Query analysis reports the input columns that `PIVOT` implicitly groups by,
+  including when pivot values are determined dynamically.
+  ([#559](https://github.com/tobilg/polyglot/issues/559))
+- Snowflake and DuckDB `UNPIVOT` lineage distinguishes generated labels from
+  values read from source columns. Query analysis also reports the implicit
+  null filter when the operation excludes nulls.
+  ([#560](https://github.com/tobilg/polyglot/issues/560))
+- A merged `USING` key traces directly to the preserved side of a left or
+  right outer join. Full outer joins retain both sources.
+  ([#563](https://github.com/tobilg/polyglot/issues/563))
+- Grouping validation accepts columns that order aggregate inputs, such as
+  `LISTAGG(b, ',') WITHIN GROUP (ORDER BY a)`. For `GROUP BY ALL`, validation
+  infers the grouping keys and flags ungrouped references in clauses such as `HAVING`.
+  ([#564](https://github.com/tobilg/polyglot/issues/564), [#565](https://github.com/tobilg/polyglot/issues/565))
+- Snowflake query analysis uses expression text for unaliased output headings
+  and retains single quotes in headings generated from string-valued `PIVOT`
+  labels. A plain `SELECT` preserves duplicate headings.
+  ([#566](https://github.com/tobilg/polyglot/issues/566))
+- With `check_types` enabled, schema validation detects column-count
+  mismatches in `IN` and `NOT IN` subqueries, including a scalar compared
+  with a two-column result. Row comparisons with matching widths remain valid.
+  ([#568](https://github.com/tobilg/polyglot/issues/568))
+
 ## [0.14.3] - 2026-11-20
 
 ### Added
@@ -2448,6 +2500,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.14.4]: https://github.com/tobilg/polyglot/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/tobilg/polyglot/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/tobilg/polyglot/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/tobilg/polyglot/compare/v0.14.0...v0.14.1

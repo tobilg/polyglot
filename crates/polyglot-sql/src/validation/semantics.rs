@@ -144,12 +144,7 @@ fn grouping(
                 .iter()
                 .any(|e| ordinary_aggregate(&e.this))
         });
-    if !aggregate_query
-        || select
-            .group_by
-            .as_ref()
-            .is_some_and(|g| g.all == Some(true) && g.expressions.is_empty())
-    {
+    if !aggregate_query {
         return;
     }
     let key =
@@ -190,6 +185,32 @@ fn grouping(
                 | Expression::Tuple(_)
         ) {
             pending.extend(node.children());
+        }
+    }
+    let mut grouped_stars = Vec::new();
+    if select
+        .group_by
+        .as_ref()
+        .is_some_and(|g| g.all == Some(true) && g.expressions.is_empty())
+    {
+        for projection in select.expressions.iter().map(unalias) {
+            match projection {
+                Expression::Star(star) => {
+                    grouped_stars.push((star.table.as_ref().map(&key), Some(star)));
+                    groups.extend(
+                        star.replace
+                            .iter()
+                            .flatten()
+                            .map(|alias| &alias.this)
+                            .filter(|e| crate::scope::implicit_group_key(e)),
+                    );
+                }
+                Expression::Column(column) if column.name.name == "*" => {
+                    grouped_stars.push((column.table.as_ref().map(&key), None));
+                }
+                expr if crate::scope::implicit_group_key(expr) => groups.push(expr),
+                _ => {}
+            }
         }
     }
     let mut column_key = |column: &Column| {
@@ -292,11 +313,24 @@ fn grouping(
         let mut pending = vec![unalias(projection)];
         let mut expanded = HashSet::new();
         while let Some(node) = pending.pop() {
-            if boundary(node) || is_aggregate(node) || groups.iter().any(|group| *group == node) {
+            if boundary(node)
+                || is_aggregate(node)
+                || matches!(node, Expression::WithinGroup(group) if is_aggregate(&group.this))
+                || groups.iter().any(|group| *group == node)
+            {
                 continue;
             }
             if let Expression::Column(column) = node {
-                if grouped_columns.contains(&column_key(column)) {
+                let binding = column_key(column);
+                if grouped_columns.contains(&binding)
+                    || grouped_stars.iter().any(|(table, star)| {
+                        (table.is_none() || binding.0.is_none() || table == &binding.0)
+                            && star.is_none_or(|star| {
+                                !star.excludes(&column.name.name, Some(dialect))
+                                    && star.replacement(&column.name.name, Some(dialect)).is_none()
+                            })
+                    })
+                {
                     continue;
                 }
                 if allow_aliases && column.table.is_none() {
