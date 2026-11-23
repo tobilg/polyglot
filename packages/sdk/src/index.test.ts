@@ -880,7 +880,7 @@ describe('Polyglot SDK', () => {
       const result = analyzeQuery(sql, options);
       expect(result.success).toBe(true);
       expect(result.analysis?.projections[0]).toMatchObject({
-        name: 'amount',
+        name: 'AMOUNT',
         transformKind: 'direct',
         castType: null,
         typeHint: 'INT',
