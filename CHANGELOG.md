@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [0.14.4] - 2026-11-22
+## [0.14.4] - 2026-11-23
 
 ### Added
 
@@ -15,6 +15,12 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Changed
 
+- Query analysis uses less memory for chains of CTEs that repeatedly read the
+  same columns and for wide unions over many CTEs.
+  ([#555](https://github.com/tobilg/polyglot/pull/555))
+- The Rust `transpile` feature now enables `semantic` so the transpiler can
+  resolve operand types through CTEs and derived tables.
+  ([#532](https://github.com/tobilg/polyglot/pull/532))
 - Column-use facts inside a scalar subquery in the select list now identify the
   containing projection in `scopePath`. For example, a subquery in the second
   projection reports `root.expressions[1].subqueries[0]`.
@@ -22,6 +28,21 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- Generic `DATE_TRUNC` transpiles to Spark and Databricks `DATE_TRUNC` for
+  `DAY`, `DD`, and sub-day units, including milliseconds and microseconds.
+  Previously these units could produce `NULL` because the generated SQL used `TRUNC`.
+  ([#531](https://github.com/tobilg/polyglot/pull/531))
+- SQLite-to-DuckDB division preserves both integer and fractional results,
+  including `7 / 2 = 3` and `7.0 / 2 = 3.5`.
+  PostgreSQL-to-SQLite division preserves fractional results for known decimal
+  operands, including columns projected through CTEs and derived tables.
+  T-SQL-to-SQLite division respects the integer result types of `NULLIF` and
+  `AVG` when their first argument is an integer.
+  ([#532](https://github.com/tobilg/polyglot/pull/532))
+- DuckDB-to-SQLite transpilation accepts both argument orders for `STRFTIME`
+  and emits the format first. Positional parameters keep their original
+  bindings when the arguments swap.
+  ([#533](https://github.com/tobilg/polyglot/pull/533))
 - Snowflake lineage traces wildcard inputs to `OBJECT_CONSTRUCT` and `HASH`
   back to their source columns, including qualified inputs such as `t.*`.
   ([#556](https://github.com/tobilg/polyglot/issues/556))
@@ -2500,7 +2521,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[0.14.4]: https://github.com/tobilg/polyglot/compare/v0.14.3...v0.14.4
+[0.14.4]: https://github.com/tobilg/polyglot/compare/v0.14.3...main
 [0.14.3]: https://github.com/tobilg/polyglot/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/tobilg/polyglot/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/tobilg/polyglot/compare/v0.14.0...v0.14.1
