@@ -312,6 +312,28 @@ impl DialectType {
                 | DialectType::Spark
         )
     }
+
+    /// Whether `/` between two integers truncates in this dialect (`7 / 2` is 3).
+    /// Elsewhere `/` divides fractionally (`7 / 2` is 3.5).
+    pub(crate) const fn truncates_integer_division(self) -> bool {
+        matches!(
+            self,
+            DialectType::SQLite
+                | DialectType::PostgreSQL
+                | DialectType::Redshift
+                | DialectType::Materialize
+                | DialectType::RisingWave
+                | DialectType::TSQL
+                | DialectType::Fabric
+                | DialectType::Teradata
+                | DialectType::Drill
+                | DialectType::Dremio
+                | DialectType::Presto
+                | DialectType::Trino
+                | DialectType::Athena
+                | DialectType::Dune
+        )
+    }
 }
 
 impl Default for DialectType {

@@ -93,7 +93,7 @@ pub(super) fn normalize(
     };
     let expr = statements::normalize_root(expr, &context);
 
-    transform_recursive(expr, &|e| {
+    let expr = transform_recursive(expr, &|e| {
         // Source-bound nodes share the ordinary AST categories, but their lowering
         // must retain the semantics recorded by the parser through serialization.
         if e.source_dialect().is_some()
@@ -3031,7 +3031,7 @@ pub(super) fn normalize(
                 }
                 // Safe-division source -> non-safe target: NULLIF wrapping and/or CAST
                 // Safe-division dialects: MySQL, DuckDB, SingleStore, TiDB, ClickHouse, Doris
-                Expression::Div(ref op)
+                Expression::Div(_)
                     if matches!(
                         source,
                         DialectType::MySQL
@@ -3059,13 +3059,7 @@ pub(super) fn normalize(
                             | DialectType::RisingWave
                     ) =>
                 {
-                    // Only wrap if RHS is not already NULLIF
-                    if !matches!(&op.right, Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF"))
-                    {
-                        Action::Operators(operators::Action::MySQLSafeDivide)
-                    } else {
-                        Action::None
-                    }
+                    Action::Operators(operators::Action::MySQLSafeDivide)
                 }
                 // ALTER TABLE ... RENAME TO <schema>.<table> -> strip schema for most targets
                 // For TSQL/Fabric, convert to sp_rename instead
@@ -4166,7 +4160,15 @@ pub(super) fn normalize(
         };
 
         Ok(outcome.into_expression())
-    })
+    })?;
+
+    // Division that was fractional in the source must stay fractional in SQLite,
+    // including division introduced above (e.g. by SAFE_DIVIDE).
+    if target == DialectType::SQLite && source != DialectType::SQLite {
+        operators::cast_division_to_real(expr, source.truncates_integer_division())
+    } else {
+        Ok(expr)
+    }
 }
 
 /// Convert source format models while quoted literal text is still available.
