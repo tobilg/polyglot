@@ -1179,6 +1179,7 @@ pub(crate) struct ScopedLineage<'a> {
     dialect: Option<DialectType>,
 }
 
+#[cfg(feature = "openlineage")]
 impl<'a> ScopedLineage<'a> {
     /// Prepare and scope `sql` once, for the lineage of many output columns.
     /// Each column gets the result of `lineage_with_schema` (with a schema)
