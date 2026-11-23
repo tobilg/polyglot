@@ -2,7 +2,7 @@
 //! `TRUNC(date, fmt)` only takes YEAR, QUARTER, MONTH and WEEK (and their
 //! abbreviations) and returns NULL for any other unit, so `TRUNC(x, 'DAY')`
 //! is NULL on Spark 4.0.1. Those units keep `TRUNC`; every other unit is
-//! written as `DATE_TRUNC(unit, x)`, which Spark takes for every unit.
+//! written as `DATE_TRUNC(unit, x)`, which supports DAY/DD and sub-day units.
 use polyglot_sql::DialectType;
 
 fn transpile(sql: &str, source: DialectType, target: DialectType) -> String {
@@ -14,7 +14,16 @@ fn transpile(sql: &str, source: DialectType, target: DialectType) -> String {
 #[test]
 fn units_spark_trunc_lacks_become_date_trunc() {
     for target in [DialectType::Spark, DialectType::Databricks] {
-        for unit in ["day", "DAY", "hour", "minute", "second"] {
+        for unit in [
+            "day",
+            "DAY",
+            "hour",
+            "minute",
+            "second",
+            "DD",
+            "millisecond",
+            "microsecond",
+        ] {
             let upper = unit.to_ascii_uppercase();
             assert_eq!(
                 transpile(
@@ -32,7 +41,9 @@ fn units_spark_trunc_lacks_become_date_trunc() {
 #[test]
 fn units_spark_trunc_takes_stay_trunc() {
     for target in [DialectType::Spark, DialectType::Databricks] {
-        for unit in ["year", "quarter", "month", "week", "MM", "yyyy"] {
+        for unit in [
+            "year", "quarter", "month", "week", "MM", "yyyy", "YY", "MON",
+        ] {
             let upper = unit.to_ascii_uppercase();
             assert_eq!(
                 transpile(
@@ -54,5 +65,18 @@ fn spark_date_trunc_round_trips() {
             transpile("SELECT DATE_TRUNC('HOUR', ts) FROM t", target, target),
             "SELECT DATE_TRUNC('HOUR', ts) FROM t"
         );
+    }
+}
+
+#[test]
+fn nullable_spark_date_trunc_arguments() {
+    for target in [DialectType::Spark, DialectType::Databricks] {
+        for sql in [
+            "SELECT DATE_TRUNC(NULL, ts) FROM t",
+            "SELECT DATE_TRUNC('DAY', NULL)",
+            "SELECT DATE_TRUNC('INVALID', ts) FROM t",
+        ] {
+            assert_eq!(transpile(sql, DialectType::Generic, target), sql);
+        }
     }
 }

@@ -2030,8 +2030,8 @@ pub(super) fn rewrite(
                                 ))))
                             }
                             DialectType::Spark | DialectType::Databricks => {
-                                // Spark's TRUNC returns NULL for any other unit (DAY, HOUR,
-                                // ...); DATE_TRUNC('UNIT', x) takes them all.
+                                // DATE_TRUNC supports DAY/DD and finer timestamp units.
+                                // Unsupported units yield NULL.
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "DATE_TRUNC".to_string(),
                                     vec![Expression::string(&unit_str), expr_arg],

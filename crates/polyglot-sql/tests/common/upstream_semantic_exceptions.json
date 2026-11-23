@@ -844,7 +844,7 @@
     "target": "spark",
     "sql": "DATE_TRUNC('DAY', x)",
     "upstream_expected": "TRUNC(x, 'DAY')",
-    "reason": "Spark's TRUNC takes only YEAR, QUARTER, MONTH and WEEK and returns NULL for DAY; DATE_TRUNC takes every unit. https://spark.apache.org/docs/latest/api/sql/index.html#trunc https://spark.apache.org/docs/latest/api/sql/index.html#date_trunc",
+    "reason": "Spark's TRUNC takes only YEAR, QUARTER, MONTH and WEEK and returns NULL for DAY; DATE_TRUNC supports DAY/DD and finer timestamp units and returns NULL for unsupported units. https://spark.apache.org/docs/latest/api/sql/index.html#trunc https://spark.apache.org/docs/latest/api/sql/index.html#date_trunc",
     "vendor_expected": "DATE_TRUNC('DAY', x)"
   }
 ]
