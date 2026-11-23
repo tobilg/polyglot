@@ -1764,7 +1764,13 @@ fn is_float_cast(expr: &Expression) -> bool {
 /// Whether `expr` has an exact decimal type: a CAST to DECIMAL/NUMERIC, or an
 /// expression that keeps such an operand's type (parentheses, sign, arithmetic,
 /// NULLIF, COALESCE, GREATEST/LEAST, ABS, CASE, aggregates), or a decimal literal.
-fn is_decimal_typed(expr: &Expression) -> bool {
+fn is_decimal_typed(expr: &Expression, source: DialectType) -> bool {
+    let is_decimal_typed = |expr: &Expression| is_decimal_typed(expr, source);
+    let promotes_nullif = matches!(
+        source,
+        DialectType::PostgreSQL | DialectType::Materialize | DialectType::RisingWave
+    );
+    let is_tsql = matches!(source, DialectType::TSQL | DialectType::Fabric);
     match expr {
         Expression::Cast(cast) => match &cast.to {
             DataType::Decimal { .. } => true,
@@ -1785,11 +1791,15 @@ fn is_decimal_typed(expr: &Expression) -> bool {
         Expression::Literal(lit) => {
             matches!(lit.as_ref(), Literal::Number(n) if n.contains(['.', 'e', 'E']))
         }
-        // NULLIF compares its arguments, so a numeric second argument promotes the first.
-        Expression::NullIf(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
-        Expression::Nullif(f) => is_decimal_typed(&f.this) || is_decimal_typed(&f.expression),
-        // AVG of integers is numeric; SUM, MIN and MAX keep their argument's type.
-        Expression::Avg(_) => true,
+        // PostgreSQL promotes the first operand to the comparison type.
+        Expression::NullIf(f) => {
+            is_decimal_typed(&f.this) || (promotes_nullif && is_decimal_typed(&f.expression))
+        }
+        Expression::Nullif(f) => {
+            is_decimal_typed(&f.this) || (promotes_nullif && is_decimal_typed(&f.expression))
+        }
+        // SQL Server returns an integer from AVG of an integer.
+        Expression::Avg(f) => !is_tsql || is_decimal_typed(&f.this),
         Expression::Sum(f) | Expression::Min(f) | Expression::Max(f) => is_decimal_typed(&f.this),
         Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f) => {
             f.expressions.iter().any(is_decimal_typed)
@@ -1798,7 +1808,16 @@ fn is_decimal_typed(expr: &Expression) -> bool {
             c.whens.iter().any(|(_, then)| is_decimal_typed(then))
                 || c.else_.as_ref().is_some_and(is_decimal_typed)
         }
-        Expression::Function(f) if f.name.eq_ignore_ascii_case("AVG") => true,
+        Expression::Column(_) => matches!(
+            expr.inferred_type(),
+            Some(DataType::Decimal { .. } | DataType::Float { .. } | DataType::Double { .. })
+        ),
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("AVG") => {
+            !is_tsql || f.args.iter().any(is_decimal_typed)
+        }
+        Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF") && !promotes_nullif => {
+            f.args.first().is_some_and(is_decimal_typed)
+        }
         Expression::Function(f)
             if [
                 "NULLIF", "GREATEST", "LEAST", "COALESCE", "ABS", "ROUND", "SUM", "MIN", "MAX",
@@ -1814,15 +1833,50 @@ fn is_decimal_typed(expr: &Expression) -> bool {
 
 /// Cast the left operand of each `/` to REAL so SQLite divides fractionally,
 /// unless an operand is already a float cast or the right one a float literal.
-/// With `decimal_only`, only division with a DECIMAL cast operand is cast: in
-/// dialects whose integer division truncates, that is the fractional case, but
-/// SQLite stores a whole-number DECIMAL as an integer.
-pub(super) fn cast_division_to_real(expr: Expression, decimal_only: bool) -> Result<Expression> {
+/// For sources that truncate integer division, promote only fractional operands.
+/// SQLite can store a whole-number DECIMAL value as an integer.
+pub(super) fn cast_division_to_real(
+    mut expr: Expression,
+    source: DialectType,
+) -> Result<Expression> {
+    use crate::traversal::ExpressionWalk;
+    if !expr.contains(|e| matches!(e, Expression::Div(_))) {
+        return Ok(expr);
+    }
+    let decimal_only = source.truncates_integer_division();
+    let resolve_columns = decimal_only && expr.contains(|e| matches!(e, Expression::Column(_)));
+    if resolve_columns {
+        crate::optimizer::annotate_types(&mut expr, None, Some(source));
+    }
+    // SQLite AVG returns REAL even for integers. Preserve SQL Server's integer
+    // result before tracing projections into any enclosing division.
+    if matches!(source, DialectType::TSQL | DialectType::Fabric)
+        && expr.contains(|e| matches!(e, Expression::Avg(_)))
+    {
+        expr = crate::traversal::transform_all(expr, &|e| {
+            if let Expression::Avg(avg) = &e {
+                if expression_integer_type(&avg.this, source).is_some() {
+                    return Ok(cast_expr(
+                        e,
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: true,
+                        },
+                    ));
+                }
+            }
+            Ok(e)
+        })?;
+        if resolve_columns {
+            crate::optimizer::annotate_types(&mut expr, None, Some(source));
+        }
+    }
     crate::dialects::transform_recursive(expr, &|e| match e {
         Expression::Div(mut op) => {
             let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')));
-            let fractional =
-                !decimal_only || is_decimal_typed(&op.left) || is_decimal_typed(&op.right);
+            let fractional = !decimal_only
+                || is_decimal_typed(&op.left, source)
+                || is_decimal_typed(&op.right, source);
             if fractional
                 && !is_float_cast(&op.left)
                 && !is_float_cast(&op.right)

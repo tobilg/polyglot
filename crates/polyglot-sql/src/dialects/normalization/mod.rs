@@ -4165,7 +4165,7 @@ pub(super) fn normalize(
     // Division that was fractional in the source must stay fractional in SQLite,
     // including division introduced above (e.g. by SAFE_DIVIDE).
     if target == DialectType::SQLite && source != DialectType::SQLite {
-        operators::cast_division_to_real(expr, source.truncates_integer_division())
+        operators::cast_division_to_real(expr, source)
     } else {
         Ok(expr)
     }

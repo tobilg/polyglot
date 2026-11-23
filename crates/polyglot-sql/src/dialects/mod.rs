@@ -328,6 +328,7 @@ impl DialectType {
                 | DialectType::Teradata
                 | DialectType::Drill
                 | DialectType::Dremio
+                | DialectType::DataFusion
                 | DialectType::Presto
                 | DialectType::Trino
                 | DialectType::Athena

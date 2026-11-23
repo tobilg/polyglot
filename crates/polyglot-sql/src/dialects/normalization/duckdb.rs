@@ -2,7 +2,9 @@
 
 use super::scalar::{expression_numeric_kind, NumericKind};
 use super::*;
-use crate::expressions::{Annotated, DateTimeField, DateTruncFunc, ParameterStyle, RoundFunc};
+use crate::expressions::{
+    Annotated, BinaryFunc, DateTimeField, DateTruncFunc, ParameterStyle, RoundFunc,
+};
 
 fn bigquery_conversion_error(feature: impl Into<String>) -> crate::error::Error {
     crate::error::Error::unsupported(feature, "BigQuery")
@@ -413,6 +415,22 @@ pub(in crate::dialects) fn prepare_integer_division(
     source: DialectType,
     target: DialectType,
 ) -> Result<Expression> {
+    if source == DialectType::SQLite && target == DialectType::DuckDB {
+        return crate::traversal::transform_all(expr, &|expr| {
+            let Expression::Div(op) = expr else {
+                return Ok(expr);
+            };
+            Ok(Expression::IntDiv(Box::new(BinaryFunc {
+                this: op.left,
+                expression: Expression::Function(Box::new(Function::new(
+                    "NULLIF",
+                    vec![op.right, Expression::number(0)],
+                ))),
+                original_name: None,
+                inferred_type: None,
+            })))
+        });
+    }
     if source != DialectType::DuckDB || target == DialectType::DuckDB {
         return Ok(expr);
     }

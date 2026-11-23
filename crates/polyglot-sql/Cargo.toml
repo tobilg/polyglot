@@ -24,7 +24,7 @@ default = [
 ]
 bindings = ["dep:ts-rs"]
 generate = []
-transpile = ["generate"]
+transpile = ["generate", "semantic"]
 builder = ["generate"]
 ast-tools = []
 semantic = ["ast-tools"]

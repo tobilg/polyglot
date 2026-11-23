@@ -7,6 +7,7 @@ fn integer_division_is_kept_from_truncating_dialects() {
     for (read, write) in [
         (DialectType::SQLite, DialectType::SQLite),
         (DialectType::PostgreSQL, DialectType::SQLite),
+        (DialectType::DataFusion, DialectType::SQLite),
         (DialectType::SQLite, DialectType::PostgreSQL),
     ] {
         let out = transpile("SELECT 7 / 2, a / b FROM t", read, write).unwrap();
@@ -92,4 +93,56 @@ fn decimal_division_from_truncating_dialects_casts() {
         let out = transpile(sql, DialectType::PostgreSQL, DialectType::SQLite).unwrap();
         assert_eq!(out, vec![want], "{sql}");
     }
+}
+
+#[test]
+fn projected_decimal_division() {
+    for (sql, quotient) in [
+        (
+            "WITH x AS (SELECT CAST(7 AS NUMERIC) AS n) SELECT n / 2 FROM x",
+            "CAST(n AS REAL) / 2",
+        ),
+        (
+            "SELECT q.n / 2 FROM (SELECT CAST(7 AS NUMERIC) AS n) AS q",
+            "CAST(q.n AS REAL) / 2",
+        ),
+        (
+            "WITH x AS (SELECT 7 AS n) SELECT n / 2 FROM x",
+            "SELECT n / 2 FROM x",
+        ),
+    ] {
+        let out = transpile(sql, DialectType::PostgreSQL, DialectType::SQLite).unwrap();
+        assert!(out[0].contains(quotient), "{}", out[0]);
+    }
+}
+
+#[test]
+fn tsql_division_uses_source_result_type() {
+    for (sql, want) in [
+        ("SELECT 7 / NULLIF(2, 0.0)", "SELECT 7 / NULLIF(2, 0.0)"),
+        ("SELECT AVG(7) / 2", "SELECT CAST(AVG(7) AS INTEGER) / 2"),
+        (
+            "WITH q AS (SELECT AVG(7) AS n) SELECT n / 2 FROM q",
+            "WITH q AS (SELECT CAST(AVG(7) AS INTEGER) AS n) SELECT n / 2 FROM q",
+        ),
+    ] {
+        assert_eq!(
+            transpile(sql, DialectType::TSQL, DialectType::SQLite).unwrap(),
+            [want]
+        );
+    }
+}
+
+#[test]
+fn sqlite_to_duckdb_uses_operand_sensitive_division() {
+    let out = transpile(
+        "SELECT 7 / 2, 7.0 / 2, 7 / 0",
+        DialectType::SQLite,
+        DialectType::DuckDB,
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        ["SELECT 7 // NULLIF(2, 0), 7.0 // NULLIF(2, 0), 7 // NULLIF(0, 0)"]
+    );
 }
