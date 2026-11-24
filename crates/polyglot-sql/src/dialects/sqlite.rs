@@ -711,9 +711,14 @@ impl SQLiteDialect {
     }
 
     fn transform_cast(&self, c: Cast) -> Result<Expression> {
-        // SQLite has limited type support, map types appropriately
-        // The type mapping is handled in the generator via type_mapping
-        // For now, just pass through
-        Ok(Expression::Cast(Box::new(c)))
+        // SQLite has no date/time types: CAST(x AS DATE) gets NUMERIC affinity and
+        // turns '2024-01-15 10:30:00' into 2024, so use the date/time functions.
+        // Other type mapping is handled in the generator via type_mapping.
+        match c.to {
+            DataType::Date => Ok(Self::function("DATE", vec![c.this])),
+            DataType::Timestamp { .. } => Ok(Self::function("DATETIME", vec![c.this])),
+            DataType::Time { .. } => Ok(Self::function("TIME", vec![c.this])),
+            _ => Ok(Expression::Cast(Box::new(c))),
+        }
     }
 }
