@@ -500,12 +500,13 @@ impl SQLiteDialect {
                 }
             }
 
-            // DATEDIFF(a, b, unit_string) -> JULIANDAY arithmetic for SQLite
+            // DATEDIFF(unit, start, end) -> JULIANDAY arithmetic for SQLite.
+            // A SQLite source (date1, date2, unit) is handled in normalization.
             "DATEDIFF" | "DATE_DIFF" if f.args.len() == 3 => {
                 let mut args = f.args;
-                let first = args.remove(0); // date1
-                let second = args.remove(0); // date2
-                let unit_expr = args.remove(0); // unit string like 'day'
+                let unit_expr = args.remove(0); // unit like DAY or 'day'
+                let second = args.remove(0); // start
+                let first = args.remove(0); // end
 
                 // Extract unit string
                 let unit_str = match &unit_expr {
