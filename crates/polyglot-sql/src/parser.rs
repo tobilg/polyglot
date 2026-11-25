@@ -7486,17 +7486,16 @@ impl Parser {
         let (value_column, value_column_parenthesized, extra_value_columns) =
             if self.match_token(TokenType::LParen) {
                 // Parenthesized value column(s)
-                let col = self.expect_identifier_or_keyword()?;
+                let col = self.expect_identifier_or_keyword_with_quoted()?;
                 let mut extra_cols = Vec::new();
                 while self.match_token(TokenType::Comma) {
-                    extra_cols
-                        .push(self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?);
+                    extra_cols.push(self.expect_identifier_or_keyword_with_quoted()?);
                 }
                 self.expect(TokenType::RParen)?;
-                (Identifier::new(col), true, extra_cols)
+                (col, true, extra_cols)
             } else {
                 (
-                    self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?,
+                    self.expect_identifier_or_keyword_with_quoted()?,
                     false,
                     Vec::new(),
                 )
@@ -7504,7 +7503,7 @@ impl Parser {
 
         // FOR name_column
         self.expect(TokenType::For)?;
-        let name_column = self.parse_unquoted_identifier(Self::expect_identifier_or_keyword)?;
+        let name_column = self.expect_identifier_or_keyword_with_quoted()?;
 
         // IN (columns with optional aliases)
         // Format: col1 [AS alias1], col2 [AS alias2], ...
