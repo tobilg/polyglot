@@ -497,6 +497,58 @@ fn snowflake_analysis_preserves_distinct_column_identifiers() {
 }
 
 #[test]
+fn snowflake_unpivot_outputs_trace_through_ctes_and_subqueries() {
+    // UNPIVOT names its outputs with identifiers, which fold like columns.
+    let schema = serde_json::from_value(serde_json::json!({"tables":[{"name":"t","columns":[
+        {"name":"a","type":"INT"},{"name":"b","type":"INT"}]}]}))
+    .unwrap();
+    for schema in [Some(schema), None] {
+        for (sql, name, upstream) in [
+            (
+                "WITH u AS (SELECT * FROM t UNPIVOT (val FOR k IN (a, b))) SELECT val FROM u",
+                "VAL",
+                vec!["A", "B"],
+            ),
+            (
+                "SELECT val FROM (SELECT * FROM t UNPIVOT (val FOR k IN (a, b))) s",
+                "VAL",
+                vec!["A", "B"],
+            ),
+            (
+                "WITH u AS (SELECT * FROM t UNPIVOT (val FOR k IN (a, b))) SELECT k FROM u",
+                "K",
+                vec![],
+            ),
+            (
+                r#"WITH u AS (SELECT * FROM t UNPIVOT ("val" FOR "k" IN (a, b))) SELECT "val" FROM u"#,
+                "val",
+                vec!["A", "B"],
+            ),
+        ] {
+            let analysis = analyze_query(
+                sql,
+                AnalyzeQueryOptions {
+                    dialect: DialectType::Snowflake,
+                    schema: schema.clone(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let projection = &analysis.projections[0];
+            assert_eq!(projection.name.as_deref(), Some(name), "{sql}");
+            let mut columns: Vec<_> = projection
+                .upstream
+                .iter()
+                .map(|r| (r.table.as_deref(), r.column.as_str()))
+                .collect();
+            columns.sort_unstable();
+            let expected: Vec<_> = upstream.into_iter().map(|c| (Some("t"), c)).collect();
+            assert_eq!(columns, expected, "{sql} schema={}", schema.is_some());
+        }
+    }
+}
+
+#[test]
 fn pivot_reports_implicit_group_keys() {
     use polyglot_sql::ColumnUseContext;
     let schema: polyglot_sql::ValidationSchema = serde_json::from_value(serde_json::json!({"tables": [

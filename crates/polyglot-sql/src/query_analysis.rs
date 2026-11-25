@@ -281,6 +281,19 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
                 Expression::Column(column) if !column.name.quoted => {
                     column.name.name.make_ascii_uppercase();
                 }
+                // UNPIVOT declares its output columns as identifiers, not columns.
+                Expression::Unpivot(unpivot) => {
+                    let unpivot = unpivot.as_mut();
+                    for name in [&mut unpivot.value_column, &mut unpivot.name_column]
+                        .into_iter()
+                        .chain(&mut unpivot.extra_value_columns)
+                        .chain(&mut unpivot.alias_columns)
+                    {
+                        if !name.quoted {
+                            name.name.make_ascii_uppercase();
+                        }
+                    }
+                }
                 Expression::Select(select) => {
                     for projection in &mut select.expressions {
                         if let Expression::Alias(alias) = projection {
